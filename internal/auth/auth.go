@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/jontuk/multimux/internal/store"
 )
 
@@ -36,16 +38,16 @@ type Manager struct {
 	setupCode   string
 	setupExpiry time.Time
 	setupTries  int
-	// webauthn state added in the next task
+
+	web          *webauthn.WebAuthn
+	regSession   *webauthn.SessionData
+	loginSession *webauthn.SessionData
 }
 
 func New(st *store.Store, rpID string, origins []string) (*Manager, error) {
 	m := &Manager{store: st, rpID: rpID, origins: origins}
-	return m, m.initWebAuthn() // no-op stub until Task 11
+	return m, m.initWebAuthn()
 }
-
-// initWebAuthn is completed in the WebAuthn task; stub keeps this task green.
-func (m *Manager) initWebAuthn() error { return nil }
 
 // SetupPending reports whether no passkey is registered yet.
 func (m *Manager) SetupPending() (bool, error) {
