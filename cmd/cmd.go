@@ -30,6 +30,8 @@ func Execute(args []string, version string, webFS fs.FS, stdout, stderr io.Write
 		return 0
 	case "ca":
 		return runCA(args[1:], stdout, stderr)
+	case "auth":
+		return runAuth(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], version, webFS, stdout, stderr)
 	default:
