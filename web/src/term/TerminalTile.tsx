@@ -23,6 +23,7 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
     let ws: WebSocket | null = null;
     let closed = false;
     let backoff = 500;
+    let reconnectTimeoutId: NodeJS.Timeout | null = null;
 
     function sendResize() {
       if (ws?.readyState === WebSocket.OPEN) ws.send(encodeResize(term.cols, term.rows));
@@ -40,6 +41,7 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
         sendResize();
       };
       ws.onmessage = (ev) => {
+        if (closed) return;
         if (ev.data instanceof ArrayBuffer) {
           term.write(new Uint8Array(ev.data));
         } else if (parseServerText(ev.data)?.type === "exit") {
@@ -51,7 +53,7 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
       ws.onclose = () => {
         if (closed) return;
         setState("offline");
-        setTimeout(connect, backoff);
+        reconnectTimeoutId = setTimeout(connect, backoff);
         backoff = Math.min(backoff * 2, 10000);
       };
     }
@@ -68,9 +70,14 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
 
     return () => {
       closed = true;
+      if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
+      if (ws) {
+        ws.onmessage = null;
+        ws.onclose = null;
+        ws.close();
+      }
       dataSub.dispose();
       ro.disconnect();
-      ws?.close();
       term.dispose();
     };
   }, [server.id, server.origin, server.token, sessionId]);
