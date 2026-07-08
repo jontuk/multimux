@@ -28,18 +28,14 @@ type Config struct {
 type Server struct {
 	cfg Config
 	mux *http.ServeMux
-	// hub *Hub // events hub, added in Task 17 (nil-safe until then)
+	hub *Hub
 }
 
 func New(cfg Config) *Server {
-	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), hub: NewHub()}
 	s.routes()
 	return s
 }
-
-// StartBackground kicks off any long-running reconciliation/tickers. It is a
-// no-op until Task 17 wires the events hub and tmux reconciler.
-func (s *Server) StartBackground() {}
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -74,6 +70,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/layout", s.handleGetLayout)
 	s.mux.HandleFunc("PUT /api/layout", s.handlePutLayout)
 	s.mux.HandleFunc("GET /ws/pty/{id}", s.handlePTY)
+	s.mux.HandleFunc("GET /ws/events", s.handleEvents)
 	s.mux.Handle("/", s.staticHandler())
 }
 

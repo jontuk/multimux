@@ -59,7 +59,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	s.broadcast("session_created", sess) // no-op until Task 17
+	s.broadcast("session_created", sess)
 	writeJSON(w, 201, sess)
 }
 
@@ -169,5 +169,8 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 	return newlyDead, nil
 }
 
-// broadcast is a stub until the events hub lands (Task 17).
-func (s *Server) broadcast(eventType string, payload any) {}
+// broadcast fans a session/layout event out to every connected /ws/events
+// subscriber via the hub.
+func (s *Server) broadcast(eventType string, payload any) {
+	s.hub.Broadcast(eventType, payload)
+}
