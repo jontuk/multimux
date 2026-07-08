@@ -44,6 +44,19 @@ func (s *Server) StartBackground() {}
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	// Auth ceremonies (open — they ARE the login): Task 15.
+	s.mux.HandleFunc("POST /api/auth/setup/begin", s.handleSetupBegin)
+	s.mux.HandleFunc("POST /api/auth/setup/finish", s.handleSetupFinish)
+	s.mux.HandleFunc("POST /api/auth/login/begin", s.handleLoginBegin)
+	s.mux.HandleFunc("POST /api/auth/login/finish", s.handleLoginFinish)
+	s.mux.HandleFunc("GET /api/auth/me", s.handleMe)
+	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("POST /api/auth/register/begin", s.handleRegisterBegin)
+	s.mux.HandleFunc("POST /api/auth/register/finish", s.handleRegisterFinish)
+	s.mux.HandleFunc("GET /api/auth/credentials", s.handleListCredentials)
+	s.mux.HandleFunc("DELETE /api/auth/credentials/{id}", s.handleDeleteCredential)
+	s.mux.HandleFunc("GET /api/auth/sessions", s.handleListAuthSessions)
+	s.mux.HandleFunc("DELETE /api/auth/sessions/{hash}", s.handleDeleteAuthSession)
+	s.mux.HandleFunc("POST /api/auth/token", s.handleMintToken)
 	// REST API: Tasks 13-14. WS: Tasks 16-17.
 	s.mux.HandleFunc("GET /api/tools", s.handleListTools)
 	s.mux.HandleFunc("POST /api/tools", s.handleCreateTool)
