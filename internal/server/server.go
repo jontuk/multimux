@@ -54,6 +54,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/dirs/{id}", s.handleDeleteDir)
 	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
+	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/dismiss", s.handleDismissSession)
+	s.mux.HandleFunc("GET /api/layout", s.handleGetLayout)
+	s.mux.HandleFunc("PUT /api/layout", s.handlePutLayout)
 	s.mux.Handle("/", s.staticHandler())
 }
 
