@@ -45,6 +45,19 @@ var migrations = []string{
 		id   INTEGER PRIMARY KEY CHECK (id = 1),
 		data TEXT NOT NULL
 	);`,
+	`CREATE TABLE credentials (
+		id           TEXT PRIMARY KEY,
+		name         TEXT NOT NULL,
+		data         BLOB NOT NULL,
+		created_at   TEXT NOT NULL,
+		last_used_at TEXT NOT NULL
+	);
+	CREATE TABLE auth_sessions (
+		token_hash TEXT PRIMARY KEY,
+		user_agent TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL
+	);`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and
