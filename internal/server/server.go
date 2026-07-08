@@ -1,0 +1,171 @@
+// Package server wires multimux's HTTP surface: static SPA, REST API, and
+// WebSockets, behind auth and setup-pending gates.
+package server
+
+import (
+	"encoding/json"
+	"io"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/jontuk/multimux/internal/auth"
+	"github.com/jontuk/multimux/internal/store"
+	"github.com/jontuk/multimux/internal/tmuxmgr"
+)
+
+type Config struct {
+	Store   *store.Store
+	Auth    *auth.Manager
+	Tmux    *tmuxmgr.Manager
+	Arbiter *tmuxmgr.Arbiter
+	WebFS   fs.FS
+	Origins []string // this daemon's own origins (cookie-auth WS origin check)
+	Version string
+}
+
+type Server struct {
+	cfg Config
+	mux *http.ServeMux
+	// hub *Hub // events hub, added in Task 17 (nil-safe until then)
+}
+
+func New(cfg Config) *Server {
+	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	s.routes()
+	return s
+}
+
+// StartBackground kicks off any long-running reconciliation/tickers. It is a
+// no-op until Task 17 wires the events hub and tmux reconciler.
+func (s *Server) StartBackground() {}
+
+func (s *Server) routes() {
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	// Auth ceremonies (open — they ARE the login): Task 15.
+	// REST API: Tasks 13-14. WS: Tasks 16-17.
+	s.mux.Handle("/", s.staticHandler())
+}
+
+// Handler wraps the mux in (outermost first) logging → CORS → setup gate →
+// auth. Static assets and /healthz and /api/auth/{login,setup} bypass auth.
+func (s *Server) Handler() http.Handler {
+	var h http.Handler = s.mux
+	h = s.authGate(h)
+	h = s.setupGate(h)
+	h = s.cors(h)
+	h = logRequests(h)
+	return h
+}
+
+func isProtected(path string) bool {
+	if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/ws/") {
+		return false
+	}
+	// Login and setup ceremonies must be reachable unauthenticated.
+	for _, open := range []string{"/api/auth/login/", "/api/auth/setup/"} {
+		if strings.HasPrefix(path, open) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) authGate(next http.Handler) http.Handler {
+	protected := s.cfg.Auth.Middleware(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isProtected(r.URL.Path) {
+			protected.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// setupGate 403s everything except healthz, setup ceremonies, and static
+// assets while no passkey is registered yet.
+func (s *Server) setupGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pending, err := s.cfg.Auth.SetupPending()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
+		}
+		if pending && isProtected(r.URL.Path) && !strings.HasPrefix(r.URL.Path, "/api/auth/setup/") {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "setup pending"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// cors: /api/ is callable from any origin WITHOUT credentials — cross-origin
+// callers authenticate with bearer tokens, never cookies, so reflecting * is
+// safe (see design decision on multi-host auth).
+func (s *Server) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		slog.Debug("http", "method", r.Method, "path", r.URL.Path)
+	})
+}
+
+// staticHandler serves the embedded SPA with index.html fallback for client
+// routes (anything without a file extension).
+func (s *Server) staticHandler() http.Handler {
+	fileServer := http.FileServerFS(s.cfg.WebFS)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path != "" {
+			if f, err := s.cfg.WebFS.Open(path); err == nil {
+				f.Close()
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		// SPA fallback.
+		index, err := fs.ReadFile(s.cfg.WebFS, "index.html")
+		if err != nil {
+			http.Error(w, "web assets missing — build web/ first", http.StatusNotImplemented)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(index)
+	})
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	pending, _ := s.cfg.Auth.SetupPending()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"version":      s.cfg.Version,
+		"tmux":         s.cfg.Tmux.Available() == nil,
+		"setupPending": pending,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func readJSON(r *http.Request, v any) error {
+	defer io.Copy(io.Discard, r.Body)
+	return json.NewDecoder(r.Body).Decode(v)
+}

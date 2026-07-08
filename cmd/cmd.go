@@ -4,6 +4,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"io/fs"
 )
 
 const usage = `usage: multimux <command>
@@ -16,8 +17,9 @@ commands:
   --version                      print version
 `
 
-// Execute runs the CLI and returns a process exit code.
-func Execute(args []string, version string, stdout, stderr io.Writer) int {
+// Execute runs the CLI and returns a process exit code. webFS is the
+// embedded SPA (web/dist subtree), used by the serve command.
+func Execute(args []string, version string, webFS fs.FS, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -28,6 +30,8 @@ func Execute(args []string, version string, stdout, stderr io.Writer) int {
 		return 0
 	case "ca":
 		return runCA(args[1:], stdout, stderr)
+	case "serve":
+		return runServe(args[1:], version, webFS, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
 		return 2

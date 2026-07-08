@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestVersionFlag(t *testing.T) {
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--version"}, "1.2.3", &out, &errOut)
+	code := Execute([]string{"--version"}, "1.2.3", fstest.MapFS{}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
@@ -19,7 +20,7 @@ func TestVersionFlag(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"bogus"}, "dev", &out, &errOut)
+	code := Execute([]string{"bogus"}, "dev", fstest.MapFS{}, &out, &errOut)
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
@@ -30,7 +31,7 @@ func TestUnknownCommand(t *testing.T) {
 
 func TestNoArgsPrintsUsage(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := Execute(nil, "dev", &out, &errOut); code != 2 {
+	if code := Execute(nil, "dev", fstest.MapFS{}, &out, &errOut); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
 }
