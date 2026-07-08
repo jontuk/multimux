@@ -26,6 +26,8 @@ func Execute(args []string, version string, stdout, stderr io.Writer) int {
 	case "--version", "version":
 		fmt.Fprintf(stdout, "multimux %s\n", version)
 		return 0
+	case "ca":
+		return runCA(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
 		return 2
