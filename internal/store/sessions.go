@@ -21,10 +21,17 @@ type Session struct {
 }
 
 // CreateSession inserts a running session and derives its tmux name from the
-// assigned row ID (mm-{id}).
+// assigned row ID (mm-{id}). Both operations are wrapped in a transaction to
+// ensure atomicity.
 func (s *Store) CreateSession(toolID int64, dir string) (Session, error) {
 	now := time.Now().UTC()
-	res, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(
 		`INSERT INTO sessions (tool_id, dir, status, created_at) VALUES (?, ?, 'running', ?)`,
 		toolID, dir, now.Format(time.RFC3339))
 	if err != nil {
@@ -35,7 +42,10 @@ func (s *Store) CreateSession(toolID int64, dir string) (Session, error) {
 		return Session{}, err
 	}
 	name := fmt.Sprintf("mm-%d", id)
-	if _, err := s.db.Exec(`UPDATE sessions SET tmux_name = ? WHERE id = ?`, name, id); err != nil {
+	if _, err := tx.Exec(`UPDATE sessions SET tmux_name = ? WHERE id = ?`, name, id); err != nil {
+		return Session{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return Session{}, err
 	}
 	return Session{ID: id, TmuxName: name, ToolID: toolID, Dir: dir, Status: "running", CreatedAt: now}, nil
