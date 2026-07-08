@@ -33,6 +33,18 @@ var migrations = []string{
 		name TEXT NOT NULL,
 		path TEXT NOT NULL
 	);`,
+	`CREATE TABLE sessions (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		tmux_name  TEXT NOT NULL DEFAULT '',
+		tool_id    INTEGER NOT NULL,
+		dir        TEXT NOT NULL,
+		status     TEXT NOT NULL DEFAULT 'running',
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE layout (
+		id   INTEGER PRIMARY KEY CHECK (id = 1),
+		data TEXT NOT NULL
+	);`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and
