@@ -3,6 +3,7 @@ import LoginPage from "./pages/LoginPage";
 import SetupPage from "./pages/SetupPage";
 import { apiFetch, getJSON } from "./api";
 import { localServer } from "./servers";
+import GridPage from "./grid/GridPage";
 
 type Health = { status: string; setupPending: boolean; version: string };
 
@@ -30,11 +31,11 @@ export default function App() {
   if (authed === false) return <LoginPage />;
   if (authed === null) return <div>multimux loading…</div>;
 
-  // Grid (Task 21-22), Settings (Task 23), Connect (Task 24) routed here.
+  // Settings (Task 23), Connect (Task 24) routed here.
   return (
     <div className="app">
       <header>multimux</header>
-      <main id="page-root">{route}</main>
+      <main id="page-root">{route === "#/" ? <GridPage /> : route}</main>
     </div>
   );
 }
