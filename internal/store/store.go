@@ -1,0 +1,82 @@
+// Package store persists all multimux state in a single SQLite database.
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	_ "modernc.org/sqlite"
+)
+
+// Store wraps the SQLite database. All timestamps are stored as RFC3339 UTC
+// text so values round-trip identically regardless of driver scan behaviour.
+type Store struct {
+	db *sql.DB
+}
+
+// migrations run in order; PRAGMA user_version tracks progress. Append only —
+// never edit an entry that has shipped.
+var migrations = []string{
+	`CREATE TABLE settings (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);`,
+}
+
+// Open opens (creating if needed) the database at path, enables WAL, and
+// applies pending migrations.
+func Open(path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("store: create data dir: %w", err)
+	}
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	if err != nil {
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	// A single connection sidesteps table-lock contention between the API
+	// handlers and background tickers; multimux is a single-user daemon.
+	db.SetMaxOpenConns(1)
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		return err
+	}
+	for i := v; i < len(migrations); i++ {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+// GetSetting returns the value for key, or "" when unset.
+func (s *Store) GetSetting(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetSetting upserts a settings key.
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
