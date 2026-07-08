@@ -24,6 +24,7 @@ const (
 	sessionTTL     = 30 * 24 * time.Hour
 	slideThreshold = 29 * 24 * time.Hour // renew when remaining life dips below this
 	setupCodeTTL   = 15 * time.Minute
+	maxSetupTries  = 5 // failed ConsumeSetupCode attempts before the code is invalidated
 )
 
 type Manager struct {
@@ -34,6 +35,7 @@ type Manager struct {
 	mu          sync.Mutex
 	setupCode   string
 	setupExpiry time.Time
+	setupTries  int
 	// webauthn state added in the next task
 }
 
@@ -52,32 +54,45 @@ func (m *Manager) SetupPending() (bool, error) {
 }
 
 // NewSetupCode mints the single active setup code (15-minute TTL).
-func (m *Manager) NewSetupCode() string {
+func (m *Manager) NewSetupCode() (string, error) {
 	var b [4]byte
-	rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
 	code := base32.StdEncoding.EncodeToString(b[:])[:6]
 	m.mu.Lock()
-	m.setupCode, m.setupExpiry = code, time.Now().Add(setupCodeTTL)
+	m.setupCode, m.setupExpiry, m.setupTries = code, time.Now().Add(setupCodeTTL), 0
 	m.mu.Unlock()
-	return code
+	return code, nil
 }
 
 // ConsumeSetupCode reports whether code matches the active, unexpired setup
 // code. The code stays valid until registration completes (the finish handler
-// re-checks) so begin/finish can both present it.
+// re-checks) so begin/finish can both present it. To resist brute-forcing the
+// ~30 bits of code entropy, the code is invalidated after maxSetupTries
+// consecutive failed attempts, forcing a fresh code to be minted.
 func (m *Manager) ConsumeSetupCode(code string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.setupCode == "" || time.Now().After(m.setupExpiry) {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(code), []byte(m.setupCode)) == 1
+	if subtle.ConstantTimeCompare([]byte(code), []byte(m.setupCode)) == 1 {
+		return true
+	}
+	m.setupTries++
+	if m.setupTries >= maxSetupTries {
+		m.setupCode = ""
+		m.setupTries = 0
+	}
+	return false
 }
 
 // ClearSetupCode invalidates the active code (call after first registration).
 func (m *Manager) ClearSetupCode() {
 	m.mu.Lock()
 	m.setupCode = ""
+	m.setupTries = 0
 	m.mu.Unlock()
 }
 

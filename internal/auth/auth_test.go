@@ -39,7 +39,10 @@ func TestSetupPending(t *testing.T) {
 
 func TestSetupCode(t *testing.T) {
 	m, _ := testManager(t)
-	code := m.NewSetupCode()
+	code, err := m.NewSetupCode()
+	if err != nil {
+		t.Fatalf("NewSetupCode: %v", err)
+	}
 	if len(code) != 6 {
 		t.Fatalf("code = %q, want 6 chars", code)
 	}
@@ -50,12 +53,49 @@ func TestSetupCode(t *testing.T) {
 		t.Fatal("right code rejected")
 	}
 	old := code
-	code2 := m.NewSetupCode()
+	code2, err := m.NewSetupCode()
+	if err != nil {
+		t.Fatalf("NewSetupCode: %v", err)
+	}
 	if m.ConsumeSetupCode(old) {
 		t.Fatal("regeneration must invalidate old code")
 	}
 	if !m.ConsumeSetupCode(code2) {
 		t.Fatal("new code rejected")
+	}
+}
+
+func TestSetupCodeAttemptLimit(t *testing.T) {
+	m, _ := testManager(t)
+	code, err := m.NewSetupCode()
+	if err != nil {
+		t.Fatalf("NewSetupCode: %v", err)
+	}
+	for i := 0; i < maxSetupTries; i++ {
+		if m.ConsumeSetupCode("WRONG1") {
+			t.Fatalf("attempt %d: wrong code accepted", i+1)
+		}
+	}
+	// After maxSetupTries failed attempts, the code must be invalidated even
+	// though it is presented correctly.
+	if m.ConsumeSetupCode(code) {
+		t.Fatal("correct code accepted after exceeding attempt limit")
+	}
+}
+
+func TestSetupCodeSucceedsWithinAttemptLimit(t *testing.T) {
+	m, _ := testManager(t)
+	code, err := m.NewSetupCode()
+	if err != nil {
+		t.Fatalf("NewSetupCode: %v", err)
+	}
+	for i := 0; i < maxSetupTries-1; i++ {
+		if m.ConsumeSetupCode("WRONG1") {
+			t.Fatalf("attempt %d: wrong code accepted", i+1)
+		}
+	}
+	if !m.ConsumeSetupCode(code) {
+		t.Fatal("correct code rejected within attempt limit")
 	}
 }
 
