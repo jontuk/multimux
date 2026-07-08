@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -19,7 +20,7 @@ import (
 // the secret explicitly, so any origin is fine (that is how cross-daemon
 // tiles connect).
 func (s *Server) checkWSOrigin(r *http.Request) bool {
-	if _, err := r.Cookie(auth.CookieName); err != nil {
+	if c, err := r.Cookie(auth.CookieName); err != nil || c.Value == "" {
 		return true // token-authenticated
 	}
 	origin := r.Header.Get("Origin")
@@ -89,11 +90,21 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 			n, err := ptyConn.Read(buf)
 			if n > 0 {
 				if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+					conn.Close()
 					return
 				}
 			}
 			if err != nil {
 				conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
+				// The client's readLoop below may be blocked in conn.ReadMessage()
+				// forever if the client never closes its end. Send a close frame
+				// and close the conn from here so that read unblocks and the
+				// handler can tear down (ptyConn.Close, arb.Unregister via defers).
+				// Close is safe to call concurrently with a blocked reader.
+				_ = conn.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+					time.Now().Add(time.Second))
+				conn.Close()
 				return
 			}
 		}
