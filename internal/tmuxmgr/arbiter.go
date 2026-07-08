@@ -20,9 +20,10 @@ type arbSession struct {
 
 // ArbConn is one connection's handle on the arbiter.
 type ArbConn struct {
-	arb        *Arbiter
-	tmuxName   string
-	cols, rows uint16 // last dims this conn asked for (guarded by arb.mu)
+	arb          *Arbiter
+	tmuxName     string
+	cols, rows   uint16 // last dims this conn asked for (guarded by arb.mu)
+	unregistered bool   // guarded by arb.mu; true once Unregister has run
 }
 
 func NewArbiter() *Arbiter {
@@ -42,10 +43,15 @@ func (a *Arbiter) Register(tmuxName string) *ArbConn {
 	return &ArbConn{arb: a, tmuxName: tmuxName}
 }
 
-// Unregister drops the connection, releasing ownership if held.
+// Unregister drops the connection, releasing ownership if held. It is safe to
+// call more than once; only the first call has any effect.
 func (c *ArbConn) Unregister() {
 	c.arb.mu.Lock()
 	defer c.arb.mu.Unlock()
+	if c.unregistered {
+		return
+	}
+	c.unregistered = true
 	s := c.arb.sessions[c.tmuxName]
 	if s == nil {
 		return

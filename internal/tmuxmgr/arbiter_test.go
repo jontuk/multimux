@@ -61,6 +61,24 @@ func TestUnregisterReleasesOwnership(t *testing.T) {
 	}
 }
 
+func TestUnregisterIdempotent(t *testing.T) {
+	a := NewArbiter()
+	c1 := a.Register("mm-1")
+	c2 := a.Register("mm-1")
+	defer c2.Unregister()
+
+	c1.Unregister()
+	c1.Unregister() // second call must be a no-op, not a second refcount decrement
+
+	if !c2.Resize(100, 30) {
+		t.Fatal("remaining connection should still be sole owner and allowed to resize")
+	}
+	c2.ClaimInput()
+	if !c2.Resize(101, 31) {
+		t.Fatal("double-Unregister of c1 must not have torn down arbitration state for c2")
+	}
+}
+
 func TestSessionsIsolated(t *testing.T) {
 	a := NewArbiter()
 	c1 := a.Register("mm-1")
