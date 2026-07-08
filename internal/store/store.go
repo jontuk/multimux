@@ -23,6 +23,16 @@ var migrations = []string{
 		key   TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	);`,
+	`CREATE TABLE tools (
+		id      INTEGER PRIMARY KEY AUTOINCREMENT,
+		name    TEXT NOT NULL,
+		command TEXT NOT NULL
+	);
+	CREATE TABLE dirs (
+		id   INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		path TEXT NOT NULL
+	);`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and
