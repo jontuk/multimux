@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "postbuild": "mkdir -p dist && touch dist/.gitkeep",
     "lint": "eslint . && prettier --check src",
-    "test": "vitest run",
+    "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
     "format": "prettier --write src",
     "preview": "vite preview"
   },
