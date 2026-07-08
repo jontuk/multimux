@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import SetupPage from "./pages/SetupPage";
+import SettingsPage from "./pages/SettingsPage";
 import { apiFetch, getJSON } from "./api";
 import { localServer } from "./servers";
 import GridPage from "./grid/GridPage";
@@ -34,8 +35,17 @@ export default function App() {
   // Settings (Task 23), Connect (Task 24) routed here.
   return (
     <div className="app">
-      <header>multimux</header>
-      <main id="page-root">{route === "#/" ? <GridPage /> : route}</main>
+      <header>
+        multimux
+        <a href="#/" style={{ marginLeft: "auto" }}>
+          Grid
+        </a>
+        <a href="#/settings">⚙</a>
+      </header>
+      <main id="page-root">
+        {route === "#/" && <GridPage />}
+        {route === "#/settings" && <SettingsPage />}
+      </main>
     </div>
   );
 }

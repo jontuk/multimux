@@ -23,7 +23,7 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
     let ws: WebSocket | null = null;
     let closed = false;
     let backoff = 500;
-    let reconnectTimeoutId: NodeJS.Timeout | null = null;
+    let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     function sendResize() {
       if (ws?.readyState === WebSocket.OPEN) ws.send(encodeResize(term.cols, term.rows));
