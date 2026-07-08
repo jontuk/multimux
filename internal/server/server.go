@@ -73,6 +73,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/dismiss", s.handleDismissSession)
 	s.mux.HandleFunc("GET /api/layout", s.handleGetLayout)
 	s.mux.HandleFunc("PUT /api/layout", s.handlePutLayout)
+	s.mux.HandleFunc("GET /ws/pty/{id}", s.handlePTY)
 	s.mux.Handle("/", s.staticHandler())
 }
 
