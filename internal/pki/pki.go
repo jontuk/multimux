@@ -185,10 +185,43 @@ func (p *PKI) writePair(certPath, keyPath string, certDER []byte, key *ecdsa.Pri
 		return err
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+
+	// Atomic write via temp file + rename prevents a crash from leaving a
+	// mismatched cert/key pair on disk.
+	certDir := filepath.Dir(certPath)
+	certTemp, err := os.CreateTemp(certDir, filepath.Base(certPath)+".*")
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(keyPath, keyPEM, 0o600)
+	defer os.Remove(certTemp.Name())
+	if _, err := certTemp.Write(certPEM); err != nil {
+		certTemp.Close()
+		return err
+	}
+	certTemp.Close()
+	if err := os.Chmod(certTemp.Name(), 0o644); err != nil {
+		return err
+	}
+
+	keyDir := filepath.Dir(keyPath)
+	keyTemp, err := os.CreateTemp(keyDir, filepath.Base(keyPath)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(keyTemp.Name())
+	if _, err := keyTemp.Write(keyPEM); err != nil {
+		keyTemp.Close()
+		return err
+	}
+	keyTemp.Close()
+	if err := os.Chmod(keyTemp.Name(), 0o600); err != nil {
+		return err
+	}
+
+	if err := os.Rename(certTemp.Name(), certPath); err != nil {
+		return err
+	}
+	return os.Rename(keyTemp.Name(), keyPath)
 }
 
 func parseCertPEM(raw []byte) (*x509.Certificate, error) {
