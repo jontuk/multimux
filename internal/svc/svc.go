@@ -75,6 +75,17 @@ func Install(goos, execPath string) error {
 	}
 	switch goos {
 	case "darwin":
+		// Create log directory before bootstrap since launchd opens StandardOutPath at spawn.
+		// On a clean machine, the first bootstrap fails if ~/.local/share/multimux doesn't exist.
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		logPath := filepath.Join(home, ".local", "share", "multimux", "multimux.log")
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return err
+		}
+
 		uid := os.Getuid()
 		// bootout first so re-install is idempotent; ignore its error.
 		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, label)).Run()
