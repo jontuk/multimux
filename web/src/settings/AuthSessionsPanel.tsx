@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { del, getJSON } from "../api";
 import { localServer } from "../servers";
 
-type AuthSession = { tokenHash: string; userAgent: string; created: string; expires: string };
+type AuthSession = { tokenHash: string; userAgent: string; createdAt: string; expiresAt: string };
 
 export default function AuthSessionsPanel() {
   const [sessions, setSessions] = useState<AuthSession[]>([]);
@@ -35,8 +35,8 @@ export default function AuthSessionsPanel() {
           {sessions.map((s) => (
             <tr key={s.tokenHash}>
               <td>{s.userAgent}</td>
-              <td>{new Date(s.created).toLocaleDateString()}</td>
-              <td>{new Date(s.expires).toLocaleDateString()}</td>
+              <td>{new Date(s.createdAt).toLocaleDateString()}</td>
+              <td>{new Date(s.expiresAt).toLocaleDateString()}</td>
               <td>
                 <button onClick={() => revoke(s.tokenHash)}>revoke</button>
               </td>

@@ -27,6 +27,17 @@ export async function postJSON<T>(server: Server, path: string, body?: unknown):
   return (text ? JSON.parse(text) : {}) as T;
 }
 
+export async function putJSON<T>(server: Server, path: string, body?: unknown): Promise<T> {
+  const res = await apiFetch(server, path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${path}: ${res.status}`);
+  const text = await res.text();
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
 export async function del(server: Server, path: string): Promise<void> {
   const res = await apiFetch(server, path, { method: "DELETE" });
   if (!res.ok) throw new Error(`${path}: ${res.status}`);

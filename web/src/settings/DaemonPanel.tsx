@@ -36,7 +36,7 @@ export default function DaemonPanel() {
         body: JSON.stringify({
           hostname,
           extraSans,
-          port: parseInt(port, 10),
+          port: String(parseInt(port, 10)),
         }),
       });
       if (!res.ok) throw new Error(`${res.status}`);

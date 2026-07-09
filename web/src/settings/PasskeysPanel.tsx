@@ -3,7 +3,7 @@ import { del, getJSON } from "../api";
 import { localServer } from "../servers";
 import { register } from "../webauthn";
 
-type Credential = { id: string; name: string; created: string; lastUsed: string | null };
+type Credential = { id: string; name: string; createdAt: string; lastUsedAt: string | null };
 
 export default function PasskeysPanel() {
   const [credentials, setCredentials] = useState<Credential[]>([]);
@@ -61,8 +61,8 @@ export default function PasskeysPanel() {
           {credentials.map((c) => (
             <tr key={c.id}>
               <td>{c.name}</td>
-              <td>{new Date(c.created).toLocaleDateString()}</td>
-              <td>{c.lastUsed ? new Date(c.lastUsed).toLocaleDateString() : "Never"}</td>
+              <td>{new Date(c.createdAt).toLocaleDateString()}</td>
+              <td>{c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleDateString() : "Never"}</td>
               <td>
                 <button disabled={credentials.length <= 1} onClick={() => revoke(c.id)}>
                   revoke

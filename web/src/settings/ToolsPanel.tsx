@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { del, getJSON, postJSON } from "../api";
+import { del, getJSON, postJSON, putJSON } from "../api";
 import { localServer } from "../servers";
 
 type Tool = { id: number; name: string; command: string };
@@ -8,6 +8,9 @@ export default function ToolsPanel() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editCommand, setEditCommand] = useState("");
 
   const refresh = useCallback(() => {
     getJSON<Tool[]>(localServer(), "/api/tools")
@@ -23,22 +26,62 @@ export default function ToolsPanel() {
     refresh();
   }
 
+  function startEdit(t: Tool) {
+    setEditId(t.id);
+    setEditName(t.name);
+    setEditCommand(t.command);
+  }
+
+  function cancelEdit() {
+    setEditId(null);
+    setEditName("");
+    setEditCommand("");
+  }
+
+  async function saveEdit(id: number) {
+    await putJSON(localServer(), `/api/tools/${id}`, { name: editName, command: editCommand });
+    cancelEdit();
+    refresh();
+  }
+
   return (
     <section>
       <h2>Tools</h2>
       <table>
         <tbody>
-          {tools.map((t) => (
-            <tr key={t.id}>
-              <td>{t.name}</td>
-              <td>
-                <code>{t.command}</code>
-              </td>
-              <td>
-                <button onClick={() => del(localServer(), `/api/tools/${t.id}`).then(refresh)}>delete</button>
-              </td>
-            </tr>
-          ))}
+          {tools.map((t) =>
+            editId === t.id ? (
+              <tr key={t.id}>
+                <td>
+                  <input aria-label="edit name" value={editName} onChange={(e) => setEditName(e.target.value)} />
+                </td>
+                <td>
+                  <input
+                    aria-label="edit command"
+                    value={editCommand}
+                    onChange={(e) => setEditCommand(e.target.value)}
+                  />
+                </td>
+                <td>
+                  <button disabled={!editName || !editCommand} onClick={() => saveEdit(t.id)}>
+                    save
+                  </button>
+                  <button onClick={cancelEdit}>cancel</button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={t.id}>
+                <td>{t.name}</td>
+                <td>
+                  <code>{t.command}</code>
+                </td>
+                <td>
+                  <button onClick={() => startEdit(t)}>edit</button>
+                  <button onClick={() => del(localServer(), `/api/tools/${t.id}`).then(refresh)}>delete</button>
+                </td>
+              </tr>
+            ),
+          )}
         </tbody>
       </table>
       <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
