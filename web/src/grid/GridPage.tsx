@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getJSON, apiFetch, postJSON } from "../api";
 import { listServers, localServer, type Server } from "../servers";
 import { emptyLayout, reshape, setTile, swapTiles, type GridShape, type Layout, type Tile } from "./model";
@@ -23,7 +23,9 @@ function EventsBridge({ server, onEvent }: { server: Server; onEvent: (type: str
 export default function GridPage() {
   const [layout, setLayout] = useState<Layout>(emptyLayout());
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
-  const servers = listServers();
+  // Stable across re-renders so the events sockets don't churn; listServers()
+  // reads localStorage and returns a fresh array each call.
+  const servers = useMemo(() => listServers(), []);
 
   const persist = useCallback((l: Layout) => {
     setLayout(l);
