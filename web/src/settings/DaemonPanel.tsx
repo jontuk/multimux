@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getJSON } from "../api";
 import { localServer } from "../servers";
 
-type Settings = { hostname: string; extraSans: string; port: number };
+type Settings = { hostname: string; extraSans: string; port: string };
 type SettingsResponse = { ok: boolean; rpWarning?: boolean; restartRequired?: boolean };
 
 export default function DaemonPanel() {
@@ -19,7 +19,7 @@ export default function DaemonPanel() {
         setSettings(s);
         setHostname(s.hostname);
         setExtraSans(s.extraSans);
-        setPort(s.port.toString());
+        setPort(s.port);
       })
       .catch(() => setSettings(null));
   }, []);
@@ -27,6 +27,7 @@ export default function DaemonPanel() {
 
   async function save() {
     if (!settings) return;
+    if (!/^\d+$/.test(port)) return;
     try {
       setLoading(true);
       const res = await fetch(localServer().origin + "/api/settings", {
@@ -36,7 +37,7 @@ export default function DaemonPanel() {
         body: JSON.stringify({
           hostname,
           extraSans,
-          port: String(parseInt(port, 10)),
+          port,
         }),
       });
       if (!res.ok) throw new Error(`${res.status}`);

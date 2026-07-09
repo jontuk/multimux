@@ -7,7 +7,7 @@ export default function LoginPage() {
   async function onLogin() {
     try {
       await login(localServer());
-      window.location.hash = "#/";
+      if (!window.location.hash.startsWith("#/connect")) window.location.hash = "#/";
       window.location.reload();
     } catch (e) {
       setError(String(e));
