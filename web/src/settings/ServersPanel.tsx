@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { addServer, listServers, removeServer } from "../servers";
+import { addServer, listServers, removeServer, setServerToken, type Server } from "../servers";
+
+function connectServer(server: Server) {
+  const popup = window.open(`${server.origin}/#/connect?opener=${encodeURIComponent(window.location.origin)}`);
+  function onMsg(ev: MessageEvent) {
+    if (ev.origin !== server.origin || ev.data?.type !== "multimux-token") return;
+    setServerToken(server.id, ev.data.token);
+    window.removeEventListener("message", onMsg);
+    popup?.close();
+  }
+  window.addEventListener("message", onMsg);
+}
 
 export default function ServersPanel() {
   const [servers, setServers] = useState(() => listServers());
@@ -39,7 +50,7 @@ export default function ServersPanel() {
                 <button disabled={s.id === "local"} onClick={() => remove(s.id)}>
                   remove
                 </button>
-                {s.id !== "local" && <button>Connect</button>}
+                {s.id !== "local" && <button onClick={() => connectServer(s)}>Connect</button>}
               </td>
             </tr>
           ))}

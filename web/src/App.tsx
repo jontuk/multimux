@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import SetupPage from "./pages/SetupPage";
 import SettingsPage from "./pages/SettingsPage";
+import ConnectPage from "./pages/ConnectPage";
 import { apiFetch, getJSON } from "./api";
 import { localServer } from "./servers";
 import GridPage from "./grid/GridPage";
@@ -45,6 +46,7 @@ export default function App() {
       <main id="page-root">
         {route === "#/" && <GridPage />}
         {route === "#/settings" && <SettingsPage />}
+        {route.startsWith("#/connect") && <ConnectPage />}
       </main>
     </div>
   );
