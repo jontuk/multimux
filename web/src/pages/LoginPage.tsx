@@ -14,10 +14,16 @@ export default function LoginPage() {
     }
   }
   return (
-    <div className="login-page">
-      <h1>multimux</h1>
-      <button onClick={onLogin}>Sign in with passkey</button>
-      {error && <p className="error">{error}</p>}
+    <div className="auth-page login-page">
+      <div className="auth-wordmark">
+        <span className="prompt">$</span>
+        multimux
+        <span className="cursor" aria-hidden="true" />
+      </div>
+      <div className="auth-card">
+        <button onClick={onLogin}>Sign in with passkey</button>
+        {error && <p className="error">{error}</p>}
+      </div>
     </div>
   );
 }
