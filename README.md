@@ -83,7 +83,7 @@ multimux --version                           print version
 (plain HTTP on localhost, trusting `X-Forwarded-*` — see
 [docs/proxy.md](docs/proxy.md)).
 
-## Security model (the honest version)
+## Security model 
 
 multimux is a **local, single-user tool** and its security posture reflects that.
 
