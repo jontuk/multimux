@@ -19,6 +19,17 @@ daemon minting its own name-constrained local certificate authority so you get
    [releases page](https://github.com/jontuk/multimux/releases) and put the
    `multimux` binary somewhere on your `PATH`.
 
+   On macOS, Gatekeeper blocks downloaded binaries that aren't notarized with a
+   message like *“Apple could not verify 'multimux' is free from malware”*.
+   Remove the quarantine attribute to allow it to run:
+
+   ```
+   xattr -d com.apple.quarantine /path/to/multimux
+   ```
+
+   (Alternatively: System Settings → Privacy & Security → **Open Anyway** after
+   the first blocked attempt.)
+
 2. **Install the background service** (launchd on macOS, systemd user unit on
    Linux). This starts the daemon and keeps it running across logout/login:
 

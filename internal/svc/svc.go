@@ -3,6 +3,8 @@
 package svc
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +12,10 @@ import (
 )
 
 const label = "com.jontuk.multimux"
+
+// defaultPathEnv covers the common tmux install locations (Homebrew on both
+// architectures, system paths) when the installing shell's PATH is unavailable.
+const defaultPathEnv = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -21,6 +27,10 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 		<string>%s</string>
 		<string>serve</string>
 	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key><string>%s</string>
+	</dict>
 	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>
 	<key>StandardOutPath</key><string>%s</string>
@@ -34,6 +44,7 @@ Description=multimux terminal session daemon
 
 [Service]
 ExecStart=%s serve
+Environment="PATH=%s"
 Restart=on-failure
 
 [Install]
@@ -41,11 +52,16 @@ WantedBy=default.target
 `
 
 // UnitContent renders the service definition for goos. Pure: no filesystem
-// writes, so tests cover the exact artefact installed.
-func UnitContent(goos, execPath, logPath string) (path, content string, err error) {
+// writes, so tests cover the exact artefact installed. pathEnv is baked into
+// the unit as the service PATH — launchd and systemd don't inherit the user's
+// shell PATH, so tmux from Homebrew is otherwise invisible to the daemon.
+func UnitContent(goos, execPath, logPath, pathEnv string) (path, content string, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", err
+	}
+	if pathEnv == "" {
+		pathEnv = defaultPathEnv
 	}
 	switch goos {
 	case "darwin":
@@ -53,17 +69,21 @@ func UnitContent(goos, execPath, logPath string) (path, content string, err erro
 			logPath = filepath.Join(home, ".local", "share", "multimux", "multimux.log")
 		}
 		path = filepath.Join(home, "Library", "LaunchAgents", label+".plist")
-		return path, fmt.Sprintf(plistTemplate, label, execPath, logPath, logPath), nil
+		var escaped bytes.Buffer
+		if err := xml.EscapeText(&escaped, []byte(pathEnv)); err != nil {
+			return "", "", err
+		}
+		return path, fmt.Sprintf(plistTemplate, label, execPath, escaped.String(), logPath, logPath), nil
 	case "linux":
 		path = filepath.Join(home, ".config", "systemd", "user", "multimux.service")
-		return path, fmt.Sprintf(systemdTemplate, execPath), nil
+		return path, fmt.Sprintf(systemdTemplate, execPath, pathEnv), nil
 	default:
 		return "", "", fmt.Errorf("svc: unsupported OS %q", goos)
 	}
 }
 
 func Install(goos, execPath string) error {
-	path, content, err := UnitContent(goos, execPath, "")
+	path, content, err := UnitContent(goos, execPath, "", os.Getenv("PATH"))
 	if err != nil {
 		return err
 	}
@@ -99,7 +119,7 @@ func Install(goos, execPath string) error {
 }
 
 func Uninstall(goos string) error {
-	path, _, err := UnitContent(goos, "/unused", "")
+	path, _, err := UnitContent(goos, "/unused", "", "")
 	if err != nil {
 		return err
 	}
