@@ -127,6 +127,56 @@ multimux is a **local, single-user tool** and its security posture reflects that
 - **Contributions are not accepted.** This is a personal project shared as-is.
   Issues and PRs may go unanswered; fork freely.
 
+## Developing
+
+Prerequisites: Go, Node + pnpm, tmux.
+
+**Backend + frontend dev loop.** The Vite dev server proxies `/api`, `/healthz`,
+and `/ws` to a locally running daemon at `https://localhost:8686`
+(`web/vite.config.ts`), so run both:
+
+```bash
+# terminal 1: the daemon, foreground, with a throwaway data dir so you
+# don't touch your real install (passkeys, sessions, CA)
+MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . serve
+
+# terminal 2: the frontend with hot reload
+cd web && pnpm install && pnpm dev
+```
+
+Open the Vite URL (default `http://localhost:5173`). Frontend edits hot-reload;
+Go changes need a daemon restart. The dev daemon prints its own setup URL —
+register a throwaway passkey against it.
+
+**Frontend-only changes** still need a daemon behind the proxy for anything
+that touches the API; pure component work is covered by `pnpm test` (vitest +
+jsdom).
+
+**Building the real binary.** The Go binary embeds `web/dist` (`go:embed` in
+`main.go`), so build the frontend first or your binary ships stale assets:
+
+```bash
+cd web && pnpm build && cd ..
+go build -o multimux .
+```
+
+**Testing an install-like setup** without touching your real service: run the
+freshly built binary in the foreground (`./multimux serve`) with
+`MULTIMUX_DATA_DIR` pointed somewhere disposable. To exercise the actual
+launchd/systemd path, `multimux service install` picks up whatever binary you
+point it at — but it will replace your existing unit, so uninstall/reinstall
+deliberately.
+
+**Before committing / releasing:**
+
+```bash
+./verify.sh   # gofmt, go vet, go test, pnpm lint + test + build
+```
+
+CI (`.github/workflows/ci.yml`) runs the same checks on macOS and Linux.
+Releases are cut by pushing a `v*` tag; goreleaser
+(`.github/workflows/release.yml`) builds the archives for the releases page.
+
 ## License
 
 [MIT](LICENSE). © 2026 Jon Turner.
