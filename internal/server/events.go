@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -12,28 +13,26 @@ import (
 // Hub fans session/layout events out to every connected events WebSocket so
 // multiple open tabs stay consistent.
 type Hub struct {
-	mu   chan struct{} // 1-buffered channel as mutex (keeps select simple)
+	mu   sync.Mutex
 	subs map[chan []byte]struct{}
 }
 
 func NewHub() *Hub {
-	h := &Hub{mu: make(chan struct{}, 1), subs: make(map[chan []byte]struct{})}
-	h.mu <- struct{}{}
-	return h
+	return &Hub{subs: make(map[chan []byte]struct{})}
 }
 
 func (h *Hub) Subscribe() chan []byte {
 	ch := make(chan []byte, 16)
-	<-h.mu
+	h.mu.Lock()
 	h.subs[ch] = struct{}{}
-	h.mu <- struct{}{}
+	h.mu.Unlock()
 	return ch
 }
 
 func (h *Hub) Unsubscribe(ch chan []byte) {
-	<-h.mu
+	h.mu.Lock()
 	delete(h.subs, ch)
-	h.mu <- struct{}{}
+	h.mu.Unlock()
 }
 
 // Broadcast sends {"type":...,"payload":...} to all subscribers. Sends are
@@ -45,14 +44,14 @@ func (h *Hub) Broadcast(eventType string, payload any) {
 		slog.Error("hub marshal", "err", err)
 		return
 	}
-	<-h.mu
+	h.mu.Lock()
 	for ch := range h.subs {
 		select {
 		case ch <- raw:
 		default:
 		}
 	}
-	h.mu <- struct{}{}
+	h.mu.Unlock()
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +75,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	ping := time.NewTicker(30 * time.Second)
+	ping := time.NewTicker(pingInterval)
 	defer ping.Stop()
 	for {
 		select {

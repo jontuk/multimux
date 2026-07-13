@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { getJSON } from "../api";
+import { getJSON, putJSON } from "../api";
 import { localServer } from "../servers";
 
 type Settings = { hostname: string; extraSans: string; port: string };
@@ -30,18 +30,7 @@ export default function DaemonPanel() {
     if (!/^\d+$/.test(port)) return;
     try {
       setLoading(true);
-      const res = await fetch(localServer().origin + "/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({
-          hostname,
-          extraSans,
-          port,
-        }),
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const data = (await res.json()) as SettingsResponse;
+      const data = await putJSON<SettingsResponse>(localServer(), "/api/settings", { hostname, extraSans, port });
       if (data.rpWarning) {
         setRpWarning(true);
       }

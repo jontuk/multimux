@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getJSON, apiFetch, postJSON } from "../api";
+import { getJSON, postJSON, putJSON } from "../api";
 import { listServers, localServer, type Server } from "../servers";
 import { emptyLayout, reshape, setTile, swapTiles, type GridShape, type Layout, type Tile } from "./model";
 import ShapePicker from "./ShapePicker";
@@ -29,11 +29,7 @@ export default function GridPage() {
 
   const persist = useCallback((l: Layout) => {
     setLayout(l);
-    apiFetch(localServer(), "/api/layout", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(l),
-    }).catch(() => {});
+    putJSON(localServer(), "/api/layout", l).catch(() => {});
   }, []);
 
   const refreshSessions = useCallback(() => {
