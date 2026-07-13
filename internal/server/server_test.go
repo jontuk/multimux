@@ -116,4 +116,13 @@ func TestCORSPreflight(t *testing.T) {
 	}
 }
 
+func TestOversizedBodyRejected(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	huge := `{"name":"x","command":"` + strings.Repeat("a", 2<<20) + `"}`
+	if w := do(t, s, "POST", "/api/tools", token, huge); w.Code != 400 {
+		t.Fatalf("2MB body = %d, want 400", w.Code)
+	}
+}
+
 func stringsReader(s string) *strings.Reader { return strings.NewReader(s) }

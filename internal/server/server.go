@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jontuk/multimux/internal/auth"
 	"github.com/jontuk/multimux/internal/store"
@@ -29,10 +30,15 @@ type Server struct {
 	cfg Config
 	mux *http.ServeMux
 	hub *Hub
+
+	// reconcileGrace is how old a running session row must be before Reconcile
+	// may declare it dead — creation inserts the row before the tmux session
+	// exists, and a reconcile tick in that window must not race it.
+	reconcileGrace time.Duration
 }
 
 func New(cfg Config) *Server {
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), hub: NewHub()}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), hub: NewHub(), reconcileGrace: 10 * time.Second}
 	s.routes()
 	return s
 }
@@ -75,14 +81,28 @@ func (s *Server) routes() {
 }
 
 // Handler wraps the mux in (outermost first) logging → CORS → setup gate →
-// auth. Static assets and /healthz and /api/auth/{login,setup} bypass auth.
+// auth → body cap. Static assets and /healthz and /api/auth/{login,setup}
+// bypass auth.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
+	h = limitBody(h)
 	h = s.authGate(h)
 	h = s.setupGate(h)
 	h = s.cors(h)
 	h = logRequests(h)
 	return h
+}
+
+// limitBody caps request bodies so unauthenticated endpoints (the WebAuthn
+// ceremonies) cannot be fed unbounded JSON. Nothing in the API legitimately
+// approaches the cap — the largest payloads are attestations of a few KB.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func isProtected(path string) bool {

@@ -14,6 +14,10 @@ import (
 	"github.com/jontuk/multimux/internal/store"
 )
 
+// pingInterval keeps otherwise-idle WebSockets alive through proxies and NAT
+// (an idle terminal produces no traffic at all).
+const pingInterval = 30 * time.Second
+
 // checkWSOrigin defends against cross-site WebSocket hijacking: a browser can
 // be tricked into opening a WS with the victim's cookie, so cookie-authenticated
 // upgrades must come from our own origins. Token-authenticated upgrades carry
@@ -73,6 +77,25 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 
 	arb := s.cfg.Arbiter.Register(sess.TmuxName)
 	defer arb.Unregister()
+
+	// Keepalive pings; WriteControl is safe alongside the PTY→WS writer.
+	stopPing := make(chan struct{})
+	defer close(stopPing)
+	go func() {
+		ping := time.NewTicker(pingInterval)
+		defer ping.Stop()
+		for {
+			select {
+			case <-ping.C:
+				deadline := time.Now().Add(5 * time.Second)
+				if conn.WriteControl(websocket.PingMessage, nil, deadline) != nil {
+					return
+				}
+			case <-stopPing:
+				return
+			}
+		}
+	}()
 
 	ptyConn, err := s.cfg.Tmux.Attach(sess.TmuxName)
 	if err != nil {

@@ -73,6 +73,7 @@ func TestCreateSessionBadTool(t *testing.T) {
 
 func TestReconcileMarksDead(t *testing.T) {
 	s, st, _ := newTmuxTestServer(t)
+	s.reconcileGrace = 0 // the row below is brand new; skip the create-race grace
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	// DB row without a live tmux session (simulates daemon restart after reboot).
 	sess, _ := st.CreateSession(tool.ID, "/tmp")
@@ -86,6 +87,25 @@ func TestReconcileMarksDead(t *testing.T) {
 	got, _ := st.GetSession(sess.ID)
 	if got.Status != "dead" {
 		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// A freshly-inserted row whose tmux session does not exist yet (creation in
+// flight) must survive a reconcile tick.
+func TestReconcileSparesFreshSessions(t *testing.T) {
+	s, st, _ := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	sess, _ := st.CreateSession(tool.ID, "/tmp")
+	dead, err := s.Reconcile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dead) != 0 {
+		t.Fatalf("dead = %+v, want none within the grace period", dead)
+	}
+	got, _ := st.GetSession(sess.ID)
+	if got.Status != "running" {
+		t.Fatalf("status = %s, want running", got.Status)
 	}
 }
 
@@ -105,5 +125,13 @@ func TestLayoutAPI(t *testing.T) {
 	json.Unmarshal([]byte(doc), &want)
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("layout = %v", got)
+	}
+}
+
+func TestLayoutRejectsNonJSON(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	if w := do(t, s, "PUT", "/api/layout", token, "{not json"); w.Code != 400 {
+		t.Fatalf("put garbage layout = %d, want 400", w.Code)
 	}
 }

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/jontuk/multimux/internal/store"
 )
@@ -26,22 +28,26 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "bad body"})
 		return
 	}
-	var tool *store.Tool
 	tools, err := s.cfg.Store.ListTools()
-	if err == nil {
-		for i := range tools {
-			if tools[i].ID == in.ToolID {
-				tool = &tools[i]
-			}
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	dirs, err := s.cfg.Store.ListDirs()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	var tool *store.Tool
+	for i := range tools {
+		if tools[i].ID == in.ToolID {
+			tool = &tools[i]
 		}
 	}
 	var dir *store.Dir
-	dirs, err2 := s.cfg.Store.ListDirs()
-	if err2 == nil {
-		for i := range dirs {
-			if dirs[i].ID == in.DirID {
-				dir = &dirs[i]
-			}
+	for i := range dirs {
+		if dirs[i].ID == in.DirID {
+			dir = &dirs[i]
 		}
 	}
 	if tool == nil || dir == nil {
@@ -135,6 +141,13 @@ func (s *Server) handlePutLayout(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "bad body"})
 		return
 	}
+	// The document is opaque to the daemon but is served back with a JSON
+	// content type, so reject bodies that aren't JSON (including ones the
+	// 64KB limit truncated mid-document).
+	if !json.Valid(body) {
+		writeJSON(w, 400, map[string]string{"error": "layout must be valid JSON"})
+		return
+	}
 	if err := s.cfg.Store.SetLayout(string(body)); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
@@ -155,8 +168,15 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 		return nil, err
 	}
 	var newlyDead []store.Session
+	now := time.Now()
 	for _, sess := range sessions {
 		if sess.Status != "running" || s.cfg.Tmux.IsAlive(sess.TmuxName) {
+			continue
+		}
+		// The DB row is inserted before the tmux session exists (the tmux name
+		// derives from the row ID), so a tick landing in that window would
+		// otherwise declare a session dead while it is still being created.
+		if now.Sub(sess.CreatedAt) < s.reconcileGrace {
 			continue
 		}
 		if err := s.cfg.Store.SetSessionStatus(sess.ID, "dead"); err != nil {
