@@ -59,6 +59,29 @@ func hostnames(st *store.Store) ([]string, error) {
 	return names, nil
 }
 
+// computeOrigins returns the browser origins allowed to authenticate against
+// this daemon (WebAuthn RP origins and the cookie-auth WebSocket origin
+// check), one or two per hostname. Browsers omit a default ":443" from the
+// Origin, so the portless form is what arrives when the daemon listens on 443
+// or sits behind a TLS-terminating proxy (Caddy, Tailscale Serve — see
+// docs/proxy.md); without it, login and terminal sockets fail behind a proxy.
+// The explicit-port form is kept in proxy mode for proxies that publish a
+// non-default port.
+func computeOrigins(names []string, port int, behindProxy bool) []string {
+	var origins []string
+	for _, n := range names {
+		if port == 443 {
+			origins = append(origins, "https://"+n)
+			continue
+		}
+		origins = append(origins, fmt.Sprintf("https://%s:%d", n, port))
+		if behindProxy {
+			origins = append(origins, "https://"+n)
+		}
+	}
+	return origins
+}
+
 func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writer) int {
 	fs2 := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs2.SetOutput(stderr)
@@ -102,10 +125,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	if !strings.Contains(rpID, ".") && rpID != "localhost" && len(names) > 1 {
 		rpID = names[1]
 	}
-	var origins []string
-	for _, n := range names {
-		origins = append(origins, fmt.Sprintf("https://%s:%d", n, *port))
-	}
+	origins := computeOrigins(names, *port, *behindProxy)
 
 	am, err := auth.New(st, rpID, origins)
 	if err != nil {
@@ -138,7 +158,8 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	if *behindProxy {
 		addr := fmt.Sprintf("127.0.0.1:%d", *port)
 		fmt.Fprintf(stdout, "multimux %s listening on http://%s (proxy mode)\n", version, addr)
-		if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
+		httpSrv := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+		if err := httpSrv.ListenAndServe(); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -165,7 +186,14 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 
 	addr := fmt.Sprintf(":%d", *port)
 	fmt.Fprintf(stdout, "multimux %s listening on %s (%s)\n", version, addr, origins[0])
-	if err := http.ListenAndServeTLS(addr, p.LeafCertPath(), p.LeafKeyPath(), srv.Handler()); err != nil {
+	// p.TLSConfig() re-reads the leaf from disk when it changes, so the
+	// rotation ticker above takes effect without a restart.
+	httpsSrv := &http.Server{
+		Addr: addr, Handler: srv.Handler(),
+		TLSConfig:         p.TLSConfig(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := httpsSrv.ListenAndServeTLS("", ""); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
