@@ -43,7 +43,7 @@ const systemdTemplate = `[Unit]
 Description=multimux terminal session daemon
 
 [Service]
-ExecStart=%s serve
+ExecStart="%s" serve
 Environment="PATH=%s"
 Restart=on-failure
 
@@ -69,17 +69,37 @@ func UnitContent(goos, execPath, logPath, pathEnv string) (path, content string,
 			logPath = filepath.Join(home, ".local", "share", "multimux", "multimux.log")
 		}
 		path = filepath.Join(home, "Library", "LaunchAgents", label+".plist")
-		var escaped bytes.Buffer
-		if err := xml.EscapeText(&escaped, []byte(pathEnv)); err != nil {
+		// Every interpolated <string> needs escaping, not just PATH — an exec
+		// or log path containing & or < would otherwise corrupt the plist.
+		exeXML, err := xmlEscape(execPath)
+		if err != nil {
 			return "", "", err
 		}
-		return path, fmt.Sprintf(plistTemplate, label, execPath, escaped.String(), logPath, logPath), nil
+		pathXML, err := xmlEscape(pathEnv)
+		if err != nil {
+			return "", "", err
+		}
+		logXML, err := xmlEscape(logPath)
+		if err != nil {
+			return "", "", err
+		}
+		return path, fmt.Sprintf(plistTemplate, label, exeXML, pathXML, logXML, logXML), nil
 	case "linux":
 		path = filepath.Join(home, ".config", "systemd", "user", "multimux.service")
+		// Quote the exec path so a binary living under a directory with
+		// spaces still parses as a single systemd argument.
 		return path, fmt.Sprintf(systemdTemplate, execPath, pathEnv), nil
 	default:
 		return "", "", fmt.Errorf("svc: unsupported OS %q", goos)
 	}
+}
+
+func xmlEscape(s string) (string, error) {
+	var b bytes.Buffer
+	if err := xml.EscapeText(&b, []byte(s)); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 func Install(goos, execPath string) error {

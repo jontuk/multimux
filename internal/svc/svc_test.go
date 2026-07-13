@@ -54,7 +54,7 @@ func TestUnitContentLinux(t *testing.T) {
 	if !strings.HasSuffix(path, ".config/systemd/user/multimux.service") {
 		t.Fatalf("path = %s", path)
 	}
-	for _, want := range []string{"ExecStart=/usr/local/bin/multimux serve", "Restart=on-failure", "WantedBy=default.target",
+	for _, want := range []string{`ExecStart="/usr/local/bin/multimux" serve`, "Restart=on-failure", "WantedBy=default.target",
 		"Environment=\"PATH=/usr/local/bin:/usr/bin:/bin\""} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("unit missing %q:\n%s", want, content)
@@ -65,5 +65,30 @@ func TestUnitContentLinux(t *testing.T) {
 func TestUnitContentUnsupported(t *testing.T) {
 	if _, _, err := UnitContent("windows", "/x", "", ""); err == nil {
 		t.Fatal("want error for unsupported OS")
+	}
+}
+
+func TestUnitContentDarwinEscapesExecAndLogPaths(t *testing.T) {
+	_, content, err := UnitContent("darwin", "/Users/a&b/multimux", "/tmp/log&dir/mm.log", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"<string>/Users/a&amp;b/multimux</string>", "/tmp/log&amp;dir/mm.log"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("plist missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "a&b") || strings.Contains(content, "log&dir") {
+		t.Fatalf("plist contains raw ampersand:\n%s", content)
+	}
+}
+
+func TestUnitContentLinuxQuotesExecPath(t *testing.T) {
+	_, content, err := UnitContent("linux", "/home/user/my tools/multimux", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, `ExecStart="/home/user/my tools/multimux" serve`) {
+		t.Fatalf("exec path not quoted:\n%s", content)
 	}
 }
