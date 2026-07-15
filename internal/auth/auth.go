@@ -148,16 +148,30 @@ func (m *Manager) Logout(token string) error {
 	return m.store.DeleteAuthSession(hashToken(token))
 }
 
-// TokenFromRequest extracts the session token from cookie, Authorization
-// header, or ?token= query param (in that order).
-func TokenFromRequest(r *http.Request) string {
-	if c, err := r.Cookie(CookieName); err == nil && c.Value != "" {
-		return c.Value
-	}
+// ExplicitToken extracts a bearer token the requester attached deliberately —
+// Authorization header or ?token= query param. Cookies are excluded: browsers
+// attach them to WebSockets unconditionally (there is no credentials:omit for
+// WS), so a cookie's presence says nothing about the caller's intent.
+func ExplicitToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); len(h) > 7 && h[:7] == "Bearer " {
 		return h[7:]
 	}
 	return r.URL.Query().Get("token")
+}
+
+// TokenFromRequest extracts the session token: an explicit token
+// (Authorization header, then ?token=) wins over the cookie. Explicit-first
+// matters for security: the WS origin check is skipped for token-carrying
+// upgrades, so authentication must then use that token — falling back to the
+// cookie would let a garbage token ride a valid cookie past the CSWSH guard.
+func TokenFromRequest(r *http.Request) string {
+	if t := ExplicitToken(r); t != "" {
+		return t
+	}
+	if c, err := r.Cookie(CookieName); err == nil && c.Value != "" {
+		return c.Value
+	}
+	return ""
 }
 
 // Middleware rejects requests without a valid session.

@@ -152,3 +152,30 @@ func TestMiddleware(t *testing.T) {
 		}
 	}
 }
+
+// Browsers attach cookies to WebSockets unconditionally, so a request that
+// carries an explicit bearer token (Authorization header or ?token=) must be
+// authenticated by that token — the cookie may belong to a different login on
+// a same-site daemon, and the WS origin check is skipped for token auth.
+func TestTokenFromRequestPrefersExplicitToken(t *testing.T) {
+	withCookie := func(r *http.Request) *http.Request {
+		r.AddCookie(&http.Cookie{Name: CookieName, Value: "cookie-token"})
+		return r
+	}
+
+	r := withCookie(httptest.NewRequest("GET", "/ws/pty/1", nil))
+	r.Header.Set("Authorization", "Bearer header-token")
+	if got := TokenFromRequest(r); got != "header-token" {
+		t.Errorf("Authorization + cookie: got %q, want header-token", got)
+	}
+
+	r = withCookie(httptest.NewRequest("GET", "/ws/pty/1?token=query-token", nil))
+	if got := TokenFromRequest(r); got != "query-token" {
+		t.Errorf("query + cookie: got %q, want query-token", got)
+	}
+
+	r = withCookie(httptest.NewRequest("GET", "/ws/pty/1", nil))
+	if got := TokenFromRequest(r); got != "cookie-token" {
+		t.Errorf("cookie only: got %q, want cookie-token", got)
+	}
+}

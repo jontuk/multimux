@@ -123,6 +123,55 @@ func TestPTYRejectsUnknownSession(t *testing.T) {
 	}
 }
 
+// Regression for the multi-daemon grid on a shared tailnet: two daemons on
+// the same site (a.<tailnet>.ts.net / b.<tailnet>.ts.net) exchange cookies on
+// every WS upgrade because browsers have no credentials:omit for WebSockets.
+// A cross-daemon tile therefore arrives with daemon A's Origin, daemon B's
+// cookie, AND a valid ?token= — the token must win and the upgrade succeed.
+func TestPTYValidTokenWithCookieFromForeignOrigin(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	cookieToken, _ := am.CreateSession("UA2")
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	// Session 999 doesn't exist: a 404 proves the request cleared both the
+	// auth gate and the origin check; today it dies at 403 before either.
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/pty/999?token=" + token
+	hdr := http.Header{
+		"Origin": []string{"https://evil.example"},
+		"Cookie": []string{"mm_session=" + cookieToken},
+	}
+	_, resp, err := websocket.DefaultDialer.Dial(url, hdr)
+	if err == nil {
+		t.Fatal("dial to unknown session succeeded")
+	}
+	if resp == nil || resp.StatusCode != 404 {
+		t.Fatalf("status = %v, want 404 (valid token must beat the cookie-origin check)", resp)
+	}
+}
+
+// The flip side: skipping the origin check for token-carrying upgrades must
+// not let a garbage token ride a valid cookie past authentication — that
+// would reopen the CSWSH hole the origin check exists to close.
+func TestPTYGarbageTokenDoesNotRideCookie(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	cookieToken, _ := am.CreateSession("UA")
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/pty/1?token=garbage"
+	hdr := http.Header{
+		"Origin": []string{"https://evil.example"},
+		"Cookie": []string{"mm_session=" + cookieToken},
+	}
+	_, resp, err := websocket.DefaultDialer.Dial(url, hdr)
+	if err == nil {
+		t.Fatal("garbage token + valid cookie from foreign origin succeeded")
+	}
+	if resp == nil || resp.StatusCode != 401 {
+		t.Fatalf("status = %v, want 401 (garbage token must be rejected, not fall back to cookie)", resp)
+	}
+}
+
 func TestPTYRejectsCookieAuthFromForeignOrigin(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")

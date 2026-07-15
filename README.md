@@ -81,32 +81,28 @@ environment variable).
 The daemon derives its identity from the OS hostname, plus a `.local` (mDNS)
 form when the hostname has no dot. On plenty of setups neither name is
 reachable from a browser: mDNS is blocked or disabled, or the machine is only
-reachable through Tailscale or internal DNS. The name matters beyond TLS — it
-is also the WebAuthn **RP ID** your passkey is bound to, and it must contain a
-dot (the WebAuthn library rejects single-label RP IDs; that's why the bare
-hostname gets a `.local` sibling).
-
-Until a `serve --hostname` flag lands (see [TODO.md](TODO.md)), the override is
-a one-line database edit. With the daemon stopped:
+reachable through Tailscale or internal DNS. Restart with a name that does
+resolve:
 
 ```bash
-sqlite3 ~/.local/share/multimux/multimux.db \
-  "INSERT OR REPLACE INTO settings(key,value) VALUES('hostname','<name-that-resolves>');"
+multimux serve --hostname your-machine.your-tailnet.ts.net
 ```
 
-Good choices: a Tailscale MagicDNS FQDN (`your-machine.your-tailnet.ts.net`) or
-a name your internal DNS serves — see
-[docs/work-network.md](docs/work-network.md). On the next start the daemon
-regenerates its CA and leaf certificate for the new name (the hostname set is
-baked into the CA's name constraints), so re-run `multimux ca trust`
-afterwards. Do all of this **before** registering your passkey: changing the
-hostname later changes the RP ID and invalidates existing passkeys
-(`multimux auth reset --yes` starts setup over).
+The name is persisted (the `MULTIMUX_HOSTNAME` environment variable works too,
+handy for service units) and must contain a dot or be literal `localhost` — it
+doubles as the WebAuthn **RP ID** your passkey is bound to; see
+[docs/security.md](docs/security.md#rp-id-and-the-hostname-change-warning).
+Good choices: a Tailscale MagicDNS FQDN or a name your internal DNS serves —
+see [docs/work-network.md](docs/work-network.md). The daemon regenerates its
+CA and leaf certificate for the new name, so re-run `multimux ca trust`.
+Do this **before** registering your passkey: once passkeys exist, `--hostname`
+refuses any change that would alter the RP ID and points you at
+`multimux auth reset --yes`.
 
 ## Commands
 
 ```
-multimux serve                              run the daemon in the foreground
+multimux serve                              run the daemon in the foreground (--port, --hostname, --dev, --behind-proxy)
 multimux service install|uninstall|status   manage the launchd/systemd user service
 multimux auth reset --yes                    wipe credentials and return to setup-pending
 multimux ca trust                            install the local CA into the OS trust store
@@ -173,32 +169,39 @@ MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . serve
 ```
 
 The dev daemon is a full install as far as auth is concerned: the same
-hostname rules apply (see *If the setup URL doesn't resolve* above — the
-override goes into `/tmp/multimux-dev/multimux.db`), the CA needs trusting
+hostname rules apply (see *If the setup URL doesn't resolve* above —
+`--hostname` persists into the throwaway data dir), the CA needs trusting
 (`MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . ca trust`), and it prints a
 setup URL on which you register a throwaway passkey — **at the daemon's own
-`https://` origin**, not through Vite.
+`https://` origin**, not through Vite. For the frontend hot-reload loop none
+of that is needed; see below.
 
 **Backend loop.** Work against the daemon's own URL. Go changes: restart
 `go run . serve`. Frontend changes: `cd web && pnpm build`, then restart the
 daemon — `go run` re-embeds `web/dist` on every start.
 
-**Frontend hot reload (currently limited).** The Vite dev server proxies
-`/api`, `/healthz`, and `/ws` to `https://localhost:8686`
-(`web/vite.config.ts`):
+**Frontend hot reload.** Two terminals:
 
 ```bash
-cd web && pnpm install && pnpm dev
+# terminal 1 — dev daemon; --dev forces the RP ID to localhost and allows the Vite origin
+MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . serve --dev --port 8787
+
+# terminal 2 — Vite, proxying /api, /healthz and /ws to the dev daemon
+cd web && pnpm install && MULTIMUX_DEV_TARGET=https://localhost:8787 pnpm dev
 ```
 
-Know its limits: **you cannot log in at the Vite URL.** WebAuthn is pinned to
-the daemon's hostname — the browser refuses the ceremony from
-`http://localhost:5173`, the server's origin allowlist rejects it regardless,
-and the WebSocket origin check turns away cookie-carrying upgrades from
-foreign origins. So `localhost:5173` is useful for unauthenticated screens
-(setup/login styling) and pure component work (`pnpm test`, vitest + jsdom);
-anything behind login happens at the daemon's own URL for now. A `serve --dev`
-mode to make the hot-reload loop fully work is tracked in [TODO.md](TODO.md).
+Register a throwaway passkey at `http://localhost:5173/setup?code=…` (the
+daemon prints the code) and the full app — login, grid, live terminals —
+works at `http://localhost:5173` with hot reload. No CA trust needed: the
+browser talks plain HTTP to Vite. Caveats:
+
+- Chrome/Firefox only — Safari does not treat `http://localhost` as
+  trustworthy for `Secure` cookies, so login won't stick there.
+- `--dev` refuses to run against a data dir that already has passkeys; keep it
+  on throwaway `MULTIMUX_DATA_DIR`s.
+- If nothing else is listening on 8686 you can drop `--port` and
+  `MULTIMUX_DEV_TARGET` (the proxy target defaults to
+  `https://localhost:8686`, see `web/vite.config.ts`).
 
 **Building the real binary.** The Go binary embeds `web/dist` (`go:embed` in
 `main.go`), so build the frontend first or your binary ships stale assets:

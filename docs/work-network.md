@@ -31,15 +31,28 @@ to load.
 
 Fixes, in order of preference:
 
-1. **Use a name your corporate DNS already serves.** Set the daemon's hostname to
-   an internal DNS name that resolves on the network, and add any additional names
-   you need under **Extra SANs** in the Daemon settings (these become both TLS
-   SANs and allowed origins). Do this **before** registering your first passkey,
-   because the hostname is the WebAuthn RP ID and changing it later invalidates
-   passkeys.
+1. **Use a name your corporate DNS already serves.** Start the daemon with an
+   internal DNS name that resolves on the network:
+
+   ```
+   multimux serve --hostname mux.corp.example.com
+   ```
+
+   The name is persisted (also settable via `MULTIMUX_HOSTNAME` for service
+   units) and must contain a dot (see
+   [docs/security.md](security.md#rp-id-and-the-hostname-change-warning)). Do
+   this **before** registering your first passkey, because the hostname is the
+   WebAuthn RP ID and changing it later invalidates passkeys — the daemon
+   refuses the change and points you at `multimux auth reset --yes`. Additional names go under **Extra SANs** in the
+   Daemon settings after you've logged in (these become both TLS SANs and
+   allowed origins).
 
 2. **Use a Tailscale MagicDNS name.** It resolves anywhere on your tailnet
-   regardless of corporate DNS, and it is stable — ideal as the RP ID.
+   regardless of corporate DNS, and it is stable — ideal as the RP ID:
+
+   ```
+   multimux serve --hostname <machine>.<tailnet>.ts.net
+   ```
 
 3. **Add a `hosts` entry.** As a last resort, map the daemon's name to its IP in
    each client's hosts file (`/etc/hosts` on macOS/Linux). Make sure the name you

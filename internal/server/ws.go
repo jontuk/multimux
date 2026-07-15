@@ -22,10 +22,18 @@ const pingInterval = 30 * time.Second
 // be tricked into opening a WS with the victim's cookie, so cookie-authenticated
 // upgrades must come from our own origins. Token-authenticated upgrades carry
 // the secret explicitly, so any origin is fine (that is how cross-daemon
-// tiles connect).
+// tiles connect). A cookie may accompany the token — browsers attach cookies
+// to WebSockets unconditionally, and same-site daemons (a/b.<tailnet>.ts.net)
+// exchange them on every upgrade — so the token's presence, not the cookie's
+// absence, decides which rule applies. Auth then uses that token, never the
+// cookie (TokenFromRequest is explicit-first), so a garbage token cannot ride
+// a valid cookie through this skipped check.
 func (s *Server) checkWSOrigin(r *http.Request) bool {
-	if c, err := r.Cookie(auth.CookieName); err != nil || c.Value == "" {
+	if auth.ExplicitToken(r) != "" {
 		return true // token-authenticated
+	}
+	if c, err := r.Cookie(auth.CookieName); err != nil || c.Value == "" {
+		return true // no credentials at all — the auth gate rejects these anyway
 	}
 	origin := r.Header.Get("Origin")
 	return origin == "" || slices.Contains(s.cfg.Origins, origin)

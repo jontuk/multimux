@@ -3,7 +3,7 @@
 Findings from dogfooding first-run and the dev loop on a machine where mDNS
 doesn't resolve (Tailscale-only reachability). Ordered roughly by impact.
 
-## 1. `serve --hostname <name>` — settable identity before first login
+## 1. ✅ DONE — `serve --hostname <name>` — settable identity before first login
 
 **Problem.** The daemon derives its hostname from `os.Hostname()`
 (`cmd/serve.go`), and on many machines that name is unreachable from a
@@ -27,7 +27,12 @@ shouldn't be the answer).
 - PKI already self-heals (`pki.Ensure` regenerates CA + leaf when the name
   set changes); make sure the "re-run `multimux ca trust`" warning is loud.
 
-## 2. Print setup/listen URLs users can actually open
+## 2. ✅ DONE (core) — Print setup/listen URLs users can actually open
+
+> Done: dotted-first URL ordering, one setup line per name, `--hostname` hint,
+> listen line uses most-resolvable origin. Skipped nice-to-haves: seeding from
+> macOS `LocalHostName` would change the PKI name set on existing installs
+> (CA regen churn), and `--hostname` now covers the Tailscale/MagicDNS case.
 
 **Problem.** The setup banner prints `origins[0]`, which is the **bare
 single-label hostname** (`https://myhost:8686/...`) — the least likely form to
@@ -43,7 +48,7 @@ examples.
   advertises) over the kernel hostname; if a Tailscale interface is up,
   suggest the MagicDNS FQDN.
 
-## 3. First-run ordering: CA trust must precede passkey registration
+## 3. ✅ DONE — First-run ordering: CA trust must precede passkey registration
 
 **Problem.** Browsers (Chrome for certain) refuse WebAuthn ceremonies on pages
 served with an untrusted certificate, so "open the setup URL, then trust the
@@ -56,7 +61,13 @@ Also fix `docs/work-network.md`, which tells users to change the hostname "in
 the Daemon settings **before** registering your first passkey" — the Settings
 UI is unreachable before login; point it at `--hostname` once item 1 lands.
 
-## 4. `serve --dev` — make the Vite hot-reload loop actually work
+## 4. ✅ DONE — `serve --dev` — make the Vite hot-reload loop actually work
+
+> Done: `--dev` forces RP ID `localhost`, appends `http://localhost:5173` +
+> `https://localhost:<port>` to origins, prints DEV MODE banner (incl. Safari
+> caveat), refuses when credentials exist. Verified at HTTP surface (rp.id,
+> refusal, banner) and, after item 5 landed, full browser acceptance:
+> register → login → grid → live PTY → HMR at http://localhost:5173.
 
 **Problem.** The documented two-terminal dev loop cannot authenticate at
 `http://localhost:5173`:
@@ -81,7 +92,12 @@ for `Secure` cookies — the dev loop targets Chrome/Firefox.
 **Acceptance.** register → login → grid → live PTY all work at
 `http://localhost:5173` with hot reload, no sqlite surgery, no CA trust.
 
-## 5. Vite proxy target is hardcoded
+## 5. ✅ DONE — Vite proxy target is hardcoded
+
+> Done: `MULTIMUX_DEV_TARGET` env var (default unchanged), README dev section
+> shows the two-command collision-free loop. Item 4's full browser acceptance
+> ran on top of this: register → login → grid → live PTY → HMR at :5173, all
+> green with a virtual-authenticator Chrome session.
 
 **Problem.** `web/vite.config.ts` pins `https://localhost:8686`. A real
 install already listening on 8686 collides with the dev daemon, and
@@ -91,7 +107,14 @@ install already listening on 8686 collides with the dev daemon, and
 `MULTIMUX_DEV_TARGET=https://localhost:8787 pnpm dev`) with the current value
 as default; mention the port collision in the README dev section.
 
-## 6. Latent bug: WS origin check fires even when a valid token is presented
+## 6. ✅ DONE — Latent bug: WS origin check fires even when a valid token is presented
+
+> Done: explicit token (Authorization / ?token=) now decides the WS origin
+> rule AND wins authentication over the cookie (`auth.ExplicitToken`,
+> explicit-first `TokenFromRequest`), so a garbage token cannot ride a valid
+> cookie past the skipped check. Regression tests: cookie+token+foreign origin
+> (was 403, now passes), garbage-token+cookie (401), cookie-only CSWSH guard
+> intact. Repro'd end-to-end on a live TLS daemon.
 
 **Problem.** `checkWSOrigin` treats "request has a session cookie" as "this is
 cookie auth" and then requires a same-origin `Origin` header — but browsers
@@ -108,7 +131,7 @@ daemons. Confirmed by code reading; needs an end-to-end repro.
 the token and ignore the cookie (or accept the upgrade if *either* check
 passes). Add a regression test with cookie + token + foreign origin.
 
-## 7. Docs cleanup once the above lands
+## 7. ✅ DONE — Docs cleanup once the above lands
 
 - Shrink README "If the setup URL doesn't resolve" to just `--hostname`
   (drop the sqlite recipe).

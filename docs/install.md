@@ -57,7 +57,16 @@ The daemon prints a setup URL containing a one-time code:
 Open: https://your-host.local:8686/setup?code=ABC123
 ```
 
-Open it and register a passkey. The default port is **8686**.
+The default port is **8686**. If the printed name won't resolve from your
+browser (mDNS blocked, corporate DNS, Tailscale-only), restart with a name that
+does: `multimux serve --hostname <name>` — it must contain a dot or be
+`localhost` (the name is the WebAuthn RP ID; see
+[docs/security.md](security.md#rp-id-and-the-hostname-change-warning)), and it
+is persisted.
+
+**Don't open the setup URL yet.** Browsers refuse passkey (WebAuthn) ceremonies
+on pages served with an untrusted certificate, so trust the CA first — next
+section.
 
 ## 3. Trust the local CA
 
@@ -104,7 +113,13 @@ certutil -A -n multimux -t "C,," -i ~/.local/share/multimux/pki/ca.pem -d sql:$H
 macOS, and Chrome on Linux for non-NSS profiles, use the OS store and need no
 extra step.
 
-## 4. Service management
+## 4. Register your passkey
+
+With the CA trusted, open the setup URL from step 2 and register a passkey.
+(If the one-time code has expired — they last 15 minutes — restart the daemon
+to print a fresh one.)
+
+## 5. Service management
 
 Instead of running `multimux serve` by hand, install it as a user-level service
 so it starts at login and restarts on failure:
@@ -131,7 +146,7 @@ The service runs `multimux serve` with no extra flags. To change the port or add
 extra SANs, edit them in the daemon's **Settings** page in the UI (they are stored
 in SQLite), or run `serve` manually with flags.
 
-## 5. Upgrading
+## 6. Upgrading
 
 multimux keeps no schema migrations you need to run by hand and stores nothing in
 the binary. To upgrade:

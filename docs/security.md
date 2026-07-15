@@ -78,11 +78,19 @@ WebAuthn binds every passkey to a **Relying Party ID (RP ID)** — effectively t
 daemon's hostname. **If the hostname changes, all existing passkeys stop
 working** and you have to re-register (via `auth reset` and a fresh setup code).
 
-Therefore: **choose a stable hostname before you register your first passkey.**
-Good choices are a name that will not change, such as a
+Therefore: **choose a stable hostname before you register your first passkey**,
+with `multimux serve --hostname <name>` (persisted; also settable via the
+`MULTIMUX_HOSTNAME` environment variable). Good choices are a name that will
+not change, such as a
 [Tailscale MagicDNS](https://tailscale.com/kb/1081/magicdns/) name
-(`your-host.tailnet-name.ts.net`) or a fixed LAN name. The Settings → Daemon page
-warns in red that changing the hostname invalidates all passkeys after restart.
+(`your-host.tailnet-name.ts.net`) or a fixed LAN name. Once passkeys exist,
+`--hostname` refuses any change that would alter the RP ID and points at
+`multimux auth reset --yes`; the Settings → Daemon page likewise warns in red
+that changing the hostname invalidates all passkeys after restart.
+
+The RP ID must contain a dot or be literal `localhost` — `go-webauthn` rejects
+other single-label values. This is the canonical statement of that constraint;
+install and work-network docs link here.
 
 Implementation notes:
 
