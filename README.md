@@ -51,13 +51,10 @@ daemon minting its own name-constrained local certificate authority so you get
    the daemon in the foreground with `multimux serve`, which prints the setup URL
    straight to the terminal.
 
-3. **Open the setup URL** in a browser on the same machine or network. Your
-   browser prompts you to create a passkey (Touch ID, Windows Hello, a security
-   key, or a phone). That passkey becomes your login; the setup code is then
-   consumed and the daemon is no longer setup-pending.
-
-4. **Trust the local CA** so `https://` loads without a warning (once per client
-   machine):
+3. **Trust the local CA** — and do it **before** opening the setup URL:
+   browsers refuse WebAuthn (passkey creation) on pages served with an
+   untrusted certificate, so registration fails if you skip this. The CA
+   exists as soon as the daemon has started once. Run once per client machine:
 
    ```
    multimux ca trust
@@ -65,9 +62,46 @@ daemon minting its own name-constrained local certificate authority so you get
 
    See [docs/install.md](docs/install.md) for the per-browser details on Linux.
 
+4. **Open the setup URL** in a browser on the same machine or network. Your
+   browser prompts you to create a passkey (Touch ID, Windows Hello, a security
+   key, or a phone). That passkey becomes your login; the setup code is then
+   consumed and the daemon is no longer setup-pending.
+
+   The URL uses your machine's hostname — **check that it resolves from the
+   device you're browsing on** (`ping your-host.local`). If it doesn't, fix
+   the hostname *first* (next section), so you don't register a passkey
+   against a name you can't reach.
+
 The daemon listens on **port 8686** by default (configurable) and stores its data
 under `~/.local/share/multimux` (override with the `MULTIMUX_DATA_DIR`
 environment variable).
+
+### If the setup URL doesn't resolve
+
+The daemon derives its identity from the OS hostname, plus a `.local` (mDNS)
+form when the hostname has no dot. On plenty of setups neither name is
+reachable from a browser: mDNS is blocked or disabled, or the machine is only
+reachable through Tailscale or internal DNS. The name matters beyond TLS — it
+is also the WebAuthn **RP ID** your passkey is bound to, and it must contain a
+dot (the WebAuthn library rejects single-label RP IDs; that's why the bare
+hostname gets a `.local` sibling).
+
+Until a `serve --hostname` flag lands (see [TODO.md](TODO.md)), the override is
+a one-line database edit. With the daemon stopped:
+
+```bash
+sqlite3 ~/.local/share/multimux/multimux.db \
+  "INSERT OR REPLACE INTO settings(key,value) VALUES('hostname','<name-that-resolves>');"
+```
+
+Good choices: a Tailscale MagicDNS FQDN (`your-machine.your-tailnet.ts.net`) or
+a name your internal DNS serves — see
+[docs/work-network.md](docs/work-network.md). On the next start the daemon
+regenerates its CA and leaf certificate for the new name (the hostname set is
+baked into the CA's name constraints), so re-run `multimux ca trust`
+afterwards. Do all of this **before** registering your passkey: changing the
+hostname later changes the RP ID and invalidates existing passkeys
+(`multimux auth reset --yes` starts setup over).
 
 ## Commands
 
@@ -131,26 +165,40 @@ multimux is a **local, single-user tool** and its security posture reflects that
 
 Prerequisites: Go, Node + pnpm, tmux.
 
-**Backend + frontend dev loop.** The Vite dev server proxies `/api`, `/healthz`,
-and `/ws` to a locally running daemon at `https://localhost:8686`
-(`web/vite.config.ts`), so run both:
+**Run a dev daemon** in the foreground with a throwaway data dir so you don't
+touch your real install (passkeys, sessions, CA):
 
 ```bash
-# terminal 1: the daemon, foreground, with a throwaway data dir so you
-# don't touch your real install (passkeys, sessions, CA)
 MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . serve
+```
 
-# terminal 2: the frontend with hot reload
+The dev daemon is a full install as far as auth is concerned: the same
+hostname rules apply (see *If the setup URL doesn't resolve* above — the
+override goes into `/tmp/multimux-dev/multimux.db`), the CA needs trusting
+(`MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . ca trust`), and it prints a
+setup URL on which you register a throwaway passkey — **at the daemon's own
+`https://` origin**, not through Vite.
+
+**Backend loop.** Work against the daemon's own URL. Go changes: restart
+`go run . serve`. Frontend changes: `cd web && pnpm build`, then restart the
+daemon — `go run` re-embeds `web/dist` on every start.
+
+**Frontend hot reload (currently limited).** The Vite dev server proxies
+`/api`, `/healthz`, and `/ws` to `https://localhost:8686`
+(`web/vite.config.ts`):
+
+```bash
 cd web && pnpm install && pnpm dev
 ```
 
-Open the Vite URL (default `http://localhost:5173`). Frontend edits hot-reload;
-Go changes need a daemon restart. The dev daemon prints its own setup URL —
-register a throwaway passkey against it.
-
-**Frontend-only changes** still need a daemon behind the proxy for anything
-that touches the API; pure component work is covered by `pnpm test` (vitest +
-jsdom).
+Know its limits: **you cannot log in at the Vite URL.** WebAuthn is pinned to
+the daemon's hostname — the browser refuses the ceremony from
+`http://localhost:5173`, the server's origin allowlist rejects it regardless,
+and the WebSocket origin check turns away cookie-carrying upgrades from
+foreign origins. So `localhost:5173` is useful for unauthenticated screens
+(setup/login styling) and pure component work (`pnpm test`, vitest + jsdom);
+anything behind login happens at the daemon's own URL for now. A `serve --dev`
+mode to make the hot-reload loop fully work is tracked in [TODO.md](TODO.md).
 
 **Building the real binary.** The Go binary embeds `web/dist` (`go:embed` in
 `main.go`), so build the frontend first or your binary ships stale assets:
