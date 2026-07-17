@@ -1,4 +1,4 @@
-import { parseOpenerOrigin } from "../pages/ConnectPage";
+import { parseOpenerOrigin } from "../pages/openerOrigin";
 
 test("valid https opener", () => {
   expect(parseOpenerOrigin("?opener=https%3A%2F%2Fbox-a%3A8686")).toBe("https://box-a:8686");

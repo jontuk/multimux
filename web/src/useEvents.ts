@@ -10,6 +10,9 @@ export function useEvents(server: Server, onEvent: (type: string) => void) {
     onEventRef.current = onEvent;
   });
 
+  // Depend on the URL string, not the server object: listServers() returns
+  // fresh objects each render, but the string only changes when it matters.
+  const url = wsURL(server, "/ws/events");
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;
@@ -17,7 +20,7 @@ export function useEvents(server: Server, onEvent: (type: string) => void) {
     let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
     function connect() {
       if (closed) return;
-      ws = new WebSocket(wsURL(server, "/ws/events"));
+      ws = new WebSocket(url);
       ws.onopen = () => (backoff = 1000);
       ws.onmessage = (ev) => {
         try {
@@ -39,5 +42,5 @@ export function useEvents(server: Server, onEvent: (type: string) => void) {
       if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
       ws?.close();
     };
-  }, [server.id, server.origin, server.token]);
+  }, [url]);
 }

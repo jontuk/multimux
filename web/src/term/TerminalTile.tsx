@@ -13,6 +13,10 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<ConnState>("connecting");
 
+  // Depend on the URL string, not the server object: listServers() returns
+  // fresh objects each render, but the string only changes when it matters.
+  const url = wsURL(server, `/ws/pty/${sessionId}`);
+
   useEffect(() => {
     const term = new Terminal({ scrollback: 0, fontSize: 13 }); // tmux owns scrollback (mouse mode)
     const fit = new FitAddon();
@@ -32,7 +36,7 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
     function connect() {
       if (closed) return;
       setState("connecting");
-      ws = new WebSocket(wsURL(server, `/ws/pty/${sessionId}`));
+      ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
         setState("open");
@@ -80,7 +84,7 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
       ro.disconnect();
       term.dispose();
     };
-  }, [server.id, server.origin, server.token, sessionId]);
+  }, [url]);
 
   return (
     <div className="terminal-tile" style={{ position: "relative", height: "100%" }}>

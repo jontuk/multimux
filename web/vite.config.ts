@@ -9,6 +9,9 @@ const target = process.env.MULTIMUX_DEV_TARGET ?? "https://localhost:8686";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    chunkSizeWarningLimit: 1024, // KiB; xterm alone pushes the main chunk past the 500 default
+  },
   server: {
     proxy: {
       "/api": { target, secure: false },
