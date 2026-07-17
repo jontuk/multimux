@@ -26,6 +26,7 @@ export default function DirsPanel() {
   return (
     <section>
       <h2>Directories</h2>
+      {dirs.length === 0 && <p className="empty-note">No directories yet. Add one below.</p>}
       <table>
         <tbody>
           {dirs.map((d) => (
@@ -35,17 +36,21 @@ export default function DirsPanel() {
                 <code>{d.path}</code>
               </td>
               <td>
-                <button onClick={() => del(localServer(), `/api/dirs/${d.id}`).then(refresh)}>delete</button>
+                <button className="danger" onClick={() => del(localServer(), `/api/dirs/${d.id}`).then(refresh)}>
+                  delete
+                </button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-      <input placeholder="path" value={path} onChange={(e) => setPath(e.target.value)} />
-      <button disabled={!name || !path} onClick={add}>
-        Add dir
-      </button>
+      <div className="settings-form">
+        <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input placeholder="path" value={path} onChange={(e) => setPath(e.target.value)} />
+        <button className="primary" disabled={!name || !path} onClick={add}>
+          Add dir
+        </button>
+      </div>
     </section>
   );
 }

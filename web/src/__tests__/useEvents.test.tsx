@@ -27,6 +27,50 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test("reports open when the socket connects", () => {
+  const onStatus = vi.fn();
+  renderHook(() => useEvents(server, () => {}, onStatus));
+  FakeWebSocket.instances[0].onopen?.();
+  expect(onStatus).toHaveBeenCalledWith("open");
+});
+
+test("repeated connect failures probe the API and classify the error", async () => {
+  vi.useFakeTimers();
+  const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+  vi.stubGlobal("fetch", fetchMock);
+  const onStatus = vi.fn();
+  renderHook(() => useEvents(server, () => {}, onStatus));
+
+  FakeWebSocket.instances[0].onclose?.(); // fail #1 — no probe yet
+  expect(fetchMock).not.toHaveBeenCalled();
+
+  await vi.advanceTimersByTimeAsync(1000); // reconnect
+  FakeWebSocket.instances[1].onclose?.(); // fail #2 — probe fires
+  await vi.advanceTimersByTimeAsync(0); // flush the probe promise
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://otherbox:8686/api/auth/me",
+    expect.objectContaining({ credentials: "omit" }),
+  );
+  expect(onStatus).toHaveBeenCalledWith("auth-expired");
+  vi.useRealTimers();
+});
+
+test("probe failure classifies as unreachable", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("refused")));
+  const onStatus = vi.fn();
+  renderHook(() => useEvents(server, () => {}, onStatus));
+
+  FakeWebSocket.instances[0].onclose?.();
+  await vi.advanceTimersByTimeAsync(1000);
+  FakeWebSocket.instances[1].onclose?.();
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(onStatus).toHaveBeenCalledWith("unreachable");
+  vi.useRealTimers();
+});
+
 test("socket survives onEvent identity changes across re-renders", () => {
   const { rerender } = renderHook(({ onEvent }) => useEvents(server, onEvent), {
     initialProps: { onEvent: () => {} },

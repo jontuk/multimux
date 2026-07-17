@@ -242,6 +242,15 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		rpID = "localhost"
 		origins = devOrigins(origins, *port)
 		fmt.Fprintf(stdout, "\n=== DEV MODE ===\nRP ID forced to \"localhost\"; origins http://localhost:5173 and https://localhost:%d allowed.\nRegister/login at http://localhost:5173 (Chrome/Firefox — Safari won't send Secure cookies over http://localhost).\nDo not use this data dir for a real install.\n\n", *port)
+		// Dev data dirs start empty; seed the daemon's working directory so
+		// the first session can launch without a trip through Settings.
+		if dirs, err := st.ListDirs(); err == nil && len(dirs) == 0 {
+			if wd, err := os.Getwd(); err == nil {
+				if _, err := st.CreateDir("cwd", wd); err == nil {
+					fmt.Fprintf(stdout, "dev: seeded default dir %q\n", wd)
+				}
+			}
+		}
 	}
 
 	am, err := auth.New(st, rpID, origins)

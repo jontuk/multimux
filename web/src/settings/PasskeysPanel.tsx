@@ -64,7 +64,7 @@ export default function PasskeysPanel() {
               <td>{new Date(c.createdAt).toLocaleDateString()}</td>
               <td>{c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleDateString() : "Never"}</td>
               <td>
-                <button disabled={credentials.length <= 1} onClick={() => revoke(c.id)}>
+                <button className="danger" disabled={credentials.length <= 1} onClick={() => revoke(c.id)}>
                   revoke
                 </button>
               </td>
@@ -72,15 +72,17 @@ export default function PasskeysPanel() {
           ))}
         </tbody>
       </table>
-      <input
-        placeholder="passkey name"
-        value={keyName}
-        onChange={(e) => setKeyName(e.target.value)}
-        disabled={loading}
-      />
-      <button disabled={!keyName.trim() || loading} onClick={addPasskey}>
-        Add passkey
-      </button>
+      <div className="settings-form">
+        <input
+          placeholder="passkey name"
+          value={keyName}
+          onChange={(e) => setKeyName(e.target.value)}
+          disabled={loading}
+        />
+        <button className="primary" disabled={!keyName.trim() || loading} onClick={addPasskey}>
+          Add passkey
+        </button>
+      </div>
     </section>
   );
 }

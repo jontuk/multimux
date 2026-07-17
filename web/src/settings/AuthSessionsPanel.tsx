@@ -38,7 +38,9 @@ export default function AuthSessionsPanel() {
               <td>{new Date(s.createdAt).toLocaleDateString()}</td>
               <td>{new Date(s.expiresAt).toLocaleDateString()}</td>
               <td>
-                <button onClick={() => revoke(s.tokenHash)}>revoke</button>
+                <button className="danger" onClick={() => revoke(s.tokenHash)}>
+                  revoke
+                </button>
               </td>
             </tr>
           ))}

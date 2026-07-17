@@ -61,20 +61,26 @@ export default function ServersPanel() {
               <td>{s.name}</td>
               <td>{s.origin}</td>
               <td>
-                <button disabled={s.id === "local"} onClick={() => remove(s.id)}>
+                <button className="danger" disabled={s.id === "local"} onClick={() => remove(s.id)}>
                   remove
                 </button>
-                {s.id !== "local" && <button onClick={() => connectServer(s)}>Connect</button>}
+                {s.id !== "local" && (
+                  <button className="primary" onClick={() => connectServer(s)}>
+                    Connect
+                  </button>
+                )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <input placeholder="origin" value={origin} onChange={(e) => setOrigin(e.target.value)} />
-      <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-      <button disabled={!origin.trim() || !name.trim()} onClick={add}>
-        Add server
-      </button>
+      <div className="settings-form">
+        <input placeholder="origin" value={origin} onChange={(e) => setOrigin(e.target.value)} />
+        <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="primary" disabled={!origin.trim() || !name.trim()} onClick={add}>
+          Add server
+        </button>
+      </div>
     </section>
   );
 }

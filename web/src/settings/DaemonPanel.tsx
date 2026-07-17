@@ -48,29 +48,23 @@ export default function DaemonPanel() {
     <section>
       <h2>Daemon Settings</h2>
       {rpWarning && (
-        <div style={{ color: "red", border: "1px solid red", padding: "8px", marginBottom: "8px" }}>
-          Changing hostname invalidates ALL passkeys after restart
-        </div>
+        <div className="server-status-banner">Changing hostname invalidates ALL passkeys after restart</div>
       )}
-      <div>
+      <div className="settings-fields">
         <label>
-          Hostname:
+          Hostname
           <input value={hostname} onChange={(e) => setHostname(e.target.value)} disabled={loading} />
         </label>
-      </div>
-      <div>
         <label>
-          Extra SANs:
+          Extra SANs
           <input value={extraSans} onChange={(e) => setExtraSans(e.target.value)} disabled={loading} />
         </label>
-      </div>
-      <div>
         <label>
-          Port:
+          Port
           <input type="number" value={port} onChange={(e) => setPort(e.target.value)} disabled={loading} />
         </label>
       </div>
-      <button disabled={loading} onClick={save}>
+      <button className="primary" disabled={loading} onClick={save}>
         Save
       </button>
     </section>

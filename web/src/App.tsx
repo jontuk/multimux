@@ -31,17 +31,23 @@ export default function App() {
 
   if (window.location.pathname === "/setup" || health?.setupPending) return <SetupPage />;
   if (authed === false) return <LoginPage />;
-  if (authed === null) return <div>multimux loading…</div>;
+  if (authed === null) return <div className="app-loading">multimux loading…</div>;
 
   // Settings (Task 23), Connect (Task 24) routed here.
   return (
     <div className="app">
       <header>
-        multimux
-        <a href="#/" style={{ marginLeft: "auto" }}>
-          Grid
+        <a href="#/" className="wordmark">
+          <span className="prompt">~</span>multimux
         </a>
-        <a href="#/settings">⚙</a>
+        <nav>
+          <a href="#/" className={route === "#/" ? "active" : ""}>
+            Grid
+          </a>
+          <a href="#/settings" className={route === "#/settings" ? "active" : ""}>
+            Settings
+          </a>
+        </nav>
       </header>
       <main id="page-root">
         {route === "#/" && <GridPage />}

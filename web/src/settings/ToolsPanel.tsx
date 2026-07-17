@@ -47,6 +47,7 @@ export default function ToolsPanel() {
   return (
     <section>
       <h2>Tools</h2>
+      {tools.length === 0 && <p className="empty-note">No tools yet. Add one below.</p>}
       <table>
         <tbody>
           {tools.map((t) =>
@@ -63,7 +64,7 @@ export default function ToolsPanel() {
                   />
                 </td>
                 <td>
-                  <button disabled={!editName || !editCommand} onClick={() => saveEdit(t.id)}>
+                  <button className="primary" disabled={!editName || !editCommand} onClick={() => saveEdit(t.id)}>
                     save
                   </button>
                   <button onClick={cancelEdit}>cancel</button>
@@ -77,18 +78,22 @@ export default function ToolsPanel() {
                 </td>
                 <td>
                   <button onClick={() => startEdit(t)}>edit</button>
-                  <button onClick={() => del(localServer(), `/api/tools/${t.id}`).then(refresh)}>delete</button>
+                  <button className="danger" onClick={() => del(localServer(), `/api/tools/${t.id}`).then(refresh)}>
+                    delete
+                  </button>
                 </td>
               </tr>
             ),
           )}
         </tbody>
       </table>
-      <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-      <input placeholder="command" value={command} onChange={(e) => setCommand(e.target.value)} />
-      <button disabled={!name || !command} onClick={add}>
-        Add tool
-      </button>
+      <div className="settings-form">
+        <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input placeholder="command" value={command} onChange={(e) => setCommand(e.target.value)} />
+        <button className="primary" disabled={!name || !command} onClick={add}>
+          Add tool
+        </button>
+      </div>
     </section>
   );
 }
