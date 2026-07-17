@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { getJSON, putJSON } from "../api";
+import { del, getJSON, putJSON } from "../api";
 import { listServers, localServer, type Server } from "../servers";
 import { addTile, emptyLayout, normalize, setCols, setTile, swapTiles, type Layout, type Tile } from "./model";
 import ColumnStepper from "./ColumnStepper";
 import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
-import type { Session } from "./types";
+import type { Session, Tool } from "./types";
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -38,9 +38,16 @@ function tileKey(t: NonNullable<Tile>): string {
   return `${t.serverId}:${t.sessionId}`;
 }
 
+// Tool name for display; falls back to the tmux session name while tools load.
+function toolName(tools: Tool[] | undefined, session: Session | undefined): string {
+  if (!session) return "…";
+  return tools?.find((t) => t.id === session.toolId)?.name ?? session.tmuxName;
+}
+
 export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLElement | null }) {
   const [layout, setLayout] = useState<Layout>(emptyLayout());
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
+  const [toolsByServer, setToolsByServer] = useState<Record<string, Tool[]>>({});
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
   // Stable across re-renders so the events sockets don't churn; listServers()
   // reads localStorage and returns a fresh array each call.
@@ -77,6 +84,11 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   useEffect(() => {
     refreshLayout();
     refreshSessions();
+    for (const server of servers) {
+      getJSON<Tool[]>(server, "/api/tools")
+        .then((t) => setToolsByServer((prev) => ({ ...prev, [server.id]: t })))
+        .catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -95,9 +107,43 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
     refreshSessions();
   }
 
+  async function terminateSession(server: Server, sessionId: number, tileIndex: number) {
+    if (!window.confirm(`Terminate session #${sessionId}?`)) return;
+    try {
+      await del(server, `/api/sessions/${sessionId}`);
+    } catch {
+      // Session may already be gone; drop the tile either way.
+    }
+    persist(setTile(layout, tileIndex, null));
+    refreshSessions();
+  }
+
+  // Sessions running on some server but not shown in any tile. Dead sessions
+  // stay in /api/sessions until dismissed — offering those would attach a tile
+  // to a tmux session that no longer exists.
+  const unplaced = servers.flatMap((server) =>
+    (sessionsByServer[server.id] ?? [])
+      .filter((sess) => sess.status === "running" && !placed.has(`${server.id}:${sess.id}`))
+      .map((sess) => ({ server, sess })),
+  );
+
   const headerControls = (
     <div className="header-controls">
       <HeaderLauncher servers={servers} onLaunched={placeSession} />
+      {unplaced.length > 0 && (
+        <div className="unplaced-sessions">
+          {unplaced.map(({ server, sess }) => (
+            <button
+              key={`${server.id}:${sess.id}`}
+              className="unplaced-session"
+              title={`add to grid — ${sess.dir}${servers.length > 1 ? ` on ${server.name}` : ""}`}
+              onClick={() => attachSession(server, sess.id)}
+            >
+              + #{sess.id} {toolName(toolsByServer[server.id], sess)}
+            </button>
+          ))}
+        </div>
+      )}
       <ColumnStepper cols={layout.shape.cols} rows={layout.shape.rows} onChange={(c) => persist(setCols(layout, c))} />
     </div>
   );
@@ -147,11 +193,48 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
             }}
           >
             {tile ? (
-              <TerminalTile
-                server={servers.find((s) => s.id === tile.serverId) ?? localServer()}
-                sessionId={tile.sessionId}
-                onClose={() => persist(setTile(layout, i, null))}
-              />
+              (() => {
+                const server = servers.find((s) => s.id === tile.serverId) ?? localServer();
+                const session = (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId);
+                return (
+                  <div className="tile-cell">
+                    <div className="tile-header">
+                      <span className="tile-title">
+                        #{tile.sessionId} · {toolName(toolsByServer[tile.serverId], session)}
+                      </span>
+                      {session && (
+                        <span className="tile-dir" title={session.dir}>
+                          {session.dir}
+                        </span>
+                      )}
+                      <span className="tile-actions">
+                        <button
+                          aria-label={`remove session ${tile.sessionId} from grid`}
+                          title="remove from grid"
+                          onClick={() => persist(setTile(layout, i, null))}
+                        >
+                          −
+                        </button>
+                        <button
+                          className="danger"
+                          aria-label={`terminate session ${tile.sessionId}`}
+                          title="terminate session"
+                          onClick={() => terminateSession(server, tile.sessionId, i)}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    </div>
+                    <div className="tile-body">
+                      <TerminalTile
+                        server={server}
+                        sessionId={tile.sessionId}
+                        onClose={() => persist(setTile(layout, i, null))}
+                      />
+                    </div>
+                  </div>
+                );
+              })()
             ) : (
               <EmptyTile
                 servers={servers}
@@ -181,7 +264,9 @@ function EmptyTile({
   const attachable = servers
     .map((s) => ({
       server: s,
-      sessions: (sessionsByServer[s.id] ?? []).filter((sess) => !placed.has(`${s.id}:${sess.id}`)),
+      sessions: (sessionsByServer[s.id] ?? []).filter(
+        (sess) => sess.status === "running" && !placed.has(`${s.id}:${sess.id}`),
+      ),
     }))
     .filter(({ sessions }) => sessions.length > 0);
 

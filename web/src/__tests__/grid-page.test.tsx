@@ -11,6 +11,7 @@ vi.mock("../term/TerminalTile", () => ({
 const sessions = [
   { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running" },
   { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/b", status: "running" },
+  { id: 4, tmuxName: "mm-4", toolId: 1, dir: "/c", status: "dead" },
 ];
 const tools = [
   { id: 1, name: "claude", command: "claude" },
@@ -92,6 +93,66 @@ test("launching when grid is full grows the grid instead of blocking", async () 
   const put = fetchMock.mock.calls.findLast(([, init]) => init?.method === "PUT");
   const saved = JSON.parse(String(put?.[1]?.body));
   expect(saved.shape).toEqual({ rows: 2, cols: 1 });
+});
+
+test("tile header shows session id, tool, dir, and remove-from-grid keeps the session alive", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  await screen.findByText("#1 · claude");
+  expect(screen.getByTitle("/a")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByLabelText("remove session 1 from grid"));
+  expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+
+test("terminate button confirms then DELETEs the session and drops the tile", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  const fetchMock = mockFetch(layout);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  await userEvent.click(screen.getByLabelText("terminate session 1"));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  const delCall = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
+  expect(String(delCall?.[0])).toContain("/api/sessions/1");
+});
+
+test("header offers quick-add buttons for sessions not in the grid", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  // Session 2 is running but unplaced; session 1 is already in the grid.
+  const quickAdd = await screen.findByText("+ #2 claude");
+  expect(screen.queryByText("+ #1 claude")).not.toBeInTheDocument();
+
+  await userEvent.click(quickAdd);
+  await screen.findByTestId("term-2");
+  expect(screen.queryByText("+ #2 claude")).not.toBeInTheDocument();
+});
+
+test("dead sessions are not offered for re-adding (quick-add or attach dropdown)", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await screen.findByText("+ #2 claude");
+
+  // Session 4 is dead: no quick-add button, not in the empty-tile dropdown.
+  expect(screen.queryByText("+ #4 claude")).not.toBeInTheDocument();
+  const attach = screen.getAllByRole("combobox").find((b) => b.textContent?.includes("attach session on local"))!;
+  const options = Array.from(attach.querySelectorAll("option")).map((o) => o.textContent);
+  expect(options).not.toContain("mm-4");
 });
 
 test("stepper arrows change column count and persist it", async () => {
