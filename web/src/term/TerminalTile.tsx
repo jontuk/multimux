@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { ClipboardAddon } from "@xterm/addon-clipboard";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL } from "../api";
 import type { Server } from "../servers";
@@ -18,9 +19,14 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
   const url = wsURL(server, `/ws/pty/${sessionId}`);
 
   useEffect(() => {
-    const term = new Terminal({ scrollback: 0, fontSize: 13 }); // tmux owns scrollback (mouse mode)
+    const term = new Terminal({
+      scrollback: 0, // tmux owns scrollback (mouse mode)
+      fontSize: 13,
+      macOptionClickForcesSelection: true,
+    });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    term.loadAddon(new ClipboardAddon()); // OSC 52: tmux copy-mode yank → system clipboard
     term.open(containerRef.current!);
     const encoder = new TextEncoder();
 

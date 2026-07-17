@@ -80,6 +80,11 @@ func (m *Manager) CreateSession(name, dir, command string) error {
 	_ = m.run("set-option", "-t", target, "mouse", "on")
 	_ = m.run("set-option", "-s", "-a", "terminal-features", "xterm*:extkeys")
 	_ = m.run("set-option", "-s", "extended-keys", "on")
+	// OSC 52 passthrough: copy-mode yanks reach the browser clipboard via
+	// xterm.js ClipboardAddon. terminal-features tells tmux the attached
+	// client (xterm.js) supports the clipboard escape sequence.
+	_ = m.run("set-option", "-s", "-a", "terminal-features", "xterm*:clipboard")
+	_ = m.run("set-option", "-s", "set-clipboard", "on")
 	if command != "" {
 		if err := m.run("respawn-pane", "-k", "-c", dir, "-t", target, command); err != nil {
 			return err
