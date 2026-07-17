@@ -2,41 +2,45 @@ export type GridShape = { rows: number; cols: number };
 export type Tile = { serverId: string; sessionId: number } | null;
 export type Layout = { shape: GridShape; tiles: Tile[] };
 
-export const SHAPES: GridShape[] = [
-  { rows: 1, cols: 1 },
-  { rows: 1, cols: 2 },
-  { rows: 2, cols: 1 },
-  { rows: 2, cols: 2 },
-  { rows: 2, cols: 3 },
-  { rows: 3, cols: 3 },
-];
+export const MIN_COLS = 1;
+export const MAX_COLS = 4;
 
-export function emptyLayout(): Layout {
-  return { shape: { rows: 1, cols: 1 }, tiles: [null] };
+export function clampCols(cols: number): number {
+  return Math.min(MAX_COLS, Math.max(MIN_COLS, Math.floor(cols)));
 }
 
-// reshape keeps tiles in row-major order. On shrink, occupied tiles are
-// packed to the front so sessions are not silently dropped while empty slots
-// remain; overflow beyond the new capacity is dropped.
-export function reshape(layout: Layout, shape: GridShape): Layout {
-  const capacity = shape.rows * shape.cols;
-  let tiles = layout.tiles.slice(0, capacity);
-  const dropped = layout.tiles.slice(capacity).filter((t) => t !== null);
-  if (dropped.length > 0) {
-    tiles = [...layout.tiles.filter((t) => t !== null)].slice(0, capacity);
-  }
-  while (tiles.length < capacity) tiles.push(null);
-  return { shape, tiles };
+// Canonical layout form: occupied tiles packed to the front in row-major
+// order, rows derived as just enough to hold them (min 1), trailing cells
+// padded with nulls. Sessions are never dropped — the grid grows instead.
+export function normalize(tiles: Tile[], cols: number): Layout {
+  const c = clampCols(cols);
+  const occupied = tiles.filter((t): t is NonNullable<Tile> => t !== null);
+  const rows = Math.max(1, Math.ceil(occupied.length / c));
+  const padded: Tile[] = [...occupied];
+  while (padded.length < rows * c) padded.push(null);
+  return { shape: { rows, cols: c }, tiles: padded };
+}
+
+export function emptyLayout(): Layout {
+  return normalize([], 2);
+}
+
+export function setCols(layout: Layout, cols: number): Layout {
+  return normalize(layout.tiles, cols);
 }
 
 export function setTile(layout: Layout, index: number, tile: Tile): Layout {
   const tiles = layout.tiles.slice();
   tiles[index] = tile;
-  return { ...layout, tiles };
+  return normalize(tiles, layout.shape.cols);
+}
+
+export function addTile(layout: Layout, tile: NonNullable<Tile>): Layout {
+  return normalize([...layout.tiles, tile], layout.shape.cols);
 }
 
 export function swapTiles(layout: Layout, a: number, b: number): Layout {
   const tiles = layout.tiles.slice();
   [tiles[a], tiles[b]] = [tiles[b], tiles[a]];
-  return { ...layout, tiles };
+  return normalize(tiles, layout.shape.cols);
 }

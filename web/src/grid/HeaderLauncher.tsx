@@ -5,11 +5,9 @@ import type { Dir, Session, Tool } from "./types";
 
 export default function HeaderLauncher({
   servers,
-  gridFull,
   onLaunched,
 }: {
   servers: Server[];
-  gridFull: boolean;
   onLaunched: (server: Server, session: Session) => void;
 }) {
   const [serverId, setServerId] = useState(servers[0]?.id ?? "");
@@ -99,8 +97,8 @@ export default function HeaderLauncher({
       )}
       <button
         className="launch"
-        disabled={busy || gridFull || unconfigured || !!error}
-        title={gridFull ? "grid is full — free a tile first" : "launch a new session"}
+        disabled={busy || unconfigured || !!error}
+        title="launch a new session"
         onClick={launch}
       >
         + New

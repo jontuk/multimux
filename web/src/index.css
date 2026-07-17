@@ -315,36 +315,55 @@ a {
   overflow-wrap: anywhere;
 }
 
-.shape-picker {
+.column-stepper {
   display: flex;
-  gap: 0.25rem;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.2rem 0.35rem;
 }
 
-.shape-picker button.shape {
+.column-stepper button {
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 0.95rem;
+  line-height: 1;
   color: var(--muted);
   background: transparent;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 6px;
-  padding: 0.3rem 0.4rem;
+  padding: 0.25rem 0.45rem;
   cursor: pointer;
 }
 
-.shape-picker button.shape:hover {
+.column-stepper button:hover:not(:disabled) {
   color: var(--ink);
-  border-color: #3a414d;
 }
 
-.shape-picker button.shape.active {
-  color: var(--accent);
-  border-color: var(--accent);
+.column-stepper button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
-.shape-picker button.shape:focus-visible {
+.column-stepper button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.stepper-icon {
+  display: grid;
+  grid-template-columns: repeat(2, 5px);
+  gap: 2px;
+}
+
+.stepper-icon .cell {
+  width: 5px;
+  height: 5px;
+  border-radius: 1.5px;
+  background: var(--ink);
 }
 
 /* ---- grid tiles ---- */

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { getJSON, putJSON } from "../api";
 import { listServers, localServer, type Server } from "../servers";
-import { emptyLayout, reshape, setTile, swapTiles, type GridShape, type Layout, type Tile } from "./model";
-import ShapePicker from "./ShapePicker";
+import { addTile, emptyLayout, normalize, setCols, setTile, swapTiles, type Layout, type Tile } from "./model";
+import ColumnStepper from "./ColumnStepper";
 import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
@@ -61,7 +61,8 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
 
   const refreshLayout = useCallback(() => {
     getJSON<unknown>(localServer(), "/api/layout").then((v) => {
-      if (isLayout(v)) setLayout(v);
+      // Normalize so layouts persisted before rows were derived still load cleanly.
+      if (isLayout(v)) setLayout(normalize(v.tiles, v.shape.cols));
     });
   }, []);
 
@@ -84,24 +85,20 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
     () => new Set(layout.tiles.filter((t): t is NonNullable<Tile> => t !== null).map(tileKey)),
     [layout],
   );
-  const gridFull = !layout.tiles.includes(null);
-
-  function attachSession(server: Server, sessionId: number, index: number) {
+  function attachSession(server: Server, sessionId: number) {
     if (placed.has(`${server.id}:${sessionId}`)) return;
-    persist(setTile(layout, index, { serverId: server.id, sessionId }));
+    persist(addTile(layout, { serverId: server.id, sessionId }));
   }
 
-  function placeInFirstEmpty(server: Server, session: Session) {
-    const index = layout.tiles.indexOf(null);
-    if (index === -1) return;
-    persist(setTile(layout, index, { serverId: server.id, sessionId: session.id }));
+  function placeSession(server: Server, session: Session) {
+    persist(addTile(layout, { serverId: server.id, sessionId: session.id }));
     refreshSessions();
   }
 
   const headerControls = (
     <div className="header-controls">
-      <HeaderLauncher servers={servers} gridFull={gridFull} onLaunched={placeInFirstEmpty} />
-      <ShapePicker value={layout.shape} onChange={(s: GridShape) => persist(reshape(layout, s))} />
+      <HeaderLauncher servers={servers} onLaunched={placeSession} />
+      <ColumnStepper cols={layout.shape.cols} rows={layout.shape.rows} onChange={(c) => persist(setCols(layout, c))} />
     </div>
   );
 
@@ -160,7 +157,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                 servers={servers}
                 sessionsByServer={sessionsByServer}
                 placed={placed}
-                onAttach={(server, sessionId) => attachSession(server, sessionId, i)}
+                onAttach={attachSession}
               />
             )}
           </div>
