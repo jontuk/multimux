@@ -355,7 +355,6 @@ a {
 
 .stepper-icon {
   display: grid;
-  grid-template-columns: repeat(2, 5px);
   gap: 2px;
 }
 
