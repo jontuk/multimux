@@ -13,6 +13,7 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [route, setRoute] = useState(window.location.hash || "#/");
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     const onHash = () => setRoute(window.location.hash || "#/");
@@ -40,6 +41,8 @@ export default function App() {
         <a href="#/" className="wordmark">
           <span className="prompt">~</span>multimux
         </a>
+        {/* GridPage portals its launcher + shape picker here while the grid route is active. */}
+        <div id="header-controls" ref={setHeaderSlot} />
         <nav>
           <a href="#/" className={route === "#/" ? "active" : ""}>
             Grid
@@ -50,7 +53,7 @@ export default function App() {
         </nav>
       </header>
       <main id="page-root">
-        {route === "#/" && <GridPage />}
+        {route === "#/" && <GridPage headerSlot={headerSlot} />}
         {route === "#/settings" && <SettingsPage />}
         {route.startsWith("#/connect") && <ConnectPage />}
       </main>

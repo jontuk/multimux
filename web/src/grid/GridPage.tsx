@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getJSON, postJSON, putJSON } from "../api";
+import { createPortal } from "react-dom";
+import { getJSON, putJSON } from "../api";
 import { listServers, localServer, type Server } from "../servers";
 import { emptyLayout, reshape, setTile, swapTiles, type GridShape, type Layout, type Tile } from "./model";
 import ShapePicker from "./ShapePicker";
+import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
-
-type Session = { id: number; tmuxName: string; toolId: number; dir: string; status: string };
-type Tool = { id: number; name: string; command: string };
-type Dir = { id: number; name: string; path: string };
+import type { Session } from "./types";
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -35,7 +34,11 @@ const statusMessages: Record<Exclude<EventsStatus, "open">, string> = {
   unreachable: "daemon unreachable — retrying.",
 };
 
-export default function GridPage() {
+function tileKey(t: NonNullable<Tile>): string {
+  return `${t.serverId}:${t.sessionId}`;
+}
+
+export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLElement | null }) {
   const [layout, setLayout] = useState<Layout>(emptyLayout());
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
@@ -76,52 +79,36 @@ export default function GridPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sessions already placed in a tile; each session may only be open once.
+  const placed = useMemo(
+    () => new Set(layout.tiles.filter((t): t is NonNullable<Tile> => t !== null).map(tileKey)),
+    [layout],
+  );
+  const gridFull = !layout.tiles.includes(null);
+
   function attachSession(server: Server, sessionId: number, index: number) {
+    if (placed.has(`${server.id}:${sessionId}`)) return;
     persist(setTile(layout, index, { serverId: server.id, sessionId }));
   }
 
-  async function launchSession(server: Server, index: number) {
-    let tools: Tool[], dirs: Dir[];
-    try {
-      [tools, dirs] = await Promise.all([getJSON<Tool[]>(server, "/api/tools"), getJSON<Dir[]>(server, "/api/dirs")]);
-    } catch (e) {
-      window.alert(`could not reach ${server.name}: ${e}`);
-      return;
-    }
-    if (tools.length === 0 || dirs.length === 0) {
-      window.alert(
-        `${server.name} has no ${tools.length === 0 ? "tools" : "directories"} configured — add one in Settings (⚙) first`,
-      );
-      return;
-    }
-    // Minimal launcher: prompt-based pick; a modal can replace this later.
-    const toolName = window.prompt(`tool? (${tools.map((t) => t.name).join(", ")})`);
-    if (toolName === null) return; // cancelled
-    const tool = tools.find((t) => t.name === toolName);
-    if (!tool) {
-      window.alert(`no tool named "${toolName}"`);
-      return;
-    }
-    const dirName = window.prompt(`dir? (${dirs.map((d) => d.name).join(", ")})`);
-    if (dirName === null) return; // cancelled
-    const dir = dirs.find((d) => d.name === dirName);
-    if (!dir) {
-      window.alert(`no dir named "${dirName}"`);
-      return;
-    }
-    try {
-      const sess = await postJSON<Session>(server, "/api/sessions", { toolId: tool.id, dirId: dir.id });
-      persist(setTile(layout, index, { serverId: server.id, sessionId: sess.id }));
-    } catch (e) {
-      window.alert(`launch failed: ${e}`);
-      return;
-    }
+  function placeInFirstEmpty(server: Server, session: Session) {
+    const index = layout.tiles.indexOf(null);
+    if (index === -1) return;
+    persist(setTile(layout, index, { serverId: server.id, sessionId: session.id }));
     refreshSessions();
   }
+
+  const headerControls = (
+    <div className="header-controls">
+      <HeaderLauncher servers={servers} gridFull={gridFull} onLaunched={placeInFirstEmpty} />
+      <ShapePicker value={layout.shape} onChange={(s: GridShape) => persist(reshape(layout, s))} />
+    </div>
+  );
 
   const { rows, cols } = layout.shape;
   return (
     <div className="grid-page">
+      {headerSlot ? createPortal(headerControls, headerSlot) : headerControls}
       {servers.map((s) => (
         <EventsBridge
           key={s.id}
@@ -140,9 +127,6 @@ export default function GridPage() {
             )}
           </div>
         ))}
-      <div className="grid-toolbar">
-        <ShapePicker value={layout.shape} onChange={(s: GridShape) => persist(reshape(layout, s))} />
-      </div>
       <div
         className="grid"
         style={{
@@ -150,7 +134,7 @@ export default function GridPage() {
           gridTemplateRows: `repeat(${rows}, 1fr)`,
           gridTemplateColumns: `repeat(${cols}, 1fr)`,
           gap: 4,
-          height: "calc(100vh - 80px)",
+          height: "calc(100vh - 60px)",
         }}
       >
         {layout.tiles.map((tile: Tile, i: number) => (
@@ -172,33 +156,64 @@ export default function GridPage() {
                 onClose={() => persist(setTile(layout, i, null))}
               />
             ) : (
-              <div className="empty-tile">
-                {servers.map((s) => (
-                  <div key={s.id} className="empty-tile-server">
-                    <select
-                      defaultValue=""
-                      onChange={(e) => {
-                        const id = Number(e.target.value);
-                        if (id) attachSession(s, id, i);
-                      }}
-                    >
-                      <option value="" disabled>
-                        session on {s.name}…
-                      </option>
-                      {(sessionsByServer[s.id] ?? []).map((sess) => (
-                        <option key={sess.id} value={sess.id}>
-                          {sess.tmuxName}
-                        </option>
-                      ))}
-                    </select>
-                    <button onClick={() => launchSession(s, i)}>+ new on {s.name}</button>
-                  </div>
-                ))}
-              </div>
+              <EmptyTile
+                servers={servers}
+                sessionsByServer={sessionsByServer}
+                placed={placed}
+                onAttach={(server, sessionId) => attachSession(server, sessionId, i)}
+              />
             )}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function EmptyTile({
+  servers,
+  sessionsByServer,
+  placed,
+  onAttach,
+}: {
+  servers: Server[];
+  sessionsByServer: Record<string, Session[]>;
+  placed: Set<string>;
+  onAttach: (server: Server, sessionId: number) => void;
+}) {
+  const attachable = servers
+    .map((s) => ({
+      server: s,
+      sessions: (sessionsByServer[s.id] ?? []).filter((sess) => !placed.has(`${s.id}:${sess.id}`)),
+    }))
+    .filter(({ sessions }) => sessions.length > 0);
+
+  if (attachable.length === 0) {
+    return <div className="empty-tile empty-tile-hint">＋ New in the header to launch a session</div>;
+  }
+
+  return (
+    <div className="empty-tile">
+      {attachable.map(({ server, sessions }) => (
+        <select
+          key={server.id}
+          className="empty-tile-attach"
+          value=""
+          onChange={(e) => {
+            const id = Number(e.target.value);
+            if (id) onAttach(server, id);
+          }}
+        >
+          <option value="" disabled>
+            attach session on {server.name}…
+          </option>
+          {sessions.map((sess) => (
+            <option key={sess.id} value={sess.id}>
+              {sess.tmuxName}
+            </option>
+          ))}
+        </select>
+      ))}
     </div>
   );
 }
