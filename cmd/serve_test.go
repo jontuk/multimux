@@ -113,6 +113,29 @@ func TestDevOrigins(t *testing.T) {
 	}
 }
 
+func TestTmuxSocket(t *testing.T) {
+	if got := tmuxSocket(false, "/tmp/multimux-dev-a"); got != "" {
+		t.Fatalf("production tmux socket = %q, want default socket", got)
+	}
+
+	first := tmuxSocket(true, "/tmp/multimux-dev-a")
+	if !strings.HasPrefix(first, "multimux-dev-") {
+		t.Fatalf("dev tmux socket = %q, want multimux-dev-*", first)
+	}
+	if got := tmuxSocket(true, "/tmp/multimux-dev-a"); got != first {
+		t.Fatalf("dev tmux socket changed for the same data dir: %q then %q", first, got)
+	}
+	if got := tmuxSocket(true, "/tmp/multimux-dev-b"); got == first {
+		t.Fatalf("different dev data dirs share tmux socket %q", first)
+	}
+
+	root := t.TempDir()
+	t.Chdir(root)
+	if rel, abs := tmuxSocket(true, "dev"), tmuxSocket(true, filepath.Join(root, "dev")); rel != abs {
+		t.Fatalf("relative and absolute paths select different sockets: %q and %q", rel, abs)
+	}
+}
+
 // --dev must never run against a daemon that has real passkeys: it swaps the
 // RP ID to localhost, which would strand them, and it loosens origin checks.
 func TestRunServeDevRefusesWhenCredentialsExist(t *testing.T) {

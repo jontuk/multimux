@@ -10,8 +10,8 @@ import (
 )
 
 // Manager manages tmux sessions sharing a name prefix. A non-empty socket
-// name isolates all commands onto a private tmux server (tmux -L) — used by
-// tests so they never touch the user's sessions.
+// name isolates all commands onto a private tmux server (tmux -L), used by
+// dev mode and tests so they never touch the user's sessions.
 type Manager struct {
 	prefix string
 	socket string

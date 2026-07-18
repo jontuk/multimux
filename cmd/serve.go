@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"io"
@@ -156,6 +157,20 @@ func devOrigins(origins []string, port int) []string {
 	return append(origins, "http://localhost:5173", fmt.Sprintf("https://localhost:%d", port))
 }
 
+// tmuxSocket isolates each throwaway dev data dir on its own tmux server.
+// The same directory keeps its sessions across daemon restarts.
+func tmuxSocket(dev bool, dataDir string) string {
+	if !dev {
+		return ""
+	}
+	absDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		absDir = filepath.Clean(dataDir)
+	}
+	sum := sha256.Sum256([]byte(absDir))
+	return fmt.Sprintf("multimux-dev-%x", sum[:8])
+}
+
 // setupBanner renders the first-run banner: one setup URL per origin
 // (most-resolvable first — pass origins through displayOrigins) and a pointer
 // at --hostname for when none of the names resolve from the user's browser.
@@ -259,7 +274,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		return 1
 	}
 
-	tm := tmuxmgr.New("mm", "")
+	tm := tmuxmgr.New("mm", tmuxSocket(*dev, dir))
 	if err := tm.Available(); err != nil {
 		fmt.Fprintf(stderr, "startup check failed: %v\ninstall tmux and retry\n", err)
 		return 1

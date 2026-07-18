@@ -202,6 +202,8 @@ browser talks plain HTTP to Vite. Caveats:
   trustworthy for `Secure` cookies, so login won't stick there.
 - `--dev` refuses to run against a data dir that already has passkeys; the
   timestamped `MULTIMUX_DATA_DIR` above gives you a fresh one per shell.
+- Each dev data dir uses its own private tmux server, so its `mm-*` sessions
+  cannot collide with another dev run or the installed daemon.
 - If nothing else is listening on 8686 you can drop `--port` and
   `MULTIMUX_DEV_TARGET` (the proxy target defaults to
   `https://localhost:8686`, see `web/vite.config.ts`).
