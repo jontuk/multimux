@@ -9,7 +9,7 @@ vi.mock("../term/TerminalTile", () => ({
 }));
 
 const sessions = [
-  { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running" },
+  { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running", repoUrl: "https://github.com/org/repo" },
   { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/b", status: "running" },
   { id: 4, tmuxName: "mm-4", toolId: 1, dir: "/c", status: "dead" },
 ];
@@ -108,6 +108,27 @@ test("tile header shows session id, tool, dir, and remove-from-grid keeps the se
   await userEvent.click(screen.getByLabelText("remove session 1 from grid"));
   expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+
+test("tile header links to GitHub when the session dir has a repoUrl", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await screen.findByTestId("term-2");
+
+  // Session 1 has a repoUrl; session 2 does not.
+  const link = await screen.findByRole<HTMLAnchorElement>("link", { name: "open repository on GitHub" });
+  expect(link.href).toBe("https://github.com/org/repo");
+  expect(link.target).toBe("_blank");
+  expect(screen.getAllByRole("link", { name: "open repository on GitHub" })).toHaveLength(1);
 });
 
 test("terminate button confirms then DELETEs the session and drops the tile", async () => {

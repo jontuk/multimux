@@ -135,3 +135,43 @@ func TestLayoutRejectsNonJSON(t *testing.T) {
 		t.Fatalf("put garbage layout = %d, want 400", w.Code)
 	}
 }
+
+func TestListSessionsIncludesRepoURL(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"-C", repo, "init"},
+		{"-C", repo, "remote", "add", "origin", "git@github.com:org/repo.git"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	st.CreateSession(tool.ID, repo)
+	st.CreateSession(tool.ID, t.TempDir()) // no repo → no repoUrl
+
+	w := do(t, s, "GET", "/api/sessions", token)
+	if w.Code != 200 {
+		t.Fatalf("list = %d: %s", w.Code, w.Body.String())
+	}
+	var got []struct {
+		Dir     string `json:"dir"`
+		RepoURL string `json:"repoUrl"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].RepoURL != "https://github.com/org/repo" {
+		t.Errorf("repo session repoUrl = %q", got[0].RepoURL)
+	}
+	if got[1].RepoURL != "" {
+		t.Errorf("non-repo session repoUrl = %q", got[1].RepoURL)
+	}
+}

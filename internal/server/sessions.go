@@ -7,8 +7,16 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jontuk/multimux/internal/gitinfo"
 	"github.com/jontuk/multimux/internal/store"
 )
+
+// sessionJSON is a store.Session enriched with data derived from the session's
+// directory at read time.
+type sessionJSON struct {
+	store.Session
+	RepoURL string `json:"repoUrl,omitempty"`
+}
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.cfg.Store.ListSessions()
@@ -16,10 +24,18 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	if sessions == nil {
-		sessions = []store.Session{}
+	out := make([]sessionJSON, 0, len(sessions))
+	// The same dir often backs several sessions; resolve each dir once.
+	urls := map[string]string{}
+	for _, sess := range sessions {
+		url, ok := urls[sess.Dir]
+		if !ok {
+			url = gitinfo.RepoWebURL(sess.Dir)
+			urls[sess.Dir] = url
+		}
+		out = append(out, sessionJSON{Session: sess, RepoURL: url})
 	}
-	writeJSON(w, 200, sessions)
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {

@@ -494,6 +494,24 @@ a {
   text-align: left;
 }
 
+.tile-repo-link {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 0.2rem 0.35rem;
+}
+
+.tile-repo-link:hover {
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.tile-repo-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .tile-actions {
   display: flex;
   align-items: center;
