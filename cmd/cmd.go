@@ -11,7 +11,7 @@ const usage = `usage: multimux <command>
 
 commands:
   serve                          run the daemon in the foreground
-  service install|uninstall|status   manage the launchd/systemd user service
+  service install|uninstall|status|logs   manage the launchd/systemd user service
   auth reset                     wipe credentials and return to setup-pending
   ca trust                       install the local CA into the OS trust store
   --version                      print version

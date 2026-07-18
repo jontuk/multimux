@@ -46,8 +46,9 @@ daemon minting its own name-constrained local certificate authority so you get
    (code expires in 15 minutes; restart to regenerate)
    ```
 
-   On macOS the log is at `~/.local/share/multimux/multimux.log`; on Linux use
-   `multimux service status` / `journalctl --user -u multimux`. You can also run
+   View the daemon log with `multimux service logs` (less on
+   `~/.local/share/multimux/multimux.log` on macOS, `journalctl --user -u
+   multimux` on Linux). You can also run
    the daemon in the foreground with `multimux serve`, which prints the setup URL
    straight to the terminal.
 
@@ -103,7 +104,7 @@ refuses any change that would alter the RP ID and points you at
 
 ```
 multimux serve                              run the daemon in the foreground (--port, --hostname, --dev, --behind-proxy)
-multimux service install|uninstall|status   manage the launchd/systemd user service
+multimux service install|uninstall|status|logs   manage the launchd/systemd user service
 multimux auth reset --yes                    wipe credentials and return to setup-pending
 multimux ca trust                            install the local CA into the OS trust store
 multimux --version                           print version

@@ -54,6 +54,12 @@ KillMode=process
 WantedBy=default.target
 `
 
+// defaultLogPath is where launchd sends the daemon's stdout/stderr on macOS.
+// On Linux output goes to journald instead.
+func defaultLogPath(home string) string {
+	return filepath.Join(home, ".local", "share", "multimux", "multimux.log")
+}
+
 // UnitContent renders the service definition for goos. Pure: no filesystem
 // writes, so tests cover the exact artefact installed. pathEnv is baked into
 // the unit as the service PATH — launchd and systemd don't inherit the user's
@@ -69,7 +75,7 @@ func UnitContent(goos, execPath, logPath, pathEnv string) (path, content string,
 	switch goos {
 	case "darwin":
 		if logPath == "" {
-			logPath = filepath.Join(home, ".local", "share", "multimux", "multimux.log")
+			logPath = defaultLogPath(home)
 		}
 		path = filepath.Join(home, "Library", "LaunchAgents", label+".plist")
 		// Every interpolated <string> needs escaping, not just PATH — an exec
@@ -124,7 +130,7 @@ func Install(goos, execPath string) error {
 		if err != nil {
 			return err
 		}
-		logPath := filepath.Join(home, ".local", "share", "multimux", "multimux.log")
+		logPath := defaultLogPath(home)
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 			return err
 		}
@@ -156,6 +162,24 @@ func Uninstall(goos string) error {
 		return err
 	}
 	return nil
+}
+
+// LogsCommand returns the command that shows the daemon's logs: less on the
+// log file on macOS, journalctl on Linux (systemd sends output to journald,
+// so there is no file to open).
+func LogsCommand(goos string) (*exec.Cmd, error) {
+	switch goos {
+	case "darwin":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		return exec.Command("less", defaultLogPath(home)), nil
+	case "linux":
+		return exec.Command("journalctl", "--user", "-u", "multimux"), nil
+	default:
+		return nil, fmt.Errorf("svc: unsupported OS %q", goos)
+	}
 }
 
 func Status(goos string) (string, error) {

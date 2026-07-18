@@ -86,6 +86,41 @@ func TestUnitContentDarwinEscapesExecAndLogPaths(t *testing.T) {
 	}
 }
 
+func TestLogsCommandDarwin(t *testing.T) {
+	cmd, err := LogsCommand("darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd.Args) != 2 || cmd.Args[0] != "less" {
+		t.Fatalf("args = %v, want [less <logPath>]", cmd.Args)
+	}
+	if !strings.HasSuffix(cmd.Args[1], ".local/share/multimux/multimux.log") {
+		t.Fatalf("log path = %s", cmd.Args[1])
+	}
+}
+
+func TestLogsCommandLinux(t *testing.T) {
+	cmd, err := LogsCommand("linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"journalctl", "--user", "-u", "multimux"}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("args = %v, want %v", cmd.Args, want)
+	}
+	for i, w := range want {
+		if cmd.Args[i] != w {
+			t.Fatalf("args = %v, want %v", cmd.Args, want)
+		}
+	}
+}
+
+func TestLogsCommandUnsupported(t *testing.T) {
+	if _, err := LogsCommand("windows"); err == nil {
+		t.Fatal("want error for unsupported OS")
+	}
+}
+
 func TestUnitContentLinuxQuotesExecPath(t *testing.T) {
 	_, content, err := UnitContent("linux", "/home/user/my tools/multimux", "", "")
 	if err != nil {

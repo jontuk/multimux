@@ -29,6 +29,25 @@ func TestUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestServiceUsageMentionsLogs(t *testing.T) {
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"service", "bogus"}, "dev", fstest.MapFS{}, &out, &errOut)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(errOut.String(), "install|uninstall|status|logs") {
+		t.Fatalf("service usage should mention logs, got %q", errOut.String())
+	}
+}
+
+func TestTopLevelUsageMentionsServiceLogs(t *testing.T) {
+	var out, errOut bytes.Buffer
+	Execute(nil, "dev", fstest.MapFS{}, &out, &errOut)
+	if !strings.Contains(errOut.String(), "install|uninstall|status|logs") {
+		t.Fatalf("usage should mention service logs, got %q", errOut.String())
+	}
+}
+
 func TestNoArgsPrintsUsage(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Execute(nil, "dev", fstest.MapFS{}, &out, &errOut); code != 2 {
