@@ -69,6 +69,25 @@ func TestSetupThenLoginFlow(t *testing.T) {
 
 	cookie, rp, authenticator := setupViaHTTP(t, s, code)
 
+	setupLogged := buf.String()
+	for _, want := range []string{
+		`"msg":"setup completed"`,
+		`"msg":"passkey registered"`,
+		`"key_name":"laptop"`,
+	} {
+		if !strings.Contains(setupLogged, want) {
+			t.Fatalf("setup log missing %q: %s", want, setupLogged)
+		}
+	}
+	if strings.Contains(setupLogged, `"msg":"login succeeded"`) {
+		t.Fatalf("setup incorrectly logged an ordinary login: %s", setupLogged)
+	}
+	for _, secret := range []string{code, cookie, "jon"} {
+		if strings.Contains(setupLogged, secret) {
+			t.Fatalf("setup log exposed %q: %s", secret, setupLogged)
+		}
+	}
+
 	// Cookie works on the API.
 	r := httptest.NewRequest("GET", "/api/auth/me", nil)
 	r.AddCookie(&http.Cookie{Name: "mm_session", Value: cookie})
@@ -84,6 +103,7 @@ func TestSetupThenLoginFlow(t *testing.T) {
 	}
 
 	// Fresh login ceremony.
+	loginBuf := captureLogs(t)
 	w := do(t, s, "POST", "/api/auth/login/begin", "")
 	if w.Code != 200 {
 		t.Fatalf("login/begin = %d", w.Code)
@@ -101,21 +121,12 @@ func TestSetupThenLoginFlow(t *testing.T) {
 		t.Fatalf("login/finish = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	logged := buf.String()
-	for _, want := range []string{
-		`"msg":"setup completed"`,
-		`"msg":"passkey registered"`,
-		`"key_name":"laptop"`,
-		`"msg":"login succeeded"`,
-	} {
-		if !strings.Contains(logged, want) {
-			t.Fatalf("auth log missing %q: %s", want, logged)
-		}
+	loginLogged := loginBuf.String()
+	if !strings.Contains(loginLogged, `"msg":"login succeeded"`) {
+		t.Fatalf("successful login event missing: %s", loginLogged)
 	}
-	for _, secret := range []string{code, cookie, "jon"} {
-		if strings.Contains(logged, secret) {
-			t.Fatalf("auth log exposed %q: %s", secret, logged)
-		}
+	if strings.Contains(loginLogged, cookie) {
+		t.Fatalf("login log exposed cookie: %s", loginLogged)
 	}
 }
 

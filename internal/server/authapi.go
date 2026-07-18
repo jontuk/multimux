@@ -66,7 +66,6 @@ func (s *Server) handleSetupFinish(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	slog.Info("login succeeded")
 	s.setSessionCookie(w, token)
 	writeJSON(w, 200, map[string]string{"status": "registered"})
 }
@@ -90,6 +89,7 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("login succeeded")
 	s.setSessionCookie(w, token)
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -114,6 +115,27 @@ func TestCreateSessionReplacesOrphanTmuxSession(t *testing.T) {
 	if !strings.Contains(logged, `"msg":"orphan tmux session replaced"`) ||
 		!strings.Contains(logged, `"tmux_name":"`+orphan+`"`) {
 		t.Fatalf("orphan replacement not logged safely: %s", logged)
+	}
+}
+
+func TestFailedCreateDoesNotClaimOrphanWasReplaced(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("oversized", strings.Repeat("x", 2<<20))
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+
+	orphan := s.cfg.Tmux.SessionName(1)
+	if err := s.cfg.Tmux.CreateSession(orphan, t.TempDir(), "sleep 60"); err != nil {
+		t.Fatal(err)
+	}
+	buf := captureLogs(t)
+
+	w := do(t, s, "POST", "/api/sessions", token,
+		fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("create with oversized command = %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(buf.String(), `"msg":"orphan tmux session replaced"`) {
+		t.Fatalf("failed creation claimed orphan replacement: %s", buf.String())
 	}
 }
 
