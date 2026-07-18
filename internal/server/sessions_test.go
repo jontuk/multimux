@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
@@ -173,5 +174,48 @@ func TestListSessionsIncludesRepoURL(t *testing.T) {
 	}
 	if got[1].RepoURL != "" {
 		t.Errorf("non-repo session repoUrl = %q", got[1].RepoURL)
+	}
+}
+
+func TestListSessionsIncludesBranchAndGitState(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"-C", repo, "init"},
+		{"-C", repo, "checkout", "-b", "feat"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(repo+"/a.txt", []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	st.CreateSession(tool.ID, repo)
+	st.CreateSession(tool.ID, t.TempDir()) // no repo → no branch/state
+
+	w := do(t, s, "GET", "/api/sessions", token)
+	if w.Code != 200 {
+		t.Fatalf("list = %d: %s", w.Code, w.Body.String())
+	}
+	var got []struct {
+		Branch   string `json:"branch"`
+		GitState string `json:"gitState"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Branch != "feat" || got[0].GitState != "untracked" {
+		t.Errorf("repo session = (%q, %q), want (feat, untracked)", got[0].Branch, got[0].GitState)
+	}
+	if got[1].Branch != "" || got[1].GitState != "" {
+		t.Errorf("non-repo session = (%q, %q), want empty", got[1].Branch, got[1].GitState)
 	}
 }

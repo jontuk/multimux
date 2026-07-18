@@ -1,6 +1,7 @@
 package gitinfo
 
 import (
+	"os"
 	"os/exec"
 	"testing"
 )
@@ -30,6 +31,47 @@ func TestWebURL(t *testing.T) {
 			t.Errorf("WebURL(%q) = %q, want %q", c.remote, got, c.want)
 		}
 	}
+}
+
+func TestBranchStatus(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	check := func(label, wantBranch, wantState string) {
+		t.Helper()
+		branch, state := BranchStatus(dir)
+		if branch != wantBranch || state != wantState {
+			t.Errorf("%s: BranchStatus = (%q, %q), want (%q, %q)", label, branch, state, wantBranch, wantState)
+		}
+	}
+
+	check("non-repo", "", "")
+
+	run("init")
+	run("checkout", "-b", "feat")
+	check("clean repo", "feat", "clean")
+
+	if err := os.WriteFile(dir+"/a.txt", []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check("untracked file", "feat", "untracked")
+
+	run("add", "a.txt")
+	check("tracked change", "feat", "modified")
+
+	// Untracked outranks tracked changes when both are present.
+	if err := os.WriteFile(dir+"/b.txt", []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check("both", "feat", "untracked")
 }
 
 func TestRepoWebURL(t *testing.T) {

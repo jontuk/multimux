@@ -43,6 +43,12 @@ function GitHubIcon() {
   );
 }
 
+const gitStateTitles = {
+  untracked: "untracked files present",
+  modified: "tracked files modified",
+  clean: "working tree clean",
+} as const;
+
 function tileKey(t: NonNullable<Tile>): string {
   return `${t.serverId}:${t.sessionId}`;
 }
@@ -214,6 +220,15 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                       {session && (
                         <span className="tile-dir" title={session.dir}>
                           {session.dir}
+                        </span>
+                      )}
+                      {session?.gitState && (
+                        <span className="tile-branch">
+                          <span
+                            className={`git-dot git-dot-${session.gitState}`}
+                            title={gitStateTitles[session.gitState]}
+                          />
+                          {session.branch}
                         </span>
                       )}
                       {session?.repoUrl && (

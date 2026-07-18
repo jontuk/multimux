@@ -15,7 +15,14 @@ import (
 // directory at read time.
 type sessionJSON struct {
 	store.Session
-	RepoURL string `json:"repoUrl,omitempty"`
+	RepoURL  string `json:"repoUrl,omitempty"`
+	Branch   string `json:"branch,omitempty"`
+	GitState string `json:"gitState,omitempty"`
+}
+
+// dirGitInfo is the per-directory git data resolved while listing sessions.
+type dirGitInfo struct {
+	url, branch, state string
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -26,14 +33,15 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sessionJSON, 0, len(sessions))
 	// The same dir often backs several sessions; resolve each dir once.
-	urls := map[string]string{}
+	infos := map[string]dirGitInfo{}
 	for _, sess := range sessions {
-		url, ok := urls[sess.Dir]
+		info, ok := infos[sess.Dir]
 		if !ok {
-			url = gitinfo.RepoWebURL(sess.Dir)
-			urls[sess.Dir] = url
+			info.url = gitinfo.RepoWebURL(sess.Dir)
+			info.branch, info.state = gitinfo.BranchStatus(sess.Dir)
+			infos[sess.Dir] = info
 		}
-		out = append(out, sessionJSON{Session: sess, RepoURL: url})
+		out = append(out, sessionJSON{Session: sess, RepoURL: info.url, Branch: info.branch, GitState: info.state})
 	}
 	writeJSON(w, 200, out)
 }

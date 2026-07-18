@@ -9,7 +9,16 @@ vi.mock("../term/TerminalTile", () => ({
 }));
 
 const sessions = [
-  { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running", repoUrl: "https://github.com/org/repo" },
+  {
+    id: 1,
+    tmuxName: "mm-1",
+    toolId: 1,
+    dir: "/a",
+    status: "running",
+    repoUrl: "https://github.com/org/repo",
+    branch: "feat",
+    gitState: "untracked",
+  },
   { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/b", status: "running" },
   { id: 4, tmuxName: "mm-4", toolId: 1, dir: "/c", status: "dead" },
 ];
@@ -129,6 +138,28 @@ test("tile header links to GitHub when the session dir has a repoUrl", async () 
   expect(link.href).toBe("https://github.com/org/repo");
   expect(link.target).toBe("_blank");
   expect(screen.getAllByRole("link", { name: "open repository on GitHub" })).toHaveLength(1);
+});
+
+test("tile header shows branch name and git state dot when the session dir is a repo", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await screen.findByTestId("term-2");
+
+  // Session 1 is a repo on branch "feat" with untracked files; session 2 is not a repo.
+  const branch = await screen.findByText("feat");
+  expect(branch.className).toContain("tile-branch");
+  const dot = screen.getByTitle("untracked files present");
+  expect(dot.className).toContain("git-dot-untracked");
+  expect(screen.getAllByText("feat")).toHaveLength(1);
 });
 
 test("terminate button confirms then DELETEs the session and drops the tile", async () => {

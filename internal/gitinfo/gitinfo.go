@@ -20,6 +20,34 @@ func RepoWebURL(dir string) string {
 	return WebURL(strings.TrimSpace(string(out)))
 }
 
+// BranchStatus reports dir's checked-out branch and working-tree state:
+// "untracked" when untracked files exist (regardless of other changes),
+// "modified" when only tracked files have changes, "clean" otherwise. Both
+// results are empty when dir is not a git repo or git is absent. On a
+// detached HEAD the branch is empty but the state is still reported.
+func BranchStatus(dir string) (branch, state string) {
+	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	if err != nil {
+		return "", ""
+	}
+	state = "clean"
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "??") {
+			state = "untracked"
+			break
+		}
+		if line != "" {
+			state = "modified"
+		}
+	}
+	// symbolic-ref works on an unborn branch (fresh init); it fails on a
+	// detached HEAD, where we leave the branch empty.
+	if b, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "-q", "HEAD").Output(); err == nil {
+		branch = strings.TrimSpace(string(b))
+	}
+	return branch, state
+}
+
 // WebURL converts a git remote URL to a browsable https URL. Only GitHub and
 // GitHub Enterprise remotes (hostname containing "github") are linked; other
 // hosts return "".

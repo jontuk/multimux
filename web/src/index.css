@@ -494,6 +494,36 @@ a {
   text-align: left;
 }
 
+.tile-branch {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 12rem;
+}
+
+.git-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.git-dot-untracked {
+  background: #e5534b;
+}
+
+.git-dot-modified {
+  background: #539bf5;
+}
+
+.git-dot-clean {
+  background: #57ab5a;
+}
+
 .tile-repo-link {
   display: flex;
   align-items: center;
