@@ -31,7 +31,7 @@ Struck items and reasons are listed at the bottom.
     origin, mutation endpoints require a JSON content type, and tests cover
     foreign origin, absent origin, and bearer-token requests.
 
-- [ ] **[bug] Never retarget an orphaned remote tile to the local daemon.**
+- [x] **[bug] Never retarget an orphaned remote tile to the local daemon.**
   Removing a server leaves its tiles in the persisted layout; rendering falls
   back to `localServer()`, so remote session `#1` may show or terminate local
   session `#1` ([GridPage.tsx](web/src/grid/GridPage.tsx#L212),

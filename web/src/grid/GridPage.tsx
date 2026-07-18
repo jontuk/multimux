@@ -209,7 +209,30 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
           >
             {tile ? (
               (() => {
-                const server = servers.find((s) => s.id === tile.serverId) ?? localServer();
+                const server = servers.find((s) => s.id === tile.serverId);
+                // Never fall back to another server: attaching or terminating
+                // would target that server's session with the same id.
+                if (!server) {
+                  return (
+                    <div className="tile-cell">
+                      <div className="tile-header">
+                        <span className="tile-title">#{tile.sessionId} · server removed</span>
+                        <span className="tile-actions">
+                          <button
+                            aria-label={`remove session ${tile.sessionId} from grid`}
+                            title="remove from grid"
+                            onClick={() => persist(setTile(layout, i, null))}
+                          >
+                            −
+                          </button>
+                        </span>
+                      </div>
+                      <div className="tile-body empty-tile-hint">
+                        This session's server was removed. Re-add the server in Settings or remove this tile.
+                      </div>
+                    </div>
+                  );
+                }
                 const session = (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId);
                 return (
                   <div className="tile-cell">

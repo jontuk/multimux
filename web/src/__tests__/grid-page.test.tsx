@@ -225,6 +225,28 @@ test("dead sessions are not offered for re-adding (quick-add or attach dropdown)
   expect(options).not.toContain("mm-4");
 });
 
+test("tile for a removed server shows a non-interactive state, never the local daemon", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [{ serverId: "gone-server-id", sessionId: 1 }, null],
+  };
+  const fetchMock = mockFetch(layout);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<GridPage />);
+  await screen.findByText(/server removed/i);
+
+  // No terminal may attach: local session #1 must not be shown for the orphaned tile.
+  expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
+  // No terminate action: it would DELETE local session #1.
+  expect(screen.queryByLabelText("terminate session 1")).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+
+  // Removing the orphaned tile from the grid is still allowed.
+  await userEvent.click(screen.getByLabelText("remove session 1 from grid"));
+  expect(screen.queryByText(/server removed/i)).not.toBeInTheDocument();
+});
+
 test("stepper arrows change column count and persist it", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const fetchMock = mockFetch(layout);
