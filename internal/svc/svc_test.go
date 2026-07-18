@@ -55,7 +55,10 @@ func TestUnitContentLinux(t *testing.T) {
 		t.Fatalf("path = %s", path)
 	}
 	for _, want := range []string{`ExecStart="/usr/local/bin/multimux" serve`, "Restart=on-failure", "WantedBy=default.target",
-		"Environment=\"PATH=/usr/local/bin:/usr/bin:/bin\""} {
+		"Environment=\"PATH=/usr/local/bin:/usr/bin:/bin\"",
+		// KillMode=process keeps the tmux server (same cgroup) alive across
+		// service stop/upgrade — the core persistence promise.
+		"KillMode=process"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("unit missing %q:\n%s", want, content)
 		}

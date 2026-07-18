@@ -135,8 +135,11 @@ multimux service uninstall
   `~/.local/share/multimux/multimux.log`. `install` is idempotent — it re-bootstraps
   cleanly if already installed.
 - **Linux**: a systemd **user** unit `multimux.service` is written to
-  `~/.config/systemd/user/`, enabled with `--now` and `Restart=on-failure`. For
-  the daemon to keep running after you log out, enable lingering once:
+  `~/.config/systemd/user/`, enabled with `--now` and `Restart=on-failure`. The
+  unit sets `KillMode=process` so stopping or restarting the service signals
+  only the daemon — your tmux sessions (which live in the same cgroup) survive
+  service stops, restarts, and upgrades. For the daemon to keep running after
+  you log out, enable lingering once:
 
   ```
   sudo loginctl enable-linger $USER
@@ -159,3 +162,8 @@ the binary. To upgrade:
 
 Your data directory, passkeys, and CA are untouched by an upgrade. If the CA's
 hostname set has changed you will be told to re-run `multimux ca trust`.
+
+**Linux, units installed before `KillMode=process` was added:** older units kill
+the tmux server (and every session in it) when the service stops or restarts.
+Re-run `multimux service install` once to rewrite the unit, then restarts and
+upgrades leave tmux sessions running.

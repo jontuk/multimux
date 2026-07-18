@@ -46,6 +46,9 @@ Description=multimux terminal session daemon
 ExecStart="%s" serve
 Environment="PATH=%s"
 Restart=on-failure
+# Signal only the daemon on stop; the tmux server lives in this cgroup and
+# must survive service stop/restart and binary upgrades.
+KillMode=process
 
 [Install]
 WantedBy=default.target

@@ -41,7 +41,7 @@ Struck items and reasons are listed at the bottom.
     state and a test proves neither attachment nor termination can reach
     another server.
 
-- [ ] **[reliability] Keep tmux sessions alive across Linux service restarts.**
+- [x] **[reliability] Keep tmux sessions alive across Linux service restarts.**
   The systemd user unit uses default `KillMode=control-group`, so stopping or
   upgrading the service kills the tmux server underneath it
   ([svc.go](internal/svc/svc.go#L42)). This breaks the core persistence
