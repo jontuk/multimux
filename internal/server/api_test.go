@@ -76,3 +76,57 @@ func TestSettingsRoundTripAndRPWarning(t *testing.T) {
 		t.Fatalf("settings = %v", resp)
 	}
 }
+
+func TestAppearanceRoundTripAndHealthz(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	w := do(t, s, "PUT", "/api/settings/appearance", token, `{"hostLabel":"work-mac","accentColor":"#3fb950"}`)
+	if w.Code != 200 {
+		t.Fatalf("put appearance = %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	w = do(t, s, "GET", "/api/settings/appearance", token)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["hostLabel"] != "work-mac" || resp["accentColor"] != "#3fb950" {
+		t.Fatalf("appearance = %v", resp)
+	}
+	if resp["osHostname"] == "" {
+		t.Fatalf("osHostname missing: %v", resp)
+	}
+
+	w = do(t, s, "GET", "/healthz", "")
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["hostLabel"] != "work-mac" || resp["accentColor"] != "#3fb950" {
+		t.Fatalf("healthz appearance = %v", resp)
+	}
+}
+
+func TestAppearanceHealthzFallsBackToOSHostname(t *testing.T) {
+	s, _, _ := newTestServer(t, true)
+	w := do(t, s, "GET", "/healthz", "")
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["hostLabel"] == "" {
+		t.Fatalf("hostLabel should default to OS hostname: %v", resp)
+	}
+}
+
+func TestAppearanceValidation(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	if w := do(t, s, "PUT", "/api/settings/appearance", token, `{"hostLabel":"x","accentColor":"green"}`); w.Code != 400 {
+		t.Fatalf("bad accent = %d, want 400", w.Code)
+	}
+	if w := do(t, s, "PUT", "/api/settings/appearance", token, `{"hostLabel":"x","accentColor":"#12345"}`); w.Code != 400 {
+		t.Fatalf("short accent = %d, want 400", w.Code)
+	}
+	long := fmt.Sprintf(`{"hostLabel":%q,"accentColor":""}`, string(make([]byte, 65)))
+	if w := do(t, s, "PUT", "/api/settings/appearance", token, long); w.Code != 400 {
+		t.Fatalf("long label = %d, want 400", w.Code)
+	}
+	if w := do(t, s, "PUT", "/api/settings/appearance", token, `{"hostLabel":"","accentColor":""}`); w.Code != 200 {
+		t.Fatalf("empty values = %d, want 200", w.Code)
+	}
+}

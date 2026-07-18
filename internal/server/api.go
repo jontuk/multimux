@@ -4,10 +4,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 
 	"github.com/jontuk/multimux/internal/store"
 )
+
+var accentColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 func pathID(r *http.Request) (int64, error) {
 	return strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -142,4 +145,44 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	// rpWarning: changing hostname changes the WebAuthn RP ID — all passkeys
 	// stop working after restart. UI must confirm loudly.
 	writeJSON(w, 200, map[string]any{"ok": true, "rpWarning": rpWarning, "restartRequired": true})
+}
+
+// hostLabel is the display name shown in the web UI header: the user's
+// host_label setting, falling back to the OS hostname.
+func (s *Server) hostLabel() string {
+	if label, _ := s.cfg.Store.GetSetting("host_label"); label != "" {
+		return label
+	}
+	name, _ := os.Hostname()
+	return name
+}
+
+func (s *Server) handleGetAppearance(w http.ResponseWriter, r *http.Request) {
+	label, _ := s.cfg.Store.GetSetting("host_label")
+	accent, _ := s.cfg.Store.GetSetting("accent_color")
+	osHost, _ := os.Hostname()
+	writeJSON(w, 200, map[string]string{"hostLabel": label, "accentColor": accent, "osHostname": osHost})
+}
+
+func (s *Server) handlePutAppearance(w http.ResponseWriter, r *http.Request) {
+	var in struct{ HostLabel, AccentColor string }
+	if err := readJSON(r, &in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "bad body"})
+		return
+	}
+	if len(in.HostLabel) > 64 {
+		writeJSON(w, 400, map[string]string{"error": "hostLabel must be 64 characters or fewer"})
+		return
+	}
+	if in.AccentColor != "" && !accentColorRe.MatchString(in.AccentColor) {
+		writeJSON(w, 400, map[string]string{"error": "accentColor must be #rrggbb"})
+		return
+	}
+	for k, v := range map[string]string{"host_label": in.HostLabel, "accent_color": in.AccentColor} {
+		if err := s.cfg.Store.SetSetting(k, v); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }

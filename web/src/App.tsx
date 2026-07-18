@@ -6,8 +6,15 @@ import ConnectPage from "./pages/ConnectPage";
 import { apiFetch, getJSON } from "./api";
 import { localServer } from "./servers";
 import GridPage from "./grid/GridPage";
+import { APPEARANCE_EVENT, type AppearanceDetail } from "./settings/AppearancePanel";
 
-type Health = { status: string; setupPending: boolean; version: string };
+type Health = {
+  status: string;
+  setupPending: boolean;
+  version: string;
+  hostLabel?: string;
+  accentColor?: string;
+};
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -19,6 +26,15 @@ export default function App() {
     const onHash = () => setRoute(window.location.hash || "#/");
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
+    const onAppearance = (e: Event) => {
+      const detail = (e as CustomEvent<AppearanceDetail>).detail;
+      setHealth((h) => (h ? { ...h, hostLabel: detail.hostLabel, accentColor: detail.accentColor } : h));
+    };
+    window.addEventListener(APPEARANCE_EVENT, onAppearance);
+    return () => window.removeEventListener(APPEARANCE_EVENT, onAppearance);
   }, []);
 
   useEffect(() => {
@@ -37,10 +53,14 @@ export default function App() {
   // Settings (Task 23), Connect (Task 24) routed here.
   return (
     <div className="app">
-      <header>
+      <header
+        className={health?.accentColor ? "host-accented" : undefined}
+        style={health?.accentColor ? ({ "--host-accent": health.accentColor } as React.CSSProperties) : undefined}
+      >
         <a href="#/" className="wordmark">
           <span className="prompt">~</span>multimux
         </a>
+        {health?.hostLabel && <span className="host-label">@{health.hostLabel}</span>}
         {/* GridPage portals its launcher + shape picker here while the grid route is active. */}
         <div id="header-controls" ref={setHeaderSlot} />
         <nav>

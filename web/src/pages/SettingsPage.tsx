@@ -5,8 +5,9 @@ import PasskeysPanel from "../settings/PasskeysPanel";
 import AuthSessionsPanel from "../settings/AuthSessionsPanel";
 import ServersPanel from "../settings/ServersPanel";
 import DaemonPanel from "../settings/DaemonPanel";
+import AppearancePanel from "../settings/AppearancePanel";
 
-type Tab = "tools" | "dirs" | "passkeys" | "sessions" | "servers" | "daemon";
+type Tab = "tools" | "dirs" | "passkeys" | "sessions" | "servers" | "daemon" | "appearance";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("tools");
@@ -18,6 +19,7 @@ export default function SettingsPage() {
     { id: "sessions", label: "Sessions", component: <AuthSessionsPanel /> },
     { id: "servers", label: "Servers", component: <ServersPanel /> },
     { id: "daemon", label: "Daemon", component: <DaemonPanel /> },
+    { id: "appearance", label: "Appearance", component: <AppearancePanel /> },
   ];
 
   return (

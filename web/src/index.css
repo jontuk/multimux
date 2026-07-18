@@ -242,6 +242,55 @@ a {
   outline-offset: 2px;
 }
 
+/* ---- per-host identity (Appearance settings) ---- */
+
+.app > header .host-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-left: -0.5rem;
+}
+
+.app > header.host-accented {
+  background: color-mix(in srgb, var(--host-accent) 14%, transparent);
+  border-bottom: 2px solid var(--host-accent);
+}
+
+.app > header.host-accented .host-label {
+  color: var(--host-accent);
+}
+
+.settings-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.accent-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.accent-picker input[type="color"] {
+  width: 3rem;
+  height: 2rem;
+  padding: 0.1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.accent-picker button.link {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  padding: 0;
+}
+
 /* ---- header grid controls (portal target for GridPage) ---- */
 
 #header-controls {

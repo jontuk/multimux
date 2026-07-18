@@ -69,6 +69,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/dirs/{id}", s.handleDeleteDir)
 	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
+	s.mux.HandleFunc("GET /api/settings/appearance", s.handleGetAppearance)
+	s.mux.HandleFunc("PUT /api/settings/appearance", s.handlePutAppearance)
 	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
@@ -197,11 +199,14 @@ func (s *Server) staticHandler() http.Handler {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	pending, _ := s.cfg.Auth.SetupPending()
+	accent, _ := s.cfg.Store.GetSetting("accent_color")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",
 		"version":      s.cfg.Version,
 		"tmux":         s.cfg.Tmux.Available() == nil,
 		"setupPending": pending,
+		"hostLabel":    s.hostLabel(),
+		"accentColor":  accent,
 	})
 }
 
