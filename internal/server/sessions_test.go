@@ -64,6 +64,33 @@ func TestSessionCreateKillDismiss(t *testing.T) {
 	}
 }
 
+// A tmux session bearing the name the next row will get, but with no DB row
+// (left over from a wiped DB or a failed kill), is unreachable from the UI.
+// Create must replace it instead of failing with "duplicate session".
+func TestCreateSessionReplacesOrphanTmuxSession(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+
+	orphan := s.cfg.Tmux.SessionName(1) // fresh DB: the next session row gets ID 1
+	if err := s.cfg.Tmux.CreateSession(orphan, t.TempDir(), "sleep 60"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	if w.Code != 201 {
+		t.Fatalf("create with orphan = %d: %s", w.Code, w.Body.String())
+	}
+	var sess store.Session
+	json.Unmarshal(w.Body.Bytes(), &sess)
+	if sess.TmuxName != orphan {
+		t.Fatalf("tmux name = %q, want %q", sess.TmuxName, orphan)
+	}
+	if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
+		t.Fatal("tmux session not created")
+	}
+}
+
 func TestCreateSessionBadTool(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")

@@ -3,11 +3,13 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -213,10 +215,34 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
+// statusRecorder captures the response status so logRequests can surface
+// server errors. Hijack is forwarded (via ResponseController, which follows
+// Unwrap) so WebSocket upgrades still work through the wrapper.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(r.ResponseWriter).Hijack()
+}
+
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-		slog.Debug("http", "method", r.Method, "path", r.URL.Path)
+		rec := &statusRecorder{ResponseWriter: w, status: 200}
+		next.ServeHTTP(rec, r)
+		if rec.status >= 500 {
+			slog.Error("http", "method", r.Method, "path", r.URL.Path, "status", rec.status)
+			return
+		}
+		slog.Debug("http", "method", r.Method, "path", r.URL.Path, "status", rec.status)
 	})
 }
 

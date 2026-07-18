@@ -83,6 +83,16 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	// A tmux session may already hold this name without a backing DB row —
+	// left over from a wiped DB or a failed kill. No row means it is
+	// unreachable from the UI, so replace it rather than fail on the name.
+	if s.cfg.Tmux.IsAlive(sess.TmuxName) {
+		if err := s.cfg.Tmux.KillSession(sess.TmuxName); err != nil {
+			_ = s.cfg.Store.DeleteSession(sess.ID)
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	if err := s.cfg.Tmux.CreateSession(sess.TmuxName, dir.Path, tool.Command); err != nil {
 		// No orphan rows: roll the DB back when tmux fails.
 		_ = s.cfg.Store.DeleteSession(sess.ID)

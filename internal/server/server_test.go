@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -227,3 +229,23 @@ func TestOversizedBodyRejected(t *testing.T) {
 }
 
 func stringsReader(s string) *strings.Reader { return strings.NewReader(s) }
+
+// 500s must be visible in the daemon log, not just the response body.
+func TestServerErrorsAreLogged(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	st.Close() // every store call now errors
+	if w := do(t, s, "GET", "/api/sessions", token); w.Code != 500 {
+		t.Fatalf("code = %d, want 500", w.Code)
+	}
+	log := buf.String()
+	if !strings.Contains(log, "/api/sessions") || !strings.Contains(log, "500") {
+		t.Fatalf("500 response not logged: %q", log)
+	}
+}
