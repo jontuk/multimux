@@ -187,3 +187,46 @@ func TestResizeApplicationIsSerializedWithOwnership(t *testing.T) {
 		t.Fatalf("last applied resize = %q, want focused second owner", got)
 	}
 }
+
+func TestResizeApplicationDoesNotBlockOtherSessions(t *testing.T) {
+	a := NewArbiter()
+	first := a.Register("mm-1")
+	second := a.Register("mm-2")
+	defer first.Unregister()
+	defer second.Unregister()
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- first.Resize(129, 76, true, func(bool) error {
+			close(firstStarted)
+			<-releaseFirst
+			return nil
+		})
+	}()
+	<-firstStarted
+
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- second.Resize(97, 76, true, func(bool) error {
+			return nil
+		})
+	}()
+
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(50 * time.Millisecond):
+		close(releaseFirst)
+		<-firstDone
+		t.Fatal("resize in mm-1 blocked independent session mm-2")
+	}
+
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+}

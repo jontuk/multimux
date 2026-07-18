@@ -14,14 +14,16 @@ type Arbiter struct {
 }
 
 type arbSession struct {
-	refs  int
-	owner *ArbConn
+	resizeMu sync.Mutex // serializes ownership changes with their tmux resize
+	refs     int
+	owner    *ArbConn
 }
 
 // ArbConn is one connection's handle on the arbiter.
 type ArbConn struct {
 	arb          *Arbiter
 	tmuxName     string
+	session      *arbSession
 	cols, rows   uint16 // last dims this conn asked for (guarded by arb.mu)
 	unregistered bool   // guarded by arb.mu; true once Unregister has run
 }
@@ -40,61 +42,73 @@ func (a *Arbiter) Register(tmuxName string) *ArbConn {
 		a.sessions[tmuxName] = s
 	}
 	s.refs++
-	return &ArbConn{arb: a, tmuxName: tmuxName}
+	return &ArbConn{arb: a, tmuxName: tmuxName, session: s}
 }
 
 // Unregister drops the connection, releasing ownership if held. It is safe to
 // call more than once; only the first call has any effect.
 func (c *ArbConn) Unregister() {
+	c.session.resizeMu.Lock()
+	defer c.session.resizeMu.Unlock()
 	c.arb.mu.Lock()
 	defer c.arb.mu.Unlock()
 	if c.unregistered {
 		return
 	}
 	c.unregistered = true
-	s := c.arb.sessions[c.tmuxName]
-	if s == nil {
+	if c.arb.sessions[c.tmuxName] != c.session {
 		return
 	}
-	if s.owner == c {
-		s.owner = nil
+	if c.session.owner == c {
+		c.session.owner = nil
 	}
-	s.refs--
-	if s.refs <= 0 {
+	c.session.refs--
+	if c.session.refs <= 0 {
 		delete(c.arb.sessions, c.tmuxName)
 	}
 }
 
 // Resize records the dims this conn wants and applies the resize while the
-// ownership decision is locked. An active resize claims ownership.
+// session's resize sequence is locked. An active resize claims ownership.
 func (c *ArbConn) Resize(cols, rows uint16, active bool, apply func(resizeWindow bool) error) error {
+	c.session.resizeMu.Lock()
+	defer c.session.resizeMu.Unlock()
+
 	c.arb.mu.Lock()
-	defer c.arb.mu.Unlock()
+	if c.unregistered || c.arb.sessions[c.tmuxName] != c.session {
+		c.arb.mu.Unlock()
+		return nil
+	}
 	c.cols, c.rows = cols, rows
-	s := c.arb.sessions[c.tmuxName]
-	if s == nil {
-		return apply(true)
-	}
+	allowed := c.session.owner == nil || c.session.owner == c
 	if active {
-		s.owner = c
-		return apply(true)
+		c.session.owner = c
+		allowed = true
 	}
-	return apply(s.owner == nil || s.owner == c)
+	c.arb.mu.Unlock()
+
+	return apply(allowed)
 }
 
 // ClaimInput marks this conn as owner (call on keyboard input). If ownership
 // changed hands and the conn has known dims, it reapplies them while the
 // ownership transfer is locked.
 func (c *ArbConn) ClaimInput(apply func(cols, rows uint16) error) error {
+	c.session.resizeMu.Lock()
+	defer c.session.resizeMu.Unlock()
+
 	c.arb.mu.Lock()
-	defer c.arb.mu.Unlock()
-	s := c.arb.sessions[c.tmuxName]
-	if s == nil || s.owner == c {
+	if c.unregistered || c.arb.sessions[c.tmuxName] != c.session || c.session.owner == c {
+		c.arb.mu.Unlock()
 		return nil
 	}
-	s.owner = c
+	c.session.owner = c
 	if c.cols == 0 || c.rows == 0 {
+		c.arb.mu.Unlock()
 		return nil
 	}
-	return apply(c.cols, c.rows)
+	cols, rows := c.cols, c.rows
+	c.arb.mu.Unlock()
+
+	return apply(cols, rows)
 }
