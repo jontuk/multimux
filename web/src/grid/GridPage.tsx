@@ -70,10 +70,21 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   // reads localStorage and returns a fresh array each call.
   const servers = useMemo(() => listServers(), []);
 
-  const persist = useCallback((l: Layout) => {
+  // A maximized tile that leaves the layout (removed, terminated, server-side
+  // layout change) must not leave the page stuck fullscreen — or re-maximize
+  // if the same session is later re-added.
+  const adoptLayout = useCallback((l: Layout) => {
     setLayout(l);
-    putJSON(localServer(), "/api/layout", l).catch(() => {});
+    setMaximizedKey((k) => (k && !l.tiles.some((t) => t && tileKey(t) === k) ? null : k));
   }, []);
+
+  const persist = useCallback(
+    (l: Layout) => {
+      adoptLayout(l);
+      putJSON(localServer(), "/api/layout", l).catch(() => {});
+    },
+    [adoptLayout],
+  );
 
   const refreshSessions = useCallback(() => {
     for (const server of servers) {
@@ -86,9 +97,9 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   const refreshLayout = useCallback(() => {
     getJSON<unknown>(localServer(), "/api/layout").then((v) => {
       // Normalize so layouts persisted before rows were derived still load cleanly.
-      if (isLayout(v)) setLayout(normalize(v.tiles, v.shape.cols));
+      if (isLayout(v)) adoptLayout(normalize(v.tiles, v.shape.cols));
     });
-  }, []);
+  }, [adoptLayout]);
 
   const onServerEvent = useCallback(
     (type: string) => {

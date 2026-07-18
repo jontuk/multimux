@@ -287,6 +287,26 @@ test("Escape restores the grid while a tile is maximized", async () => {
   expect(tile.className).not.toContain("tile-maximized");
 });
 
+test("removing the maximized tile clears maximized state", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const header = screen.getByText("#1 · claude").closest(".tile-header")!;
+  await userEvent.dblClick(header);
+  expect(document.querySelector(".tile-maximized")).not.toBeNull();
+
+  await userEvent.click(screen.getByLabelText("remove session 1 from grid"));
+  expect(document.querySelector(".tile-maximized")).toBeNull();
+
+  // Re-add the same session: it must come back un-maximized.
+  await userEvent.click(await screen.findByText("+ #1 claude"));
+  await screen.findByTestId("term-1");
+  expect(document.querySelector(".tile-maximized")).toBeNull();
+});
+
 test("stepper arrows change column count and persist it", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const fetchMock = mockFetch(layout);
