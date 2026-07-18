@@ -247,6 +247,29 @@ test("tile for a removed server shows a non-interactive state, never the local d
   expect(screen.queryByText(/server removed/i)).not.toBeInTheDocument();
 });
 
+test("double-clicking a tile header maximizes the tile; double-clicking again restores", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const header = screen.getByText("#1 · claude").closest(".tile-header")!;
+  const tile = header.closest(".tile")!;
+
+  await userEvent.dblClick(header);
+  expect(tile.className).toContain("tile-maximized");
+
+  await userEvent.dblClick(header);
+  expect(tile.className).not.toContain("tile-maximized");
+});
+
 test("stepper arrows change column count and persist it", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const fetchMock = mockFetch(layout);

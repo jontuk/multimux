@@ -460,6 +460,14 @@ a {
   min-width: 0;
 }
 
+.tile-maximized {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  border-radius: 0;
+}
+
 .tile-cell {
   display: flex;
   flex-direction: column;
@@ -477,6 +485,7 @@ a {
   font-family: var(--mono);
   font-size: 0.75rem;
   cursor: grab;
+  user-select: none;
 }
 
 .tile-title {

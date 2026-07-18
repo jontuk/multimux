@@ -64,6 +64,8 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
   const [toolsByServer, setToolsByServer] = useState<Record<string, Tool[]>>({});
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
+  // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
+  const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
   // Stable across re-renders so the events sockets don't churn; listServers()
   // reads localStorage and returns a fresh array each call.
   const servers = useMemo(() => listServers(), []);
@@ -198,7 +200,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
         {layout.tiles.map((tile: Tile, i: number) => (
           <div
             key={i}
-            className="tile"
+            className={`tile${tile && tileKey(tile) === maximizedKey ? " tile-maximized" : ""}`}
             draggable={tile !== null}
             onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
             onDragOver={(e) => e.preventDefault()}
@@ -236,7 +238,10 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                 const session = (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId);
                 return (
                   <div className="tile-cell">
-                    <div className="tile-header">
+                    <div
+                      className="tile-header"
+                      onDoubleClick={() => setMaximizedKey((k) => (k === tileKey(tile) ? null : tileKey(tile)))}
+                    >
                       <span className="tile-title">
                         #{tile.sessionId} · {toolName(toolsByServer[tile.serverId], session)}
                       </span>
