@@ -7,7 +7,9 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -88,16 +90,56 @@ func (s *Server) routes() {
 }
 
 // Handler wraps the mux in (outermost first) logging → CORS → setup gate →
-// auth → body cap. Static assets and /healthz and /api/auth/{login,setup}
-// bypass auth.
+// CSRF gate → auth → body cap. Static assets and /healthz and
+// /api/auth/{login,setup} bypass auth.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
 	h = limitBody(h)
 	h = s.authGate(h)
+	h = s.csrfGate(h)
 	h = s.setupGate(h)
 	h = s.cors(h)
 	h = logRequests(h)
 	return h
+}
+
+// csrfGate blocks cross-origin cookie-carrying API mutations. CORS only stops
+// the response being read — a same-site sibling origin (a/b.<tailnet>.ts.net
+// share a site, so SameSite=Strict still attaches the cookie) can fire a
+// no-cors POST whose side effects execute regardless. Two rules for unsafe
+// /api/ methods: cookie-authenticated requests must present one of our own
+// exact origins (the SPA always sends Origin on non-GET fetches), and any
+// request body must be application/json, which a cross-origin caller cannot
+// send without a credentialed CORS request that ACAO:* already forbids.
+// Explicit bearer tokens skip the origin check — the token is attached
+// deliberately, which is how cross-daemon calls work; auth then uses that
+// token, never the cookie (TokenFromRequest is explicit-first), mirroring
+// checkWSOrigin.
+func (s *Server) csrfGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case !strings.HasPrefix(r.URL.Path, "/api/"),
+			r.Method == http.MethodGet, r.Method == http.MethodHead, r.Method == http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if auth.ExplicitToken(r) == "" {
+			if c, err := r.Cookie(auth.CookieName); err == nil && c.Value != "" {
+				if !slices.Contains(s.cfg.Origins, r.Header.Get("Origin")) {
+					writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden origin"})
+					return
+				}
+			}
+		}
+		if r.ContentLength != 0 { // includes -1 (unknown length): body may exist
+			ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if ct != "application/json" {
+				writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "expected application/json"})
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // limitBody caps request bodies so unauthenticated endpoints (the WebAuthn

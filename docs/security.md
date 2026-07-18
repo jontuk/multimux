@@ -124,12 +124,23 @@ cookie.
 
 ### Why cookies stay `SameSite=Strict`
 
-Session cookies are `SameSite=Strict`, which means a browser will **never** attach
-them to a cross-origin request. That is deliberate and is the whole reason the
+Session cookies are `SameSite=Strict`, which means a browser will never attach
+them to a cross-**site** request. That is deliberate and is the whole reason the
 bearer-token handoff exists: cross-daemon traffic must authenticate with an
 explicit token, so a malicious page cannot ride your cookie to another daemon.
 The trade-off is that cross-origin control needs the one-time popup handoff, which
-is a fair price for closing the cross-site request surface entirely.
+is a fair price for closing the cross-site request surface.
+
+`SameSite` does not cover same-site *cross-origin* requests: two daemons on one
+tailnet (`a.<tailnet>.ts.net` and `b.<tailnet>.ts.net`) share a site, so the
+browser still attaches the cookie between them. The daemon therefore also
+enforces a CSRF gate on every unsafe (`POST`/`PUT`/`DELETE`) `/api/*` request:
+a cookie-authenticated mutation must carry an `Origin` header exactly matching
+one of this daemon's own origins, and any request body must be
+`application/json` (a content type a cross-origin page cannot send without a
+credentialed CORS request the daemon never allows). Requests carrying an
+explicit bearer token skip the origin check — the token itself proves intent,
+and authentication then uses that token, never the cookie.
 
 Because cross-origin API calls authenticate only with bearer tokens (never
 cookies), the daemon can safely answer `/api/*` with

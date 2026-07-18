@@ -20,7 +20,7 @@ Struck items and reasons are listed at the bottom.
 
 ## P0 — release blockers
 
-- [ ] **[security] Block same-site CSRF on cookie-authenticated API writes.**
+- [x] **[security] Block same-site CSRF on cookie-authenticated API writes.**
   The API reflects `Access-Control-Allow-Origin: *`, never validates `Origin`,
   and accepts CORS-safelisted `text/plain` bodies
   ([server.go](internal/server/server.go#L149),

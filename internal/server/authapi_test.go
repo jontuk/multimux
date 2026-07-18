@@ -32,6 +32,7 @@ func setupViaHTTP(t *testing.T, s *Server, code string) (string, virtualwebauthn
 	attResp := virtualwebauthn.CreateAttestationResponse(rp, authenticator, cred, *attOpts)
 
 	r := httptest.NewRequest("POST", "/api/auth/setup/finish?code="+code+"&keyName=laptop", bytes.NewReader([]byte(attResp)))
+	r.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, r)
 	if rec.Code != 200 {
@@ -90,6 +91,7 @@ func TestSetupThenLoginFlow(t *testing.T) {
 	}
 	asrtResp := virtualwebauthn.CreateAssertionResponse(rp, authenticator, authenticator.Credentials[0], *asrtOpts)
 	r = httptest.NewRequest("POST", "/api/auth/login/finish", bytes.NewReader([]byte(asrtResp)))
+	r.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, r)
 	if rec.Code != 200 {
@@ -130,6 +132,7 @@ func TestLastCredentialUndeletable(t *testing.T) {
 	id := creds[0]["id"].(string)
 	r = httptest.NewRequest("DELETE", "/api/auth/credentials/"+id, nil)
 	r.AddCookie(&http.Cookie{Name: "mm_session", Value: cookie})
+	r.Header.Set("Origin", "https://localhost:8686") // cookie mutations need own Origin (CSRF gate)
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, r)
 	if rec.Code != 400 {

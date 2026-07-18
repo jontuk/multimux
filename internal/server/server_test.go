@@ -50,6 +50,7 @@ func do(t *testing.T, s *Server, method, path, token string, body ...string) *ht
 	var r *http.Request
 	if len(body) > 0 {
 		r = httptest.NewRequest(method, path, stringsReader(body[0]))
+		r.Header.Set("Content-Type", "application/json")
 	} else {
 		r = httptest.NewRequest(method, path, nil)
 	}
@@ -113,6 +114,106 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	if w.Header().Get("Access-Control-Allow-Credentials") != "" {
 		t.Fatal("must never allow credentials cross-origin")
+	}
+}
+
+// TestCSRFGate covers the cross-origin defense for cookie-authenticated
+// mutations: CORS only stops the response being read, not the mutation
+// executing, so unsafe cookie-carrying requests must present our own Origin
+// and a JSON content type. Explicit bearer tokens stay cross-origin capable —
+// that is how cross-daemon calls authenticate.
+func TestCSRFGate(t *testing.T) {
+	const ownOrigin = "https://localhost:8686"
+	newReq := func(method, path, body string) *http.Request {
+		var r *http.Request
+		if body != "" {
+			r = httptest.NewRequest(method, path, stringsReader(body))
+		} else {
+			r = httptest.NewRequest(method, path, nil)
+		}
+		return r
+	}
+	run := func(s *Server, r *http.Request) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	toolBody := `{"name":"x","command":"y"}`
+
+	tests := []struct {
+		name   string
+		setup  func(r *http.Request, cookie, bearer string)
+		method string
+		path   string
+		body   string
+		want   int
+	}{
+		{"cookie POST foreign origin rejected", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Origin", "https://evil.example")
+			r.Header.Set("Content-Type", "application/json")
+		}, "POST", "/api/tools", toolBody, 403},
+		{"cookie POST absent origin rejected", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Content-Type", "application/json")
+		}, "POST", "/api/tools", toolBody, 403},
+		{"cookie POST own origin allowed", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Origin", ownOrigin)
+			r.Header.Set("Content-Type", "application/json")
+		}, "POST", "/api/tools", toolBody, 201},
+		{"cookie POST own origin text/plain rejected", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Origin", ownOrigin)
+			r.Header.Set("Content-Type", "text/plain")
+		}, "POST", "/api/tools", toolBody, 415},
+		{"cookie POST no content type rejected", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Origin", ownOrigin)
+		}, "POST", "/api/tools", toolBody, 415},
+		{"cookie bodyless POST foreign origin rejected", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Origin", "https://evil.example")
+		}, "POST", "/api/auth/logout", "", 403},
+		{"cookie DELETE foreign origin rejected", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Origin", "https://evil.example")
+		}, "DELETE", "/api/tools/1", "", 403},
+		{"cookie GET foreign origin still allowed", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Origin", "https://evil.example")
+		}, "GET", "/api/tools", "", 200},
+		{"bearer POST foreign origin allowed", func(r *http.Request, _, bearer string) {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+			r.Header.Set("Origin", "https://otherhost:8686")
+			r.Header.Set("Content-Type", "application/json")
+		}, "POST", "/api/tools", toolBody, 201},
+		{"garbage bearer cannot ride valid cookie", func(r *http.Request, cookie, _ string) {
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			r.Header.Set("Authorization", "Bearer garbage")
+			r.Header.Set("Origin", "https://evil.example")
+			r.Header.Set("Content-Type", "application/json")
+		}, "POST", "/api/tools", toolBody, 401},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, st, am := newTestServer(t, true)
+			cookie, _ := am.CreateSession("UA")
+			bearer, _ := am.CreateSession("UA")
+			r := newReq(tc.method, tc.path, tc.body)
+			tc.setup(r, cookie, bearer)
+			w := run(s, r)
+			if w.Code != tc.want {
+				t.Fatalf("%s %s = %d, want %d (body %s)", tc.method, tc.path, w.Code, tc.want, w.Body.String())
+			}
+			// A rejected mutation must not have executed.
+			if tc.want >= 400 && tc.method == "POST" && tc.path == "/api/tools" {
+				tools, _ := st.ListTools()
+				if len(tools) != 0 {
+					t.Fatalf("rejected request still created tool: %v", tools)
+				}
+			}
+		})
 	}
 }
 
