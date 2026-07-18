@@ -3,13 +3,10 @@
 package server
 
 import (
-	"bufio"
 	"encoding/json"
 	"io"
 	"io/fs"
-	"log/slog"
 	"mime"
-	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -215,37 +212,6 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder captures the response status so logRequests can surface
-// server errors. Hijack is forwarded (via ResponseController, which follows
-// Unwrap) so WebSocket upgrades still work through the wrapper.
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	r.ResponseWriter.WriteHeader(code)
-}
-
-func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
-
-func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return http.NewResponseController(r.ResponseWriter).Hijack()
-}
-
-func logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec := &statusRecorder{ResponseWriter: w, status: 200}
-		next.ServeHTTP(rec, r)
-		if rec.status >= 500 {
-			slog.Error("http", "method", r.Method, "path", r.URL.Path, "status", rec.status)
-			return
-		}
-		slog.Debug("http", "method", r.Method, "path", r.URL.Path, "status", rec.status)
-	})
-}
-
 // staticHandler serves the embedded SPA with index.html fallback for client
 // routes (anything without a file extension).
 func (s *Server) staticHandler() http.Handler {
@@ -284,6 +250,13 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	if status >= http.StatusInternalServerError {
+		if body, ok := v.(map[string]string); ok {
+			if recorder, ok := w.(interface{ recordError(string) }); ok {
+				recorder.recordError(body["error"])
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
