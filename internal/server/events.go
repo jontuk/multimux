@@ -93,6 +93,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) sweepExpiredAuthSessions(now time.Time) {
+	if n, err := s.cfg.Store.DeleteExpiredAuthSessions(now); err != nil {
+		slog.Error("session sweep", "err", err)
+	} else if n > 0 {
+		slog.Info("auth sessions expired", "count", n)
+	}
+}
+
 // StartBackground runs startup reconcile plus periodic maintenance.
 func (s *Server) StartBackground() {
 	if _, err := s.Reconcile(); err != nil {
@@ -110,9 +118,7 @@ func (s *Server) StartBackground() {
 	}()
 	go func() {
 		for range time.Tick(time.Hour) {
-			if _, err := s.cfg.Store.DeleteExpiredAuthSessions(time.Now()); err != nil {
-				slog.Error("session sweep", "err", err)
-			}
+			s.sweepExpiredAuthSessions(time.Now())
 		}
 	}()
 }

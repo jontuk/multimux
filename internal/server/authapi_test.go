@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
@@ -58,6 +60,7 @@ func setupViaHTTP(t *testing.T, s *Server, code string) (string, virtualwebauthn
 func TestSetupThenLoginFlow(t *testing.T) {
 	s, _, am := newTestServer(t, false)
 	code, _ := am.NewSetupCode()
+	buf := captureLogs(t)
 
 	// Wrong code rejected.
 	if w := do(t, s, "POST", "/api/auth/setup/begin", "", `{"code":"NOPE99","userName":"jon","keyName":"k"}`); w.Code != 403 {
@@ -97,11 +100,29 @@ func TestSetupThenLoginFlow(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("login/finish = %d: %s", rec.Code, rec.Body.String())
 	}
+
+	logged := buf.String()
+	for _, want := range []string{
+		`"msg":"setup completed"`,
+		`"msg":"passkey registered"`,
+		`"key_name":"laptop"`,
+		`"msg":"login succeeded"`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("auth log missing %q: %s", want, logged)
+		}
+	}
+	for _, secret := range []string{code, cookie, "jon"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("auth log exposed %q: %s", secret, logged)
+		}
+	}
 }
 
 func TestMintBearerToken(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")
+	buf := captureLogs(t)
 	w := do(t, s, "POST", "/api/auth/token", token)
 	if w.Code != 200 {
 		t.Fatalf("token = %d", w.Code)
@@ -113,6 +134,96 @@ func TestMintBearerToken(t *testing.T) {
 	}
 	if w := do(t, s, "GET", "/api/tools", resp["token"]); w.Code != 200 {
 		t.Fatalf("minted token unusable: %d", w.Code)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, `"msg":"bearer session minted"`) {
+		t.Fatalf("bearer session event missing: %s", logged)
+	}
+	for _, secret := range []string{token, resp["token"]} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("auth log exposed token %q: %s", secret, logged)
+		}
+	}
+}
+
+func TestLogoutAndAuthSessionRevocationAreLoggedWithoutIdentifiers(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	primary, _ := am.CreateSession("primary-agent-must-not-leak")
+	_, _ = am.CreateSession("secondary-agent-must-not-leak")
+	sessions, err := st.ListAuthSessions()
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("auth sessions = %v, %v", sessions, err)
+	}
+	victimHash := sessions[1].TokenHash
+	buf := captureLogs(t)
+
+	if w := do(t, s, "DELETE", "/api/auth/sessions/"+victimHash, primary); w.Code != http.StatusNoContent {
+		t.Fatalf("revoke auth session = %d: %s", w.Code, w.Body.String())
+	}
+	if w := do(t, s, "POST", "/api/auth/logout", primary); w.Code != http.StatusNoContent {
+		t.Fatalf("logout = %d: %s", w.Code, w.Body.String())
+	}
+
+	logged := buf.String()
+	for _, want := range []string{`"msg":"auth session revoked"`, `"msg":"logout completed"`} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("auth log missing %q: %s", want, logged)
+		}
+	}
+	for _, secret := range []string{primary, victimHash, "primary-agent", "secondary-agent"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("auth log exposed %q: %s", secret, logged)
+		}
+	}
+}
+
+func TestPasskeyRegistrationAndDeletionAreLoggedWithoutCredentialID(t *testing.T) {
+	s, st, am := newTestServer(t, false)
+	code, _ := am.NewSetupCode()
+	token, rp, authenticator := setupViaHTTP(t, s, code)
+	buf := captureLogs(t)
+
+	w := do(t, s, "POST", "/api/auth/register/begin", token, `{"keyName":"desktop"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("register begin = %d: %s", w.Code, w.Body.String())
+	}
+	attOpts, err := virtualwebauthn.ParseAttestationOptions(w.Body.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	attResp := virtualwebauthn.CreateAttestationResponse(rp, authenticator, cred, *attOpts)
+	r := httptest.NewRequest("POST", "/api/auth/register/finish?keyName=desktop", bytes.NewReader([]byte(attResp)))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register finish = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	creds, err := st.ListCredentials()
+	if err != nil || len(creds) != 2 {
+		t.Fatalf("credentials = %v, %v", creds, err)
+	}
+	deletedID := creds[0].ID
+	w = do(t, s, "DELETE", "/api/auth/credentials/"+url.PathEscape(deletedID), token)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete credential = %d: %s", w.Code, w.Body.String())
+	}
+
+	logged := buf.String()
+	for _, want := range []string{
+		`"msg":"passkey registered"`,
+		`"key_name":"desktop"`,
+		`"msg":"passkey deleted"`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("passkey log missing %q: %s", want, logged)
+		}
+	}
+	if strings.Contains(logged, deletedID) {
+		t.Fatalf("passkey log exposed credential ID %q: %s", deletedID, logged)
 	}
 }
 

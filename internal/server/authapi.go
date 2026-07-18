@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -57,12 +58,15 @@ func (s *Server) handleSetupFinish(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("passkey registered", "key_name", keyName)
 	s.cfg.Auth.ClearSetupCode()
+	slog.Info("setup completed")
 	token, err := s.cfg.Auth.CreateSession(r.UserAgent())
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("login succeeded")
 	s.setSessionCookie(w, token)
 	writeJSON(w, 200, map[string]string{"status": "registered"})
 }
@@ -100,7 +104,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	_ = s.cfg.Auth.Logout(auth.TokenFromRequest(r))
+	if err := s.cfg.Auth.Logout(auth.TokenFromRequest(r)); err == nil {
+		slog.Info("logout completed")
+	}
 	http.SetCookie(w, &http.Cookie{Name: auth.CookieName, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(204)
@@ -121,10 +127,12 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
-	if err := s.cfg.Auth.FinishRegistration(r.URL.Query().Get("keyName"), r); err != nil {
+	keyName := r.URL.Query().Get("keyName")
+	if err := s.cfg.Auth.FinishRegistration(keyName, r); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("passkey registered", "key_name", keyName)
 	writeJSON(w, 200, map[string]string{"status": "registered"})
 }
 
@@ -158,6 +166,7 @@ func (s *Server) handleDeleteCredential(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("passkey deleted")
 	w.WriteHeader(204)
 }
 
@@ -182,6 +191,7 @@ func (s *Server) handleDeleteAuthSession(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("auth session revoked")
 	w.WriteHeader(204)
 }
 
@@ -193,5 +203,6 @@ func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("bearer session minted")
 	writeJSON(w, 200, map[string]string{"token": token})
 }

@@ -2,8 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jontuk/multimux/internal/store"
 )
 
 func TestHubBroadcast(t *testing.T) {
@@ -49,4 +52,42 @@ func TestUnsubscribeIdempotent(t *testing.T) {
 	h.Unsubscribe(ch)
 	h.Unsubscribe(ch) // must not panic
 	h.Broadcast("x", nil)
+}
+
+func TestExpiredAuthSessionSweepLogsOnlyWhenRowsChange(t *testing.T) {
+	s, st, _ := newTestServer(t, true)
+	now := time.Now().UTC()
+	for _, session := range []store.AuthSession{
+		{
+			TokenHash: "expired-hash-must-not-leak",
+			UserAgent: "expired-agent-must-not-leak",
+			CreatedAt: now.Add(-2 * time.Hour),
+			ExpiresAt: now.Add(-time.Hour),
+		},
+		{
+			TokenHash: "active-hash-must-not-leak",
+			UserAgent: "active-agent-must-not-leak",
+			CreatedAt: now,
+			ExpiresAt: now.Add(time.Hour),
+		},
+	} {
+		if err := st.CreateAuthSession(session); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	buf := captureLogs(t)
+	s.sweepExpiredAuthSessions(now)
+	s.sweepExpiredAuthSessions(now)
+
+	logged := buf.String()
+	if strings.Count(logged, `"msg":"auth sessions expired"`) != 1 ||
+		!strings.Contains(logged, `"count":1`) {
+		t.Fatalf("expired session sweep log = %s", logged)
+	}
+	for _, secret := range []string{"expired-hash", "active-hash", "expired-agent", "active-agent"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("session sweep log exposed %q: %s", secret, logged)
+		}
+	}
 }
