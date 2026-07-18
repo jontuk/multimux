@@ -1,142 +1,405 @@
-# TODO — hostname bootstrap & local-dev fixes
+# TODO — codebase audit
 
-Findings from dogfooding first-run and the dev loop on a machine where mDNS
-doesn't resolve (Tailscale-only reachability). Ordered roughly by impact.
+Audit date: 2026-07-18
 
-## 1. ✅ DONE — `serve --hostname <name>` — settable identity before first login
+Audited revision: `e6b1547` (`main`)
 
-**Problem.** The daemon derives its hostname from `os.Hostname()`
-(`cmd/serve.go`), and on many machines that name is unreachable from a
-browser: mDNS blocked or disabled, corporate DNS, Tailscale-only setups. There
-is currently **no way to set the hostname before first login** — the Settings
-page sits behind a passkey login, registering a passkey needs a reachable
-setup URL, and the setup URL uses the broken hostname. Chicken-and-egg; the
-only escape today is hand-editing SQLite (now documented in the README, but it
-shouldn't be the answer).
+This replaces the completed hostname/dev-loop checklist. Its history remains in
+Git. Items below are ordered by user impact, exploitability, and likelihood.
 
-**Fix.**
-- Add `serve --hostname <name>`, persisted to the `hostname` setting exactly
-  like `--port` (and consider a `MULTIMUX_HOSTNAME` env var so service units
-  can carry it).
-- Validate up front: the name must contain a dot or be literal `localhost`
-  (go-webauthn rejects other dotless RP IDs — that constraint is currently
-  implicit in the `.local` fallback).
-- The hostname is the WebAuthn RP ID: if credentials already exist and the
-  flag would change the RP ID, **refuse with a clear message** pointing at
-  `multimux auth reset --yes` rather than silently stranding the passkeys.
-- PKI already self-heals (`pki.Ensure` regenerates CA + leaf when the name
-  set changes); make sure the "re-run `multimux ca trust`" warning is loud.
+## Baseline
 
-## 2. ✅ DONE (core) — Print setup/listen URLs users can actually open
+- `./verify.sh`: pass (Go format/vet/tests; frontend lint, 43 Vitest tests, and
+  production build).
+- `go test -race ./...`: pass.
+- `go test -cover ./...`: pass. Excluding the root executable package (0.0%),
+  the lowest package coverage is `internal/svc` (32.8%); `cmd` is 41.6%.
+- `go build -o /tmp/multimux-audit .`: pass.
+- `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` (scanner v1.6.0,
+  database updated 2026-07-08): no reachable vulnerabilities. One vulnerability
+  is present in the module graph, but no affected symbol is called.
+- `pnpm audit --prod --audit-level high`: no known production dependency
+  vulnerabilities.
+- The frontend build emits one 561.94 kB JavaScript bundle (155.39 kB gzip).
 
-> Done: dotted-first URL ordering, one setup line per name, `--hostname` hint,
-> listen line uses most-resolvable origin. Skipped nice-to-haves: seeding from
-> macOS `LocalHostName` would change the PKI name set on existing installs
-> (CA regen churn), and `--hostname` now covers the Tailscale/MagicDNS case.
+## Priority key
 
-**Problem.** The setup banner prints `origins[0]`, which is the **bare
-single-label hostname** (`https://myhost:8686/...`) — the least likely form to
-resolve from another device, and inconsistent with the README's `.local`
-examples.
+- **P0:** security, data-loss, or core-product blocker; fix before the next
+  release.
+- **P1:** high-impact correctness/reliability issue; fix next.
+- **P2:** meaningful efficiency, resilience, or usability improvement.
+- **P3:** engineering hygiene or optional product polish.
 
-**Fix.**
-- Prefer the dotted form (`.local` or configured FQDN) in the printed URL, or
-  print one line per name.
-- Append a hint: `if this doesn't resolve from your browser, restart with
-  --hostname <name>` (once item 1 exists).
-- Nice-to-have: on macOS prefer `LocalHostName` (what Bonjour actually
-  advertises) over the kernel hostname; if a Tailscale interface is up,
-  suggest the MagicDNS FQDN.
+## P0 — release blockers
 
-## 3. ✅ DONE — First-run ordering: CA trust must precede passkey registration
+- [ ] **[security] Block same-site CSRF on cookie-authenticated API writes.**
+  The API reflects `Access-Control-Allow-Origin: *` but never validates
+  `Origin`, and its JSON decoder accepts a CORS-safelisted `text/plain` body
+  ([server.go](internal/server/server.go#L149),
+  [server.go](internal/server/server.go#L214)). A hostile sibling origin on the
+  same site can therefore send the victim's `SameSite=Strict` cookie and create
+  an arbitrary tool/session; CORS prevents reading the response, not executing
+  the mutation ([api.go](internal/server/api.go#L28),
+  [sessions.go](internal/server/sessions.go#L25)). This follows the browser
+  rules for [CORS-safelisted request content
+  types](https://fetch.spec.whatwg.org/#cors-safelisted-request-header) and
+  [same-site cookies](https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis-18#section-5.2).
+  - Done when unsafe cookie-authenticated requests require an allowed exact
+    origin (or a CSRF token), explicit bearer-token requests retain
+    cross-origin support, mutation endpoints require JSON, and regression tests
+    cover foreign sibling origins, absent origins, and valid bearer requests.
 
-**Problem.** Browsers (Chrome for certain) refuse WebAuthn ceremonies on pages
-served with an untrusted certificate, so "open the setup URL, then trust the
-CA" fails at the passkey prompt. README quick start is fixed (trust is now
-step 3, setup step 4), but `docs/install.md` still registers (§2) before
-trusting (§3).
+- [ ] **[bug] Never retarget an orphaned remote tile to the local daemon.**
+  Removing a server leaves its tiles in the persisted layout. Rendering then
+  falls back to `localServer()`, so remote session `#1` may show or terminate
+  local session `#1` ([GridPage.tsx](web/src/grid/GridPage.tsx#L183),
+  [ServersPanel.tsx](web/src/settings/ServersPanel.tsx#L42)).
+  - Done when an unknown `serverId` renders a non-interactive “server removed”
+    state, removal offers to clean affected tiles, and tests prove neither
+    terminal attachment nor termination can reach another server.
 
-**Fix.** Reorder `docs/install.md` §2/§3 with the same one-line rationale.
-Also fix `docs/work-network.md`, which tells users to change the hostname "in
-the Daemon settings **before** registering your first passkey" — the Settings
-UI is unreachable before login; point it at `--hostname` once item 1 lands.
+- [ ] **[reliability] Keep tmux sessions alive across Linux service restarts.**
+  The systemd user unit uses the default `KillMode=control-group`, while tmux is
+  spawned beneath the daemon; stopping/upgrading the service can kill the tmux
+  server and defeats multimux's persistence promise
+  ([svc.go](internal/svc/svc.go#L42),
+  [manager.go](internal/tmuxmgr/manager.go#L140)).
+  - Done when multimux-owned tmux sessions survive stop/start and binary
+    upgrades on Linux, with an integration test exercising the installed unit's
+    actual process/cgroup lifecycle.
 
-## 4. ✅ DONE — `serve --dev` — make the Vite hot-reload loop actually work
+## P1 — correctness and reliability
 
-> Done: `--dev` forces RP ID `localhost`, appends `http://localhost:5173` +
-> `https://localhost:<port>` to origins, prints DEV MODE banner (incl. Safari
-> caveat), refuses when credentials exist. Verified at HTTP surface (rp.id,
-> refusal, banner) and, after item 5 landed, full browser acceptance:
-> register → login → grid → live PTY → HMR at http://localhost:5173.
+- [ ] **[security] Remove shell interpolation from Linux CA trust.**
+  `sudo sh -c` interpolates a CA path derived from the invoking user's
+  `MULTIMUX_DATA_DIR`; Go `%q` is not POSIX shell escaping, and command
+  substitution inside the resulting double quotes can run as root when that
+  user authorizes `multimux ca trust` via sudo
+  ([ca.go](cmd/ca.go#L13), [trust.go](internal/pki/trust.go#L17)).
+  - Done when copying and trust-store refresh use fixed argv or stdin with no
+    shell-expanded path, and tests include spaces, quotes, `$()`, backticks, and
+    leading-dash paths.
 
-**Problem.** The documented two-terminal dev loop cannot authenticate at
-`http://localhost:5173`:
-- browser-side: RP ID is the daemon hostname, not a registrable suffix of
-  `localhost` → `SecurityError` before any request is made;
-- server-side: `http://localhost:5173` is never in `RPOrigins`
-  (`cmd/serve.go computeOrigins`) → registration/login rejected anyway;
-- `checkWSOrigin` (`internal/server/ws.go`) rejects cookie-carrying WS
-  upgrades from the Vite origin → no events feed, no terminals.
+- [ ] **[security] Validate and commit daemon identity settings atomically.**
+  The settings API writes hostname, SANs, and port one at a time, bypasses
+  `applyHostname`'s passkey lockout protection, and reports the RP-ID warning
+  only after saving ([api.go](internal/server/api.go#L121),
+  [serve.go](cmd/serve.go#L76),
+  [DaemonPanel.tsx](web/src/settings/DaemonPanel.tsx#L28)).
+  - Done when CLI and API share canonical validation, invalid/partial writes
+    leave all settings unchanged, RP-ID changes with credentials require
+    confirmation before mutation, the UI clearly explains restart/CA-trust
+    consequences, and transaction/validation tests cover empty names, ports,
+    IPs, duplicate/invalid SANs, and case normalization.
 
-Result: the hot-reload UI dead-ends at the login wall; only unauthenticated
-screens and vitest work. (README now says so honestly.)
+- [ ] **[bug] Only advertise origins compatible with the WebAuthn RP ID.**
+  `hostnames` adds a bare hostname, its `.local` form, and arbitrary extra SANs,
+  then `computeOrigins` registers all of them against one RP ID
+  ([serve.go](cmd/serve.go#L32), [serve.go](cmd/serve.go#L103)). WebAuthn
+  requires the RP ID to equal or be a registrable-domain suffix of the origin's
+  effective domain ([WebAuthn Level
+  3](https://www.w3.org/TR/webauthn-3/#sctn-validating-origin)).
+  Bare aliases, sibling SANs, and IP origins can have valid TLS while passkeys
+  still fail.
+  - Done when startup/settings reject or clearly classify TLS-only aliases,
+    every printed setup/login origin is RP-ID compatible, IP handling is
+    explicitly supported or rejected, and tests cover `.local`, MagicDNS/FQDN,
+    extra SAN, uppercase, and IP cases. If related-origin requests are adopted,
+    serve and test the required well-known document.
 
-**Fix.** A `serve --dev` flag that sets RP ID to `localhost` and appends
-`http://localhost:5173` (and `https://localhost:8686`) to the allowed
-origins — that one change satisfies all three checks. Log a loud "DEV MODE"
-banner; never allow it combined with a normal install (throwaway
-`MULTIMUX_DATA_DIR` only, or at least refuse when credentials exist).
-Caveat to document: Safari does not treat `http://localhost` as trustworthy
-for `Secure` cookies — the dev loop targets Chrome/Firefox.
+- [ ] **[bug] Scope WebAuthn ceremonies to individual flows.**
+  The auth manager stores one global registration session and one global login
+  session; a second tab/request overwrites the first, and any finish consumes
+  the shared state ([auth.go](internal/auth/auth.go#L42),
+  [webauthn.go](internal/auth/webauthn.go#L78)).
+  - Done when begin returns a random flow ID backed by independent, expiring,
+    single-use ceremony state; concurrent logins/registrations cannot interfere;
+    setup-code abuse cannot invalidate unrelated valid flows; and rate/size
+    limits prevent unauthenticated state exhaustion.
 
-**Acceptance.** register → login → grid → live PTY all work at
-`http://localhost:5173` with hot reload, no sqlite surgery, no CA trust.
+- [ ] **[bug] Make the browser cookie follow the server's sliding expiry.**
+  token validation extends the database expiry, but the cookie retains its
+  original fixed 30-day lifetime and is never refreshed
+  ([auth.go](internal/auth/auth.go#L124),
+  [authapi.go](internal/server/authapi.go#L10)).
+  - Done when a successful near-expiry cookie authentication renews both DB
+    state and `Set-Cookie`, bearer tokens have a documented expiry policy, and
+    clock-injected tests cover renewal, expiry, and logout.
 
-## 5. ✅ DONE — Vite proxy target is hardcoded
+- [ ] **[security] Prevent concurrent deletion of the last passkey.**
+  credential count and deletion are separate operations, so two requests can
+  both observe two keys and delete both ([authapi.go](internal/server/authapi.go#L147)).
+  - Done when the invariant “at least one passkey remains” is enforced in one
+    database transaction/conditional statement, missing IDs return 404, and a
+    concurrent regression test always leaves one credential.
 
-> Done: `MULTIMUX_DEV_TARGET` env var (default unchanged), README dev section
-> shows the two-command collision-free loop. Item 4's full browser acceptance
-> ran on top of this: register → login → grid → live PTY → HMR at :5173, all
-> green with a virtual-authenticator Chrome session.
+- [ ] **[bug] Make `auth reset` transactional and coordinate the running daemon.**
+  Credentials and auth sessions are deleted separately; already-upgraded
+  WebSockets stay usable, and the success text claims the daemon will notice
+  even though it does not mint/print a new setup code until restart
+  ([auth.go](cmd/auth.go#L27), [events.go](internal/server/events.go#L57)).
+  - Done when reset is all-or-nothing, invalidates/actively closes authenticated
+    sockets, and either safely signals/restarts the daemon and prints a fresh
+    setup URL or accurately requires a restart. Test partial failure and live
+    REST/WS access after reset.
 
-**Problem.** `web/vite.config.ts` pins `https://localhost:8686`. A real
-install already listening on 8686 collides with the dev daemon, and
-`serve --port` can't be followed.
+- [ ] **[reliability] Use a private tmux server in production.**
+  Production passes an empty socket name, sharing the user's default tmux
+  server; multimux changes server-global options and names sessions `mm-N`,
+  allowing collisions or control of an unrelated session
+  ([serve.go](cmd/serve.go#L277),
+  [manager.go](internal/tmuxmgr/manager.go#L55)).
+  - Done when each install has a stable private socket, foreign sessions and
+    global options remain untouched, existing multimux sessions have a
+    documented migration/reattach path, and integration tests start adversarial
+    `mm-*` sessions on the default server.
 
-**Fix.** Read the target from an env var (e.g.
-`MULTIMUX_DEV_TARGET=https://localhost:8787 pnpm dev`) with the current value
-as default; mention the port collision in the README dev section.
+- [ ] **[bug] Reconcile from one authoritative tmux listing and preserve errors.**
+  Every five seconds the daemon runs `has-session` once per DB row, and
+  `IsAlive` maps every tmux error to “missing,” so a transient failure can
+  permanently mark live sessions dead
+  ([events.go](internal/server/events.go#L96),
+  [sessions.go](internal/server/sessions.go#L159),
+  [manager.go](internal/tmuxmgr/manager.go#L125)).
+  - Done when each pass performs one list operation, distinguishes “no server”
+    from command/transport errors, only marks confirmed absent names dead, and a
+    100-session test has O(1) subprocesses per tick.
 
-## 6. ✅ DONE — Latent bug: WS origin check fires even when a valid token is presented
+- [ ] **[bug] Do not report a failed tmux termination as success.**
+  The kill handler discards `KillSession` errors, marks the database row dead,
+  and returns 204. Reconciliation then skips that non-running row, leaving a
+  live but permanently untracked tmux session
+  ([sessions.go](internal/server/sessions.go#L72),
+  [sessions.go](internal/server/sessions.go#L159)).
+  - Done when a confirmed kill failure returns a useful error and preserves the
+    running row for retry/reconciliation, “already absent” has explicit
+    idempotent semantics, and injected kill-failure tests prove no live session
+    becomes untracked.
 
-> Done: explicit token (Authorization / ?token=) now decides the WS origin
-> rule AND wins authentication over the cookie (`auth.ExplicitToken`,
-> explicit-first `TokenFromRequest`), so a garbage token cannot ride a valid
-> cookie past the skipped check. Regression tests: cookie+token+foreign origin
-> (was 403, now passes), garbage-token+cookie (401), cookie-only CSWSH guard
-> intact. Repro'd end-to-end on a live TLS daemon.
+- [ ] **[reliability] Treat the TLS leaf certificate and key as one recoverable unit.**
+  Separate temporary-file renames can leave mismatched cert/key files after a
+  crash, while rotation checks do not validate the pair
+  ([pki.go](internal/pki/pki.go#L181)).
+  - Done when `Ensure` detects missing/corrupt/mismatched pairs and self-heals,
+    generation checks close/fsync/rename errors, and fault-injection tests cover
+    interruption at every publish boundary without making the next startup
+    unrecoverable.
 
-**Problem.** `checkWSOrigin` treats "request has a session cookie" as "this is
-cookie auth" and then requires a same-origin `Origin` header — but browsers
-attach cookies to WebSockets unconditionally (there is no `credentials: omit`
-for WS). Two daemons whose names share a site are affected: on one tailnet,
-`a.<tailnet>.ts.net` and `b.<tailnet>.ts.net` are same-site (`ts.net` is on
-the Public Suffix List, so the site is `<tailnet>.ts.net`), meaning
-`SameSite=Strict` cookies still flow between them. A cross-daemon tile then
-sends daemon B its cookie plus daemon A's `Origin` → **403 despite a valid
-`?token=`** — breaking the flagship multi-daemon grid for same-tailnet
-daemons. Confirmed by code reading; needs an end-to-end repro.
+- [ ] **[reliability] Make schema migrations atomic and reject future schemas.**
+  Each migration body and `PRAGMA user_version` update are separate commits,
+  and a database from a newer binary opens silently
+  ([store.go](internal/store/store.go#L83)).
+  - Done when each migration plus version bump commits in one transaction,
+    rollback leaves the prior version usable, future versions fail with an
+    actionable error, and failure-injection tests cover both properties.
 
-**Fix.** When a syntactically valid bearer token is present, authenticate by
-the token and ignore the cookie (or accept the upgrade if *either* check
-passes). Add a regression test with cookie + token + foreign origin.
+- [ ] **[bug] Serialize/coalesce layout persistence so the latest edit wins.**
+  Every grid action fires an unawaited PUT and swallows failures; responses may
+  complete out of order, while handlers also derive updates from captured
+  layout state ([GridPage.tsx](web/src/grid/GridPage.tsx#L56)).
+  - Done when local updates are functional/reducer-based, persistence has at
+    most one write in flight and eventually writes the newest state, failures
+    are visible/retriable, and deferred-response tests finish requests in
+    reverse order.
 
-## 7. ✅ DONE — Docs cleanup once the above lands
+- [ ] **[bug] Render terminal failure/dead states instead of reconnecting forever.**
+  Dead or missing sessions still mount a terminal; HTTP 404/409 WebSocket
+  failures become an endless “daemon unreachable” loop
+  ([GridPage.tsx](web/src/grid/GridPage.tsx#L195),
+  [TerminalTile.tsx](web/src/term/TerminalTile.tsx#L47)). The offline/exited
+  overlay also lacks positioning styles and is clipped behind the terminal
+  ([TerminalTile.tsx](web/src/term/TerminalTile.tsx#L104),
+  [index.css](web/src/index.css#L406)).
+  - Done when REST state gates connection, terminal handshakes distinguish
+    missing/dead/auth/network failures, permanent states stop retrying, and a
+    visible accessible overlay offers dismiss/reconnect actions. Test with a
+    real or protocol-faithful WebSocket rather than only mocking the tile.
 
-- Shrink README "If the setup URL doesn't resolve" to just `--hostname`
-  (drop the sqlite recipe).
-- Restore a real two-terminal dev loop in README §Developing built on
-  `serve --dev`.
-- `docs/install.md` / `docs/work-network.md` updates from item 3.
-- State the dotted-name / RP-ID constraint in one canonical place
-  (`docs/security.md` mentions it; install/work-network should link it).
+- [ ] **[bug] Disable the launcher while a server switch is loading.**
+  Switching servers leaves the previous tool/directory IDs selectable until
+  new fetches resolve, so “New” can launch mismatched IDs on the new daemon
+  ([HeaderLauncher.tsx](web/src/grid/HeaderLauncher.tsx#L23)).
+  - Done when selection state is cleared immediately, stale requests cannot
+    win, launch is disabled until both lists belong to the selected server, and
+    an overlapping-request test proves no cross-server launch.
+
+- [ ] **[usability] Provide a complete remote-server auth lifecycle.**
+  An expired remote token only offers “Reload,” which reloads the same token;
+  reconnects mint additional server sessions, and remove has no best-effort
+  revocation/logout path ([GridPage.tsx](web/src/grid/GridPage.tsx#L163),
+  [servers.ts](web/src/servers.ts#L31),
+  [authapi.go](internal/server/authapi.go#L188)).
+  - Done when remote auth expiry offers reconnect/remove, reconnect replaces or
+    revokes the old token where possible, removal can revoke the remote session,
+    local logout is exposed in the UI, and no flow loops deterministically on
+    stale credentials.
+
+- [ ] **[reliability] Make event reconnects converge to current state.**
+  The hub silently drops messages for a slow subscriber and the initial
+  `hello` carries no snapshot/sequence, so a connected tab can remain stale
+  forever ([events.go](internal/server/events.go#L38),
+  [events.go](internal/server/events.go#L57)). A delayed classification request
+  can also overwrite a later successful `open` status
+  ([useEvents.ts](web/src/useEvents.ts#L35)).
+  - Done when subscribe/reconnect performs an authoritative resync or uses
+    sequence numbers with gap detection, stale probes are aborted/generation
+    guarded, and tests cover queue overflow, disconnect/reconnect, and
+    classify-after-open ordering.
+
+- [ ] **[bug] Roll back tmux creation after post-create failure.**
+  If `new-session` succeeds but a later `respawn-pane` fails, the API deletes
+  only its DB row and leaves an untracked tmux session
+  ([manager.go](internal/tmuxmgr/manager.go#L55),
+  [sessions.go](internal/server/sessions.go#L25)).
+  - Done when any error after creation kills the exact newly-created session,
+    preserves the primary error plus cleanup context, and fault-injection
+    tests prove no orphan remains.
+
+## P2 — efficiency, resilience, and usability
+
+- [ ] **[efficiency] Initialize tmux server-wide options once and correctly.**
+  `history-limit` is attempted before the first tmux server exists, so the first
+  pane keeps the ~2,000-line default; terminal-feature appends then repeat for
+  every session and accumulate duplicate values
+  ([manager.go](internal/tmuxmgr/manager.go#L55)).
+  - Done when private-server initialization precedes the first pane, global
+    options are idempotent and batched, per-session creation runs only
+    session-specific commands, and a fresh-socket test retains more than 2,000
+    lines without duplicate feature entries.
+
+- [ ] **[reliability] Bound WebSocket resources and support graceful shutdown.**
+  Event and PTY sockets have no read limits/deadlines or pong-based liveness,
+  ping-writer failure does not necessarily unblock the PTY reader, and
+  background `time.Tick` goroutines cannot be stopped
+  ([ws.go](internal/server/ws.go#L90),
+  [ws.go](internal/server/ws.go#L147),
+  [events.go](internal/server/events.go#L68),
+  [events.go](internal/server/events.go#L96)).
+  - Done when input size and idle time are bounded, pong/read deadlines detect
+    dead peers, all goroutines share cancellation, HTTP shutdown closes sockets
+    and tickers, and leak/oversize/half-open tests pass under `-race`.
+
+- [ ] **[usability] Distinguish loading, auth, daemon, and validation failures.**
+  App startup maps network/500 errors from `/me` to the login page; settings
+  panels often show permanent loading, fake empty lists, `console.error`, or
+  swallowed failures, and API helpers discard useful backend error detail
+  ([App.tsx](web/src/App.tsx#L24),
+  [DaemonPanel.tsx](web/src/settings/DaemonPanel.tsx#L16),
+  [GridPage.tsx](web/src/grid/GridPage.tsx#L61)).
+  - Done when the API exposes a typed error, screens distinguish setup/401/403/
+    unreachable/5xx/empty states, mutations have busy/error/retry feedback,
+    terminate does not remove a tile after an unknown failure, and request
+    cancellation prevents stale screen updates.
+
+- [ ] **[bug] Validate persisted browser state and remote origins at runtime.**
+  Stored server data is blindly cast from JSON, layout validation checks only
+  two property names, and server entry accepts paths, insecure origins,
+  duplicates, or malformed URLs ([servers.ts](web/src/servers.ts#L9),
+  [GridPage.tsx](web/src/grid/GridPage.tsx#L12),
+  [ServersPanel.tsx](web/src/settings/ServersPanel.tsx#L34)).
+  - Done when versioned schemas validate/normalize/quarantine bad localStorage
+    and layout data, remote entries canonicalize to `URL.origin`, production
+    requires HTTPS (with an explicit local-dev exception), duplicates/local
+    origins are rejected, and popup messages validate origin, source, state,
+    and token shape.
+
+- [ ] **[bug] Use stable tile identity and validate drag data.**
+  Tiles are keyed by array index, so swapping/reordering reuses each cell
+  component for a different session and makes `TerminalTile` dispose/rebuild
+  its xterm and WebSocket from the changed URL. Drop also accepts arbitrary
+  external data and `Number("") === 0`, which can swap tile zero
+  ([GridPage.tsx](web/src/grid/GridPage.tsx#L183)).
+  - Done when occupied tiles use server/session identity, empty cells have
+    stable cell identity, only the custom MIME type with an in-range integer is
+    accepted, drag begins from a handle instead of the terminal, and tests
+    assert terminal mount/dispose counts.
+
+- [ ] **[usability] Make the grid responsive, touch/keyboard operable, and accessible.**
+  The header does not wrap, the grid uses a fixed `100vh - 60px`, native drag
+  has no touch/keyboard alternative, and settings navigation lacks full tab/
+  current-page semantics ([App.tsx](web/src/App.tsx#L39),
+  [GridPage.tsx](web/src/grid/GridPage.tsx#L173),
+  [index.css](web/src/index.css#L194)).
+  - Done when 320 px and 768 px layouts remain operable using dynamic viewport
+    units, tiles can be moved without mouse drag, tabs/tables/forms/statuses
+    follow accessible patterns, focus is visible/preserved, and automated
+    accessibility plus keyboard tests cover the core flows.
+
+- [ ] **[efficiency] Lazy-load terminal and route-only frontend code.**
+  `App` eagerly imports the grid and xterm stack, producing one ~562 kB bundle
+  even for login/setup/settings ([App.tsx](web/src/App.tsx#L1),
+  [TerminalTile.tsx](web/src/term/TerminalTile.tsx#L1)).
+  - Done when terminal/grid and other route-only code are split behind lazy
+    boundaries, login/setup avoid downloading xterm, and CI enforces explicit
+    initial/chunk gzip budgets instead of merely raising Vite's warning limit.
+
+- [ ] **[reliability] Harden service install/uninstall and preserve configuration.**
+  Generated units omit data-dir/hostname/proxy options; Linux escaping handles
+  neither all systemd specifiers nor arbitrary environment values. Uninstall
+  ignores stop failures, removes the unit anyway, and skips daemon-reload
+  ([svc.go](internal/svc/svc.go#L42), [svc.go](internal/svc/svc.go#L105),
+  [svc.go](internal/svc/svc.go#L141)).
+  - Done when install accepts/persists explicit serve configuration using native
+    escaping, reinstall preserves it, uninstall propagates real stop errors,
+    reloads the manager and verifies inactivity before success, and tests use an
+    injectable command runner for both OS implementations.
+
+- [ ] **[reliability] Rotate or explicitly recover an expiring CA.**
+  `Ensure` rotates leaf certificates but does not treat an expired/near-expiry
+  CA as invalid, so a long-lived install can keep signing unusable leaves
+  ([pki.go](internal/pki/pki.go#L50)).
+  - Done when time-injected checks detect CA expiry sufficiently early, perform
+    a recoverable regeneration with a prominent re-trust instruction, never
+    issue a leaf beyond its issuer's validity, and boundary tests cover both CA
+    and leaf dates.
+
+- [ ] **[bug] Apply strict, consistent HTTP API semantics.**
+  JSON decoding accepts trailing values and unknown fields, content type is not
+  enforced, layout's 64 KiB limiter can misclassify an exact-prefix oversized
+  body, and updates/deletes may report success for missing rows
+  ([server.go](internal/server/server.go#L208),
+  [sessions.go](internal/server/sessions.go#L138),
+  [api.go](internal/server/api.go#L42)).
+  - Done when mutation endpoints enforce JSON media type, one document, known
+    fields, and explicit size errors; store mutations expose rows affected;
+    missing resources consistently return 404; conflicts return 409; and table
+    tests cover the contract.
+
+- [ ] **[efficiency] Refresh only the server affected by an event.**
+  Event callbacks discard source identity: any session event refetches sessions
+  from every daemon, and a remote `layout_changed` refetches the local layout
+  ([GridPage.tsx](web/src/grid/GridPage.tsx#L16),
+  [GridPage.tsx](web/src/grid/GridPage.tsx#L61)).
+  - Done when bridges pass their server ID, session events fetch only that
+    server, only the layout owner can trigger layout refresh, bursts are
+    coalesced, and request-count tests cover multiple daemons.
+
+## P3 — product and engineering polish
+
+- [ ] **[usability] Define an honest service-worker/offline policy.**
+  The worker registers only after the first page load, precaches nothing, and
+  does not await cache writes, so a first offline launch has no shell despite
+  the PWA-like behavior ([main.tsx](web/src/main.tsx#L12),
+  [sw.js](web/public/sw.js#L1)).
+  - Done when the project either precaches a versioned app shell with tested
+    update/offline behavior, or removes the worker and any offline claim.
+
+- [ ] **[engineering] Make verification release-equivalent.**
+  `verify.sh` builds the frontend but never builds the Go binary containing the
+  embedded assets, and vulnerability scans are manual
+  ([verify.sh](verify.sh#L5)).
+  - Done when CI builds/smoke-tests the final binary after `pnpm build`, checks
+    the embedded `/` response, runs `go test -race` on supported platforms, and
+    schedules `govulncheck` plus production dependency audit with a documented
+    triage policy.
+
+## Completion policy
+
+For every item:
+
+1. Add a regression test that fails for the reported behavior before the fix.
+2. Keep `./verify.sh`, `go test -race ./...`, and the production build green.
+3. Update user/security/operations documentation when behavior or recovery
+   steps change.
+4. Avoid combining unrelated refactors with the fix; split oversized items into
+   reviewable implementation PRs while retaining the acceptance criteria above.
