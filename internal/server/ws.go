@@ -47,9 +47,10 @@ func (s *Server) wsUpgrader() websocket.Upgrader {
 }
 
 type resizeMsg struct {
-	Type string `json:"type"`
-	Cols uint16 `json:"cols"`
-	Rows uint16 `json:"rows"`
+	Type   string `json:"type"`
+	Cols   uint16 `json:"cols"`
+	Rows   uint16 `json:"rows"`
+	Active bool   `json:"active"`
 }
 
 func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +166,7 @@ readLoop:
 		case websocket.TextMessage:
 			var msg resizeMsg
 			if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" && msg.Cols > 0 && msg.Rows > 0 {
-				allowed := arb.Resize(msg.Cols, msg.Rows)
+				allowed := arb.Resize(msg.Cols, msg.Rows, msg.Active)
 				if err := ptyConn.Resize(msg.Cols, msg.Rows, allowed); err != nil {
 					slog.Debug("resize", "err", err)
 				}

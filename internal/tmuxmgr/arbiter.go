@@ -66,13 +66,17 @@ func (c *ArbConn) Unregister() {
 }
 
 // Resize records the dims this conn wants and reports whether it may resize
-// the shared tmux window (owner, or no owner set).
-func (c *ArbConn) Resize(cols, rows uint16) bool {
+// the shared tmux window. An active resize atomically claims ownership.
+func (c *ArbConn) Resize(cols, rows uint16, active bool) bool {
 	c.arb.mu.Lock()
 	defer c.arb.mu.Unlock()
 	c.cols, c.rows = cols, rows
 	s := c.arb.sessions[c.tmuxName]
 	if s == nil {
+		return true
+	}
+	if active {
+		s.owner = c
 		return true
 	}
 	return s.owner == nil || s.owner == c
