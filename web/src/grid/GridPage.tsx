@@ -109,6 +109,17 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Listener only exists while maximized; Escape also reaches the focused
+  // terminal (same trade-off as cheep).
+  useEffect(() => {
+    if (!maximizedKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMaximizedKey(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [maximizedKey]);
+
   // Sessions already placed in a tile; each session may only be open once.
   const placed = useMemo(
     () => new Set(layout.tiles.filter((t): t is NonNullable<Tile> => t !== null).map(tileKey)),

@@ -270,6 +270,23 @@ test("double-clicking a tile header maximizes the tile; double-clicking again re
   expect(tile.className).not.toContain("tile-maximized");
 });
 
+test("Escape restores the grid while a tile is maximized", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const header = screen.getByText("#1 · claude").closest(".tile-header")!;
+  const tile = header.closest(".tile")!;
+
+  await userEvent.dblClick(header);
+  expect(tile.className).toContain("tile-maximized");
+
+  await userEvent.keyboard("{Escape}");
+  expect(tile.className).not.toContain("tile-maximized");
+});
+
 test("stepper arrows change column count and persist it", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const fetchMock = mockFetch(layout);
