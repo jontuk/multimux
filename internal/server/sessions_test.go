@@ -219,3 +219,62 @@ func TestListSessionsIncludesBranchAndGitState(t *testing.T) {
 		t.Errorf("non-repo session = (%q, %q), want empty", got[1].Branch, got[1].GitState)
 	}
 }
+
+func TestCheckGitInfoBroadcastsOnChange(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, _ := newTestServer(t, true)
+
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	st.CreateSession(tool.ID, repo)
+
+	ch := s.hub.Subscribe()
+	defer s.hub.Unsubscribe(ch)
+	drain := func() []string {
+		var events []string
+		for {
+			select {
+			case raw := <-ch:
+				var ev struct {
+					Type string `json:"type"`
+				}
+				json.Unmarshal(raw, &ev)
+				events = append(events, ev.Type)
+			default:
+				return events
+			}
+		}
+	}
+
+	// Baseline tick: establishes state, must not broadcast.
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := drain(); len(evs) != 0 {
+		t.Fatalf("baseline tick broadcast %v, want none", evs)
+	}
+
+	// No change → still no broadcast.
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := drain(); len(evs) != 0 {
+		t.Fatalf("unchanged tick broadcast %v, want none", evs)
+	}
+
+	// New untracked file → one git_changed.
+	if err := os.WriteFile(repo+"/a.txt", []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := drain(); len(evs) != 1 || evs[0] != "git_changed" {
+		t.Fatalf("changed tick broadcast %v, want [git_changed]", evs)
+	}
+}

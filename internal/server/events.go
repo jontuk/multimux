@@ -103,6 +103,9 @@ func (s *Server) StartBackground() {
 			if _, err := s.Reconcile(); err != nil {
 				slog.Error("reconcile", "err", err)
 			}
+			if err := s.CheckGitInfo(); err != nil {
+				slog.Error("git check", "err", err)
+			}
 		}
 	}()
 	go func() {

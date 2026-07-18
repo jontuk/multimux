@@ -90,7 +90,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
 
   const onServerEvent = useCallback(
     (type: string) => {
-      if (type.startsWith("session_")) refreshSessions();
+      if (type.startsWith("session_") || type === "git_changed") refreshSessions();
       if (type === "layout_changed") refreshLayout();
     },
     [refreshSessions, refreshLayout],

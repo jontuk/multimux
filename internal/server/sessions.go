@@ -213,6 +213,44 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 	return newlyDead, nil
 }
 
+// CheckGitInfo recomputes branch and working-tree state for every running
+// session's dir and broadcasts git_changed when any of it differs from the
+// previous check, prompting clients to refetch the session list. The first
+// check only records a baseline. Called from the maintenance ticker goroutine
+// only, so gitSeen needs no locking.
+func (s *Server) CheckGitInfo() error {
+	sessions, err := s.cfg.Store.ListSessions()
+	if err != nil {
+		return err
+	}
+	seen := map[string]dirGitInfo{}
+	for _, sess := range sessions {
+		if sess.Status != "running" {
+			continue
+		}
+		if _, ok := seen[sess.Dir]; ok {
+			continue
+		}
+		var info dirGitInfo
+		info.branch, info.state = gitinfo.BranchStatus(sess.Dir)
+		seen[sess.Dir] = info
+	}
+	changed := false
+	if s.gitSeen != nil {
+		for dir, info := range seen {
+			if prev, ok := s.gitSeen[dir]; !ok || prev != info {
+				changed = true
+				break
+			}
+		}
+	}
+	s.gitSeen = seen
+	if changed {
+		s.broadcast("git_changed", nil)
+	}
+	return nil
+}
+
 // broadcast fans a session/layout event out to every connected /ws/events
 // subscriber via the hub.
 func (s *Server) broadcast(eventType string, payload any) {

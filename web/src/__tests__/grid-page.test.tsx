@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import GridPage from "../grid/GridPage";
+import { useEvents } from "../useEvents";
 
 vi.mock("../useEvents", () => ({ useEvents: vi.fn() }));
 vi.mock("../term/TerminalTile", () => ({
@@ -160,6 +161,23 @@ test("tile header shows branch name and git state dot when the session dir is a 
   const dot = screen.getByTitle("untracked files present");
   expect(dot.className).toContain("git-dot-untracked");
   expect(screen.getAllByText("feat")).toHaveLength(1);
+});
+
+test("git_changed event refetches sessions", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const sessionFetches = () => fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/sessions")).length;
+  const before = sessionFetches();
+
+  const calls = vi.mocked(useEvents).mock.calls;
+  const onEvent = calls[calls.length - 1][1];
+  act(() => onEvent("git_changed"));
+
+  await waitFor(() => expect(sessionFetches()).toBeGreaterThan(before));
 });
 
 test("terminate button confirms then DELETEs the session and drops the tile", async () => {
