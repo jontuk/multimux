@@ -96,6 +96,32 @@ func TestRequestLoggingIncludesClientErrorsOnAnyPath(t *testing.T) {
 	}
 }
 
+func TestRequestLoggingRedactsSensitivePathValues(t *testing.T) {
+	buf := captureLogs(t)
+	h := logRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	tests := []struct {
+		path, redacted string
+	}{
+		{"/api/auth/credentials/credential-secret", "/api/auth/credentials/{id}"},
+		{"/api/auth/sessions/session-hash-secret", "/api/auth/sessions/{hash}"},
+	}
+	for _, tc := range tests {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, tc.path, nil))
+	}
+
+	logged := buf.String()
+	for _, tc := range tests {
+		if !strings.Contains(logged, `"path":"`+tc.redacted+`"`) {
+			t.Fatalf("log missing redacted path %q: %s", tc.redacted, logged)
+		}
+		if strings.Contains(logged, tc.path) {
+			t.Fatalf("log exposed sensitive path %q: %s", tc.path, logged)
+		}
+	}
+}
+
 func TestStatusRecorderHonorsFirstStatus(t *testing.T) {
 	dst := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: dst, status: http.StatusOK}

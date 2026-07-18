@@ -51,6 +51,18 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return conn, rw, err
 }
 
+func requestLogPath(path string) string {
+	for pattern, prefix := range map[string]string{
+		"/api/auth/credentials/{id}": "/api/auth/credentials/",
+		"/api/auth/sessions/{hash}":  "/api/auth/sessions/",
+	} {
+		if strings.HasPrefix(path, prefix) {
+			return pattern
+		}
+	}
+	return path
+}
+
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -65,7 +77,7 @@ func logRequests(next http.Handler) http.Handler {
 
 		attrs := []slog.Attr{
 			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
+			slog.String("path", requestLogPath(r.URL.Path)),
 			slog.Int("status", rec.status),
 			slog.Duration("duration", time.Since(start)),
 		}
