@@ -155,10 +155,10 @@ readLoop:
 			// Keyboard input claims window-size ownership; if ownership just
 			// transferred, restore this connection's window size (its earlier
 			// resize may have been denied).
-			if cols, rows, reapply := arb.ClaimInput(); reapply {
-				if err := ptyConn.Resize(cols, rows, true); err != nil {
-					slog.Debug("reapply resize", "err", err)
-				}
+			if err := arb.ClaimInput(func(cols, rows uint16) error {
+				return ptyConn.Resize(cols, rows, true)
+			}); err != nil {
+				slog.Debug("reapply resize", "err", err)
 			}
 			if _, err := ptyConn.Write(data); err != nil {
 				break readLoop
@@ -166,8 +166,9 @@ readLoop:
 		case websocket.TextMessage:
 			var msg resizeMsg
 			if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" && msg.Cols > 0 && msg.Rows > 0 {
-				allowed := arb.Resize(msg.Cols, msg.Rows, msg.Active)
-				if err := ptyConn.Resize(msg.Cols, msg.Rows, allowed); err != nil {
+				if err := arb.Resize(msg.Cols, msg.Rows, msg.Active, func(resizeWindow bool) error {
+					return ptyConn.Resize(msg.Cols, msg.Rows, resizeWindow)
+				}); err != nil {
 					slog.Debug("resize", "err", err)
 				}
 			}

@@ -65,37 +65,36 @@ func (c *ArbConn) Unregister() {
 	}
 }
 
-// Resize records the dims this conn wants and reports whether it may resize
-// the shared tmux window. An active resize atomically claims ownership.
-func (c *ArbConn) Resize(cols, rows uint16, active bool) bool {
+// Resize records the dims this conn wants and applies the resize while the
+// ownership decision is locked. An active resize claims ownership.
+func (c *ArbConn) Resize(cols, rows uint16, active bool, apply func(resizeWindow bool) error) error {
 	c.arb.mu.Lock()
 	defer c.arb.mu.Unlock()
 	c.cols, c.rows = cols, rows
 	s := c.arb.sessions[c.tmuxName]
 	if s == nil {
-		return true
+		return apply(true)
 	}
 	if active {
 		s.owner = c
-		return true
+		return apply(true)
 	}
-	return s.owner == nil || s.owner == c
+	return apply(s.owner == nil || s.owner == c)
 }
 
 // ClaimInput marks this conn as owner (call on keyboard input). If ownership
-// changed hands and the conn has known dims they are returned with
-// reapply=true so the caller restores this conn's window size — its earlier
-// resize may have been denied while another conn owned the window.
-func (c *ArbConn) ClaimInput() (cols, rows uint16, reapply bool) {
+// changed hands and the conn has known dims, it reapplies them while the
+// ownership transfer is locked.
+func (c *ArbConn) ClaimInput(apply func(cols, rows uint16) error) error {
 	c.arb.mu.Lock()
 	defer c.arb.mu.Unlock()
 	s := c.arb.sessions[c.tmuxName]
 	if s == nil || s.owner == c {
-		return 0, 0, false
+		return nil
 	}
 	s.owner = c
 	if c.cols == 0 || c.rows == 0 {
-		return 0, 0, false
+		return nil
 	}
-	return c.cols, c.rows, true
+	return apply(c.cols, c.rows)
 }
