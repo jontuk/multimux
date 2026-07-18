@@ -22,6 +22,8 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
     const term = new Terminal({
       scrollback: 0, // tmux owns scrollback (mouse mode)
       fontSize: 13,
+      // On Mac, xterm.js only bypasses app mouse-mode for Option+drag (never
+      // Shift — that's hardcoded Linux/Windows-only in SelectionService).
       macOptionClickForcesSelection: true,
     });
     const fit = new FitAddon();

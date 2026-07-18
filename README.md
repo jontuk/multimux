@@ -162,16 +162,18 @@ multimux is a **local, single-user tool** and its security posture reflects that
 Prerequisites: Go, Node + pnpm, tmux.
 
 **Run a dev daemon** in the foreground with a throwaway data dir so you don't
-touch your real install (passkeys, sessions, CA):
+touch your real install (passkeys, sessions, CA). Use a fresh dir each run —
+`--dev` refuses to start against a data dir that already has passkeys:
 
 ```bash
-MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . serve
+export MULTIMUX_DATA_DIR="/tmp/multimux-dev-$(date +%s)"
+go run . serve
 ```
 
 The dev daemon is a full install as far as auth is concerned: the same
 hostname rules apply (see *If the setup URL doesn't resolve* above —
 `--hostname` persists into the throwaway data dir), the CA needs trusting
-(`MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . ca trust`), and it prints a
+(`go run . ca trust` with the same `MULTIMUX_DATA_DIR` exported), and it prints a
 setup URL on which you register a throwaway passkey — **at the daemon's own
 `https://` origin**, not through Vite. For the frontend hot-reload loop none
 of that is needed; see below.
@@ -184,7 +186,8 @@ daemon — `go run` re-embeds `web/dist` on every start.
 
 ```bash
 # terminal 1 — dev daemon; --dev forces the RP ID to localhost and allows the Vite origin
-MULTIMUX_DATA_DIR=/tmp/multimux-dev go run . serve --dev --port 8787
+export MULTIMUX_DATA_DIR="/tmp/multimux-dev-$(date +%s)"
+go run . serve --dev --port 8787
 
 # terminal 2 — Vite, proxying /api, /healthz and /ws to the dev daemon
 cd web && pnpm install && MULTIMUX_DEV_TARGET=https://localhost:8787 pnpm dev
@@ -197,8 +200,8 @@ browser talks plain HTTP to Vite. Caveats:
 
 - Chrome/Firefox only — Safari does not treat `http://localhost` as
   trustworthy for `Secure` cookies, so login won't stick there.
-- `--dev` refuses to run against a data dir that already has passkeys; keep it
-  on throwaway `MULTIMUX_DATA_DIR`s.
+- `--dev` refuses to run against a data dir that already has passkeys; the
+  timestamped `MULTIMUX_DATA_DIR` above gives you a fresh one per shell.
 - If nothing else is listening on 8686 you can drop `--port` and
   `MULTIMUX_DEV_TARGET` (the proxy target defaults to
   `https://localhost:8686`, see `web/vite.config.ts`).
