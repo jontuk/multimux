@@ -33,7 +33,8 @@ visible.
 Each request entry uses the message `http` and contains:
 
 - `method`
-- `path`, taken from `URL.Path` and never including the query string
+- `path`, taken from `URL.Path` and never including the query string; route
+  placeholders replace credential IDs and auth-session hashes
 - `status`
 - `duration`
 - `error` for a 5xx JSON error response when one is available
