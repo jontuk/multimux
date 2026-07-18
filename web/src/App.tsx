@@ -23,6 +23,10 @@ export default function App() {
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
+    document.title = health?.hostLabel ? `multimux @${health.hostLabel}` : "multimux";
+  }, [health?.hostLabel]);
+
+  useEffect(() => {
     const onHash = () => setRoute(window.location.hash || "#/");
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);

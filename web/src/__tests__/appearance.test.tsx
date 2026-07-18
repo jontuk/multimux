@@ -1,8 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
 import App from "../App";
 import AppearancePanel, { APPEARANCE_EVENT } from "../settings/AppearancePanel";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function mockFetchByURL(routes: Record<string, () => Response>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
@@ -14,7 +18,7 @@ function mockFetchByURL(routes: Record<string, () => Response>) {
   });
 }
 
-test("header shows host label and accent from healthz", async () => {
+test("app appearance follows healthz and live updates", async () => {
   const fetchMock = mockFetchByURL({
     "/healthz": () =>
       new Response(
@@ -38,6 +42,39 @@ test("header shows host label and accent from healthz", async () => {
   const header = container.querySelector("header.host-accented") as HTMLElement;
   expect(header).not.toBeNull();
   expect(header.style.getPropertyValue("--host-accent")).toBe("#3fb950");
+  expect(document.title).toBe("multimux @work-mac");
+
+  window.dispatchEvent(
+    new CustomEvent(APPEARANCE_EVENT, {
+      detail: { hostLabel: "home-server", accentColor: "#ff0000" },
+    }),
+  );
+
+  await waitFor(() => expect(document.title).toBe("multimux @home-server"));
+  fetchMock.mockRestore();
+});
+
+test("browser title falls back to multimux without a host label", async () => {
+  document.title = "stale title";
+  const fetchMock = mockFetchByURL({
+    "/healthz": () =>
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          setupPending: false,
+          version: "test",
+        }),
+      ),
+    "/api/auth/me": () => new Response("{}", { status: 200 }),
+    "/api/sessions": () => new Response("[]"),
+    "/api/layout": () => new Response("{}"),
+    "/api/tools": () => new Response("[]"),
+    "/api/dirs": () => new Response("[]"),
+  });
+
+  render(<App />);
+
+  await waitFor(() => expect(document.title).toBe("multimux"));
   fetchMock.mockRestore();
 });
 
