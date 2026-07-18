@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ func (s *Server) handleCreateTool(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("tool created", "tool_id", tool.ID, "name", tool.Name)
 	writeJSON(w, 201, tool)
 }
 
@@ -58,6 +60,7 @@ func (s *Server) handleUpdateTool(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("tool updated", "tool_id", tool.ID, "name", tool.Name)
 	writeJSON(w, 200, tool)
 }
 
@@ -71,6 +74,7 @@ func (s *Server) handleDeleteTool(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("tool deleted", "tool_id", id)
 	w.WriteHeader(204)
 }
 
@@ -105,6 +109,7 @@ func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("directory created", "directory_id", d.ID, "name", d.Name)
 	writeJSON(w, 201, d)
 }
 
@@ -118,6 +123,7 @@ func (s *Server) handleDeleteDir(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("directory deleted", "directory_id", id)
 	w.WriteHeader(204)
 }
 
@@ -142,6 +148,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	slog.Info("settings changed", "keys", []string{"hostname", "extra_sans", "port"})
 	// rpWarning: changing hostname changes the WebAuthn RP ID — all passkeys
 	// stop working after restart. UI must confirm loudly.
 	writeJSON(w, 200, map[string]any{"ok": true, "rpWarning": rpWarning, "restartRequired": true})
@@ -184,5 +191,6 @@ func (s *Server) handlePutAppearance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	slog.Info("appearance changed", "keys", []string{"host_label", "accent_color"})
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

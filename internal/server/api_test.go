@@ -3,10 +3,101 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jontuk/multimux/internal/store"
 )
+
+func TestResourceMutationsAreLoggedWithoutSensitiveValues(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	buf := captureLogs(t)
+
+	secretCommand := "command-value-must-not-leak"
+	w := do(t, s, "POST", "/api/tools", token,
+		`{"name":"codex","command":"`+secretCommand+`"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create tool = %d: %s", w.Code, w.Body.String())
+	}
+
+	secretPath := t.TempDir()
+	w = do(t, s, "POST", "/api/dirs", token,
+		fmt.Sprintf(`{"name":"workspace","path":%q}`, secretPath))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create dir = %d: %s", w.Code, w.Body.String())
+	}
+
+	secretHostname := "private-host.example"
+	w = do(t, s, "PUT", "/api/settings", token,
+		`{"hostname":"`+secretHostname+`","extraSans":"","port":"8686"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put settings = %d: %s", w.Code, w.Body.String())
+	}
+
+	logged := buf.String()
+	for _, want := range []string{
+		`"msg":"tool created"`,
+		`"tool_id":`,
+		`"name":"codex"`,
+		`"msg":"directory created"`,
+		`"name":"workspace"`,
+		`"msg":"settings changed"`,
+		`"keys":`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("mutation log missing %q: %s", want, logged)
+		}
+	}
+	for _, secret := range []string{secretCommand, secretPath, secretHostname} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("mutation log exposed %q: %s", secret, logged)
+		}
+	}
+}
+
+func TestResourceUpdatesAndDeletesAreLogged(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	tool, _ := st.CreateTool("old", "old-command")
+	dir, _ := st.CreateDir("old-dir", t.TempDir())
+	buf := captureLogs(t)
+
+	if w := do(t, s, "PUT", fmt.Sprintf("/api/tools/%d", tool.ID), token,
+		`{"name":"updated","command":"new-command-must-not-leak"}`); w.Code != http.StatusOK {
+		t.Fatalf("update tool = %d: %s", w.Code, w.Body.String())
+	}
+	if w := do(t, s, "DELETE", fmt.Sprintf("/api/tools/%d", tool.ID), token); w.Code != http.StatusNoContent {
+		t.Fatalf("delete tool = %d: %s", w.Code, w.Body.String())
+	}
+	if w := do(t, s, "DELETE", fmt.Sprintf("/api/dirs/%d", dir.ID), token); w.Code != http.StatusNoContent {
+		t.Fatalf("delete dir = %d: %s", w.Code, w.Body.String())
+	}
+	secretLabel := "host-label-must-not-leak"
+	if w := do(t, s, "PUT", "/api/settings/appearance", token,
+		`{"hostLabel":"`+secretLabel+`","accentColor":"#123456"}`); w.Code != http.StatusOK {
+		t.Fatalf("put appearance = %d: %s", w.Code, w.Body.String())
+	}
+
+	logged := buf.String()
+	for _, want := range []string{
+		`"msg":"tool updated"`,
+		`"name":"updated"`,
+		`"msg":"tool deleted"`,
+		`"msg":"directory deleted"`,
+		`"msg":"appearance changed"`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("mutation log missing %q: %s", want, logged)
+		}
+	}
+	for _, secret := range []string{"new-command-must-not-leak", secretLabel, "#123456"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("mutation log exposed %q: %s", secret, logged)
+		}
+	}
+}
 
 func TestToolsCRUDOverHTTP(t *testing.T) {
 	s, _, am := newTestServer(t, true)
