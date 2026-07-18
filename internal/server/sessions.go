@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -92,6 +93,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		slog.Info("orphan tmux session replaced", "tmux_name", sess.TmuxName)
 	}
 	if err := s.cfg.Tmux.CreateSession(sess.TmuxName, dir.Path, tool.Command); err != nil {
 		// No orphan rows: roll the DB back when tmux fails.
@@ -99,6 +101,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("session created",
+		"session_id", sess.ID,
+		"tmux_name", sess.TmuxName,
+		"tool_id", tool.ID,
+		"directory_id", dir.ID)
 	s.broadcast("session_created", sess)
 	writeJSON(w, 201, sess)
 }
@@ -125,6 +132,7 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess.Status = "dead"
+	slog.Info("session killed", "session_id", sess.ID, "tmux_name", sess.TmuxName)
 	s.broadcast("session_killed", sess)
 	w.WriteHeader(204)
 }
@@ -152,6 +160,7 @@ func (s *Server) handleDismissSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("session dismissed", "session_id", sess.ID, "tmux_name", sess.TmuxName)
 	s.broadcast("session_dismissed", sess)
 	w.WriteHeader(204)
 }
@@ -186,6 +195,7 @@ func (s *Server) handlePutLayout(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("layout changed")
 	s.broadcast("layout_changed", nil)
 	w.WriteHeader(204)
 }
@@ -218,6 +228,7 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 		}
 		sess.Status = "dead"
 		newlyDead = append(newlyDead, sess)
+		slog.Info("session died", "session_id", sess.ID, "tmux_name", sess.TmuxName)
 		s.broadcast("session_died", sess)
 	}
 	return newlyDead, nil

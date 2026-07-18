@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ func TestSessionCreateKillDismiss(t *testing.T) {
 	s, st, token := newTmuxTestServer(t)
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	dir, _ := st.CreateDir("tmp", t.TempDir())
+	buf := captureLogs(t)
 
 	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
 	if w.Code != 201 {
@@ -62,6 +64,24 @@ func TestSessionCreateKillDismiss(t *testing.T) {
 	if w = do(t, s, "POST", fmt.Sprintf("/api/sessions/%d/dismiss", sess.ID), token); w.Code != 204 {
 		t.Fatalf("dismiss dead = %d", w.Code)
 	}
+
+	logged := buf.String()
+	for _, want := range []string{
+		`"msg":"session created"`,
+		`"msg":"session killed"`,
+		`"msg":"session dismissed"`,
+		`"session_id":`,
+		`"tmux_name":`,
+		`"tool_id":`,
+		`"directory_id":`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("session log missing %q: %s", want, logged)
+		}
+	}
+	if strings.Contains(logged, dir.Path) {
+		t.Fatalf("session log exposed directory path: %s", logged)
+	}
 }
 
 // A tmux session bearing the name the next row will get, but with no DB row
@@ -76,6 +96,7 @@ func TestCreateSessionReplacesOrphanTmuxSession(t *testing.T) {
 	if err := s.cfg.Tmux.CreateSession(orphan, t.TempDir(), "sleep 60"); err != nil {
 		t.Fatal(err)
 	}
+	buf := captureLogs(t)
 
 	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
 	if w.Code != 201 {
@@ -88,6 +109,11 @@ func TestCreateSessionReplacesOrphanTmuxSession(t *testing.T) {
 	}
 	if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
 		t.Fatal("tmux session not created")
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, `"msg":"orphan tmux session replaced"`) ||
+		!strings.Contains(logged, `"tmux_name":"`+orphan+`"`) {
+		t.Fatalf("orphan replacement not logged safely: %s", logged)
 	}
 }
 
@@ -105,6 +131,7 @@ func TestReconcileMarksDead(t *testing.T) {
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	// DB row without a live tmux session (simulates daemon restart after reboot).
 	sess, _ := st.CreateSession(tool.ID, "/tmp")
+	buf := captureLogs(t)
 	dead, err := s.Reconcile()
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +143,11 @@ func TestReconcileMarksDead(t *testing.T) {
 	if got.Status != "dead" {
 		t.Fatalf("status = %s", got.Status)
 	}
+	logged := buf.String()
+	if !strings.Contains(logged, `"msg":"session died"`) ||
+		!strings.Contains(logged, fmt.Sprintf(`"session_id":%d`, sess.ID)) {
+		t.Fatalf("reconciled death not logged: %s", logged)
+	}
 }
 
 // A freshly-inserted row whose tmux session does not exist yet (creation in
@@ -124,6 +156,7 @@ func TestReconcileSparesFreshSessions(t *testing.T) {
 	s, st, _ := newTmuxTestServer(t)
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	sess, _ := st.CreateSession(tool.ID, "/tmp")
+	buf := captureLogs(t)
 	dead, err := s.Reconcile()
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +168,9 @@ func TestReconcileSparesFreshSessions(t *testing.T) {
 	if got.Status != "running" {
 		t.Fatalf("status = %s, want running", got.Status)
 	}
+	if strings.Contains(buf.String(), `"msg":"session died"`) {
+		t.Fatalf("no-op reconcile logged a death: %s", buf.String())
+	}
 }
 
 func TestLayoutAPI(t *testing.T) {
@@ -144,8 +180,12 @@ func TestLayoutAPI(t *testing.T) {
 		t.Fatalf("empty layout = %d %q", w.Code, w.Body.String())
 	}
 	doc := `{"shape":{"rows":2,"cols":2},"tiles":[null,null,null,null]}`
+	buf := captureLogs(t)
 	if w := do(t, s, "PUT", "/api/layout", token, doc); w.Code != 204 {
 		t.Fatalf("put layout = %d", w.Code)
+	}
+	if logged := buf.String(); !strings.Contains(logged, `"msg":"layout changed"`) {
+		t.Fatalf("layout change not logged: %s", logged)
 	}
 	w := do(t, s, "GET", "/api/layout", token)
 	var got, want map[string]any
