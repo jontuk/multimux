@@ -1,5 +1,5 @@
-export function encodeResize(cols: number, rows: number): string {
-  return JSON.stringify({ type: "resize", cols, rows });
+export function encodeResize(cols: number, rows: number, active: boolean): string {
+  return JSON.stringify({ type: "resize", cols, rows, active });
 }
 
 export function parseServerText(data: string): { type: string } | null {

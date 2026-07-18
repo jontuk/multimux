@@ -38,7 +38,10 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
     let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     function sendResize() {
-      if (ws?.readyState === WebSocket.OPEN) ws.send(encodeResize(term.cols, term.rows));
+      if (ws?.readyState === WebSocket.OPEN) {
+        const active = document.visibilityState === "visible" && document.hasFocus();
+        ws.send(encodeResize(term.cols, term.rows, active));
+      }
     }
 
     function connect() {
@@ -79,6 +82,8 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
       sendResize();
     });
     ro.observe(containerRef.current!);
+    window.addEventListener("focus", sendResize);
+    document.addEventListener("visibilitychange", sendResize);
 
     return () => {
       closed = true;
@@ -90,6 +95,8 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
       }
       dataSub.dispose();
       ro.disconnect();
+      window.removeEventListener("focus", sendResize);
+      document.removeEventListener("visibilitychange", sendResize);
       term.dispose();
     };
   }, [url]);
