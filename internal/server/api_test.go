@@ -152,19 +152,70 @@ func TestDirsValidation(t *testing.T) {
 func TestSettingsRoundTripAndRPWarning(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")
-	w := do(t, s, "PUT", "/api/settings", token, `{"hostname":"newname","extraSans":"a.ts.net","port":"8686"}`)
+	w := do(t, s, "PUT", "/api/settings", token, `{"hostname":"newname.example","extraSans":"a.ts.net","port":"8686"}`)
 	if w.Code != 200 {
-		t.Fatalf("put settings = %d", w.Code)
+		t.Fatalf("put settings = %d: %s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["rpWarning"] != true {
-		t.Fatalf("hostname change must warn about passkey invalidation: %v", resp)
+	w = do(t, s, "GET", "/api/settings", token)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["hostname"] != "newname.example" || resp["extraSans"] != "a.ts.net" {
+		t.Fatalf("settings = %v", resp)
+	}
+
+	// A registered credential exists (newTestServer registered=true), so an
+	// RP-ID-changing hostname write must be refused until confirmed.
+	w = do(t, s, "PUT", "/api/settings", token, `{"hostname":"other.example","extraSans":"a.ts.net","port":"8686"}`)
+	if w.Code != 409 {
+		t.Fatalf("unconfirmed RP change = %d, want 409: %s", w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["rpChange"] != true {
+		t.Fatalf("409 body must flag rpChange: %v", resp)
 	}
 	w = do(t, s, "GET", "/api/settings", token)
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["hostname"] != "newname" || resp["extraSans"] != "a.ts.net" {
+	if resp["hostname"] != "newname.example" {
+		t.Fatalf("refused write must change nothing: %v", resp)
+	}
+
+	w = do(t, s, "PUT", "/api/settings", token, `{"hostname":"other.example","extraSans":"a.ts.net","port":"8686","confirmRpChange":true}`)
+	if w.Code != 200 {
+		t.Fatalf("confirmed RP change = %d: %s", w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["rpWarning"] != true {
+		t.Fatalf("confirmed RP change must warn about passkey invalidation: %v", resp)
+	}
+	w = do(t, s, "GET", "/api/settings", token)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["hostname"] != "other.example" {
 		t.Fatalf("settings = %v", resp)
+	}
+}
+
+func TestSettingsInvalidWritesNothing(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	if w := do(t, s, "PUT", "/api/settings", token, `{"hostname":"good.example","extraSans":"","port":"8686"}`); w.Code != 200 {
+		t.Fatalf("seed settings = %d: %s", w.Code, w.Body.String())
+	}
+	for _, body := range []string{
+		`{"hostname":"dotless","extraSans":"","port":"8686"}`,
+		`{"hostname":"","extraSans":"","port":"8686"}`,
+		`{"hostname":"good.example","extraSans":"","port":"notaport"}`,
+		`{"hostname":"good.example","extraSans":"bad san","port":"8686"}`,
+	} {
+		if w := do(t, s, "PUT", "/api/settings", token, body); w.Code != 400 {
+			t.Fatalf("invalid settings %s = %d, want 400: %s", body, w.Code, w.Body.String())
+		}
+	}
+	var resp map[string]any
+	w := do(t, s, "GET", "/api/settings", token)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["hostname"] != "good.example" || resp["extraSans"] != "" || resp["port"] != "8686" {
+		t.Fatalf("invalid writes must change nothing: %v", resp)
 	}
 }
 

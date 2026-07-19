@@ -59,7 +59,7 @@ Struck items and reasons are listed at the bottom.
   - Done when production uses a stable private socket and a README note covers
     reattaching pre-existing `mm-*` sessions (pre-1.0; no automated migration).
 
-- [ ] **[security] Validate daemon identity settings once, atomically, with
+- [x] **[security] Validate daemon identity settings once, atomically, with
   the passkey lockout guard.** The settings API writes hostname/SANs/port one
   at a time and bypasses `applyHostname`'s lockout protection, so the UI can
   brick your own passkey login ([api.go](internal/server/api.go#L121),

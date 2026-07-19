@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { getJSON, putJSON } from "../api";
+import { apiFetch, getJSON } from "../api";
 import { localServer } from "../servers";
 
 type Settings = { hostname: string; extraSans: string; port: string };
-type SettingsResponse = { ok: boolean; rpWarning?: boolean; restartRequired?: boolean };
+type SettingsResponse = {
+  ok?: boolean;
+  rpWarning?: boolean;
+  restartRequired?: boolean;
+  error?: string;
+  rpChange?: boolean;
+  credentials?: number;
+};
 
 export default function DaemonPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -11,6 +18,8 @@ export default function DaemonPanel() {
   const [extraSans, setExtraSans] = useState("");
   const [port, setPort] = useState("");
   const [rpWarning, setRpWarning] = useState(false);
+  const [error, setError] = useState("");
+  const [pendingRpChange, setPendingRpChange] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(() => {
@@ -25,18 +34,35 @@ export default function DaemonPanel() {
   }, []);
   useEffect(refresh, [refresh]);
 
-  async function save() {
+  async function save(confirmRpChange: boolean) {
     if (!settings) return;
-    if (!/^\d+$/.test(port)) return;
+    if (port !== "" && !/^\d+$/.test(port)) return;
+    setError("");
+    setPendingRpChange(null);
     try {
       setLoading(true);
-      const data = await putJSON<SettingsResponse>(localServer(), "/api/settings", { hostname, extraSans, port });
+      const res = await apiFetch(localServer(), "/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostname, extraSans, port, confirmRpChange }),
+      });
+      const data = (await res.json()) as SettingsResponse;
+      if (res.status === 409 && data.rpChange) {
+        // The daemon refused: this hostname change alters the WebAuthn RP ID
+        // and would strand every registered passkey. Ask before retrying.
+        setPendingRpChange(data.credentials ?? 0);
+        return;
+      }
+      if (!res.ok) {
+        setError(data.error ?? `save failed (${res.status})`);
+        return;
+      }
       if (data.rpWarning) {
         setRpWarning(true);
       }
       refresh();
-    } catch (error) {
-      console.error("Failed to save settings:", error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "save failed");
     } finally {
       setLoading(false);
     }
@@ -49,6 +75,18 @@ export default function DaemonPanel() {
       <h2>Daemon Settings</h2>
       {rpWarning && (
         <div className="server-status-banner">Changing hostname invalidates ALL passkeys after restart</div>
+      )}
+      {error && <div className="server-status-banner">{error}</div>}
+      {pendingRpChange !== null && (
+        <div className="server-status-banner">
+          This hostname change invalidates {pendingRpChange} registered passkey(s) after restart.{" "}
+          <button disabled={loading} onClick={() => save(true)}>
+            Confirm hostname change
+          </button>{" "}
+          <button disabled={loading} onClick={() => setPendingRpChange(null)}>
+            Cancel
+          </button>
+        </div>
       )}
       <div className="settings-fields">
         <label>
@@ -64,7 +102,7 @@ export default function DaemonPanel() {
           <input type="number" value={port} onChange={(e) => setPort(e.target.value)} disabled={loading} />
         </label>
       </div>
-      <button className="primary" disabled={loading} onClick={save}>
+      <button className="primary" disabled={loading} onClick={() => save(false)}>
         Save
       </button>
     </section>

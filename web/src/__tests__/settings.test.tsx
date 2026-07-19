@@ -109,6 +109,67 @@ test("auth sessions render backend createdAt/expiresAt shape", async () => {
   fetchMock.mockRestore();
 });
 
+test("daemon panel requires explicit confirmation for RP-ID changes", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    // initial GET /api/settings
+    .mockResolvedValueOnce(new Response(JSON.stringify({ hostname: "old.example", extraSans: "", port: "8686" })))
+    // PUT refused: RP ID change with registered passkeys
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "would change the WebAuthn RP ID", rpChange: true, credentials: 2 }), {
+        status: 409,
+      }),
+    )
+    // confirmed PUT
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, rpWarning: true, restartRequired: true })))
+    // refresh GET /api/settings
+    .mockResolvedValueOnce(new Response(JSON.stringify({ hostname: "new.example", extraSans: "", port: "8686" })));
+
+  render(<DaemonPanel />);
+  const hostInput = await screen.findByDisplayValue("old.example");
+  await userEvent.clear(hostInput);
+  await userEvent.type(hostInput, "new.example");
+  await userEvent.click(screen.getByText("Save"));
+
+  // First PUT must not pre-confirm.
+  await waitFor(() => {
+    const puts = fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "PUT");
+    expect(puts).toHaveLength(1);
+  });
+  const firstPut = fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "PUT")[0];
+  expect(JSON.parse((firstPut[1] as RequestInit).body as string).confirmRpChange).toBeFalsy();
+
+  // The refusal surfaces a confirm action; nothing was written yet.
+  const confirmButton = await screen.findByText("Confirm hostname change");
+  await userEvent.click(confirmButton);
+
+  await waitFor(() => {
+    const puts = fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "PUT");
+    expect(puts).toHaveLength(2);
+  });
+  const secondPut = fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "PUT")[1];
+  expect(JSON.parse((secondPut[1] as RequestInit).body as string).confirmRpChange).toBe(true);
+  fetchMock.mockRestore();
+});
+
+test("daemon panel surfaces validation errors", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify({ hostname: "old.example", extraSans: "", port: "8686" })))
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'hostname "dotless" must contain a dot' }), { status: 400 }),
+    );
+
+  render(<DaemonPanel />);
+  const hostInput = await screen.findByDisplayValue("old.example");
+  await userEvent.clear(hostInput);
+  await userEvent.type(hostInput, "dotless");
+  await userEvent.click(screen.getByText("Save"));
+
+  await screen.findByText(/must contain a dot/);
+  fetchMock.mockRestore();
+});
+
 test("daemon panel sends port as a string", async () => {
   const fetchMock = vi
     .spyOn(globalThis, "fetch")

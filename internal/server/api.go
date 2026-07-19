@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/jontuk/multimux/internal/identity"
 	"github.com/jontuk/multimux/internal/store"
 )
 
@@ -135,23 +137,31 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Hostname, ExtraSans, Port string }
+	var in struct {
+		Hostname, ExtraSans, Port string
+		ConfirmRpChange           bool
+	}
 	if err := readJSON(r, &in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "bad body"})
 		return
 	}
-	prev, _ := s.cfg.Store.GetSetting("hostname")
-	rpWarning := in.Hostname != "" && in.Hostname != prev
-	for k, v := range map[string]string{"hostname": in.Hostname, "extra_sans": in.ExtraSans, "port": in.Port} {
-		if err := s.cfg.Store.SetSetting(k, v); err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
+	rpChanged, err := identity.Apply(s.cfg.Store, map[string]string{
+		"hostname": in.Hostname, "extra_sans": in.ExtraSans, "port": in.Port,
+	}, in.ConfirmRpChange)
+	var rpErr *identity.RPChangeError
+	if errors.As(err, &rpErr) {
+		// Changing the RP ID strands every registered passkey; require the UI
+		// to confirm explicitly before anything is written.
+		writeJSON(w, 409, map[string]any{"error": rpErr.Error(), "rpChange": true, "credentials": rpErr.Credentials})
+		return
+	}
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
 	}
 	slog.Info("settings changed", "keys", []string{"hostname", "extra_sans", "port"})
-	// rpWarning: changing hostname changes the WebAuthn RP ID — all passkeys
-	// stop working after restart. UI must confirm loudly.
-	writeJSON(w, 200, map[string]any{"ok": true, "rpWarning": rpWarning, "restartRequired": true})
+	// rpWarning: the RP ID changed — all passkeys stop working after restart.
+	writeJSON(w, 200, map[string]any{"ok": true, "rpWarning": rpChanged, "restartRequired": true})
 }
 
 // hostLabel is the display name shown in the web UI header: the user's

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jontuk/multimux/internal/auth"
+	"github.com/jontuk/multimux/internal/identity"
 	"github.com/jontuk/multimux/internal/pki"
 	"github.com/jontuk/multimux/internal/server"
 	"github.com/jontuk/multimux/internal/store"
@@ -61,43 +63,25 @@ func hostnames(st *store.Store) ([]string, error) {
 	return names, nil
 }
 
-// rpIDForHost returns the WebAuthn RP ID for a configured hostname.
-// go-webauthn's RPID validator rejects any value without a dot (except the
-// literal "localhost"), so a bare single-label hostname (the very common case
-// on Macs, e.g. "macmini") falls back to its ".local" form — which hostnames()
-// always includes as names[1] for dotless names.
-func rpIDForHost(host string) string {
-	if strings.Contains(host, ".") || host == "localhost" {
-		return host
-	}
-	return host + ".local"
-}
+// rpIDForHost returns the WebAuthn RP ID for a configured hostname; the
+// shared rules live in internal/identity (also used by the settings API).
+func rpIDForHost(host string) string { return identity.RPIDForHost(host) }
 
 // applyHostname validates and persists a hostname supplied via --hostname (or
-// MULTIMUX_HOSTNAME). The hostname is the WebAuthn RP ID: changing the RP ID
-// silently strands every registered passkey, so if credentials exist and the
-// new name derives a different RP ID, refuse and point at `auth reset`.
+// MULTIMUX_HOSTNAME) through the shared identity path. The hostname is the
+// WebAuthn RP ID: changing the RP ID silently strands every registered
+// passkey, so if credentials exist and the new name derives a different RP
+// ID, refuse and point at `auth reset`.
 func applyHostname(st *store.Store, host string) error {
-	if host == "" {
-		return fmt.Errorf("--hostname: name must not be empty")
+	_, err := identity.Apply(st, map[string]string{"hostname": host}, false)
+	var rpErr *identity.RPChangeError
+	if errors.As(err, &rpErr) {
+		return fmt.Errorf("--hostname %s.\nRun `multimux auth reset --yes` first, then retry with --hostname", rpErr.Error())
 	}
-	if !strings.Contains(host, ".") && host != "localhost" {
-		return fmt.Errorf("--hostname %q: name must contain a dot (or be \"localhost\") — WebAuthn rejects other dotless RP IDs; try %q", host, host+".local")
-	}
-	prev, err := st.GetSetting("hostname")
 	if err != nil {
-		return err
+		return fmt.Errorf("--hostname: %w", err)
 	}
-	if prev != "" && rpIDForHost(prev) != rpIDForHost(host) {
-		n, err := st.CountCredentials()
-		if err != nil {
-			return err
-		}
-		if n > 0 {
-			return fmt.Errorf("--hostname %q would change the WebAuthn RP ID from %q to %q, which invalidates all %d registered passkey(s).\nRun `multimux auth reset --yes` first, then retry with --hostname", host, rpIDForHost(prev), rpIDForHost(host), n)
-		}
-	}
-	return st.SetSetting("hostname", host)
+	return nil
 }
 
 // computeOrigins returns the browser origins allowed to authenticate against
@@ -121,6 +105,13 @@ func computeOrigins(names []string, port int, behindProxy bool) []string {
 		}
 	}
 	return origins
+}
+
+// displayableOrigins returns the origins worth printing as setup/login URLs:
+// only those that can pass WebAuthn RP-ID validation for rpID (others are
+// dead ends in a browser), most-resolvable first.
+func displayableOrigins(origins []string, rpID string) []string {
+	return displayOrigins(identity.LoginOrigins(origins, rpID))
 }
 
 // displayOrigins reorders origins for printing: names likely to resolve from
@@ -287,7 +278,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	})
 	srv.StartBackground() // reconcile + tickers, Task 17
 
-	display := displayOrigins(origins)
+	display := displayableOrigins(origins, rpID)
 
 	// First-run setup URL — one line per name, most-resolvable first, since
 	// the bare kernel hostname often doesn't resolve from another device.

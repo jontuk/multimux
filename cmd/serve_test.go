@@ -276,6 +276,22 @@ func TestApplyHostname(t *testing.T) {
 	})
 }
 
+// Setup/login output must not advertise origins that can never pass WebAuthn
+// RP-ID validation (bare alias, IPs, unrelated SANs) — they are dead ends.
+func TestDisplayableOriginsFiltersToRPID(t *testing.T) {
+	origins := []string{
+		"https://mybox:8686",
+		"https://mybox.local:8686",
+		"https://192.168.1.5:8686",
+		"https://other.ts.net:8686",
+	}
+	got := displayableOrigins(origins, "mybox.local")
+	want := []string{"https://mybox.local:8686"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("displayableOrigins = %v, want %v", got, want)
+	}
+}
+
 func TestComputeOrigins(t *testing.T) {
 	cases := []struct {
 		name        string

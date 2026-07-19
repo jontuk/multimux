@@ -115,3 +115,21 @@ func (s *Store) SetSetting(key, value string) error {
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
+
+// SetSettings upserts several settings keys in one transaction, so related
+// keys (e.g. the daemon identity trio) never land partially.
+func (s *Store) SetSettings(kv map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for k, v := range kv {
+		if _, err := tx.Exec(
+			`INSERT INTO settings (key, value) VALUES (?, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
