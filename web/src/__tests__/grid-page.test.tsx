@@ -317,6 +317,65 @@ test("dead session tile shows ended state instead of mounting a terminal", async
   expect(screen.queryByTestId("term-4")).toBeNull();
 });
 
+function stubRemoteServer() {
+  localStorage.setItem(
+    "multimux.servers",
+    JSON.stringify([{ id: "r1", origin: "https://box-a:8686", name: "box-a", token: "dead" }]),
+  );
+}
+
+function remoteOnStatus() {
+  const calls = vi.mocked(useEvents).mock.calls.filter(([s]) => s.id === "r1");
+  return calls[calls.length - 1][2]!;
+}
+
+test("expired remote auth offers Reconnect that replaces the stored token", async () => {
+  stubRemoteServer();
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
+  mockFetch(layout);
+  const popup = { closed: false, close: vi.fn() };
+  const openSpy = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+
+  try {
+    render(<GridPage />);
+    act(() => remoteOnStatus()("auth-expired"));
+    await screen.findByText(/not logged in/);
+
+    await userEvent.click(screen.getByText("Reconnect"));
+    expect(String(openSpy.mock.calls[0][0])).toContain("https://box-a:8686/#/connect");
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: "https://box-a:8686",
+          data: { type: "multimux-token", token: "fresh" },
+        }),
+      );
+    });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("multimux.servers")!)[0].token).toBe("fresh"));
+  } finally {
+    localStorage.removeItem("multimux.servers");
+  }
+});
+
+test("expired remote auth offers Remove server as a way out", async () => {
+  stubRemoteServer();
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
+  mockFetch(layout);
+
+  try {
+    render(<GridPage />);
+    act(() => remoteOnStatus()("auth-expired"));
+    await screen.findByText(/not logged in/);
+
+    await userEvent.click(screen.getByText("Remove server"));
+    expect(JSON.parse(localStorage.getItem("multimux.servers")!)).toEqual([]);
+    expect(screen.queryByText(/not logged in/)).not.toBeInTheDocument();
+  } finally {
+    localStorage.removeItem("multimux.servers");
+  }
+});
+
 test("layout persistence keeps one PUT in flight and coalesces to the newest state", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const putBodies: { shape: { rows: number; cols: number } }[] = [];

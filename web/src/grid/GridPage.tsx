@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { del, getJSON, putJSON } from "../api";
-import { listServers, localServer, type Server } from "../servers";
+import { connectServer, listServers, localServer, removeServer, type Server } from "../servers";
 import { addTile, emptyLayout, normalize, setCols, setTile, swapTiles, type Layout, type Tile } from "./model";
 import ColumnStepper from "./ColumnStepper";
 import HeaderLauncher from "./HeaderLauncher";
@@ -66,9 +66,10 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
   // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
   const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
-  // Stable across re-renders so the events sockets don't churn; listServers()
-  // reads localStorage and returns a fresh array each call.
-  const servers = useMemo(() => listServers(), []);
+  // State (not a per-render listServers() call) so the array identity is
+  // stable across re-renders and the events sockets don't churn; refreshed
+  // explicitly after reconnect/remove changes the stored list.
+  const [servers, setServers] = useState(() => listServers());
 
   // Mirrors `layout` so edits always build on the newest state, not the state
   // captured when a handler's closure was created.
@@ -135,14 +136,19 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
 
   useEffect(() => {
     refreshLayout();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Refetch per-server data whenever the server list changes (mount, and after
+  // a reconnect replaces a token or a dead server is removed).
+  useEffect(() => {
     refreshSessions();
     for (const server of servers) {
       getJSON<Tool[]>(server, "/api/tools")
         .then((t) => setToolsByServer((prev) => ({ ...prev, [server.id]: t })))
         .catch(() => {});
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [servers, refreshSessions]);
 
   // Listener only exists while maximized; Escape also reaches the focused
   // terminal (same trade-off as cheep).
@@ -232,9 +238,27 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
         .map((s) => (
           <div key={s.id} className="error server-status-banner">
             <b>{s.name}</b>: {statusMessages[statusByServer[s.id] as Exclude<EventsStatus, "open">]}{" "}
-            {statusByServer[s.id] === "auth-expired" && (
-              <button onClick={() => window.location.reload()}>Reload</button>
-            )}
+            {statusByServer[s.id] === "auth-expired" &&
+              (s.id === "local" ? (
+                <button onClick={() => window.location.reload()}>Reload</button>
+              ) : (
+                // A remote server's stored token is dead; reloading would reuse
+                // it forever. Offer a fresh token or removing the server.
+                <>
+                  <button className="primary" onClick={() => connectServer(s, () => setServers(listServers()))}>
+                    Reconnect
+                  </button>
+                  <button
+                    className="danger"
+                    onClick={() => {
+                      removeServer(s.id);
+                      setServers(listServers());
+                    }}
+                  >
+                    Remove server
+                  </button>
+                </>
+              ))}
           </div>
         ))}
       <div

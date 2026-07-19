@@ -104,7 +104,7 @@ Struck items and reasons are listed at the bottom.
   - Done when local updates are reducer-based and persistence keeps at most
     one write in flight, always eventually writing the newest state.
 
-- [ ] **[usability] Give remote-server auth expiry a way out.**
+- [x] **[usability] Give remote-server auth expiry a way out.**
   An expired remote token only offers "Reload," which reloads the same dead
   token ([GridPage.tsx](web/src/grid/GridPage.tsx#L163),
   [servers.ts](web/src/servers.ts#L31)). Multi-daemon is a headline feature;

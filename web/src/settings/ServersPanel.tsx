@@ -1,30 +1,5 @@
 import { useState } from "react";
-import { addServer, listServers, removeServer, setServerToken, type Server } from "../servers";
-
-function connectServer(server: Server) {
-  const popup = window.open(`${server.origin}/#/connect?opener=${encodeURIComponent(window.location.origin)}`);
-  let pollId: ReturnType<typeof setInterval> | null = null;
-  function cleanup() {
-    window.removeEventListener("message", onMsg);
-    if (pollId) clearInterval(pollId);
-  }
-  function onMsg(ev: MessageEvent) {
-    if (ev.origin !== server.origin || ev.data?.type !== "multimux-token") return;
-    setServerToken(server.id, ev.data.token);
-    cleanup();
-    popup?.close();
-  }
-  window.addEventListener("message", onMsg);
-  // If the popup was blocked (null) or the user closes/denies it, stop
-  // listening so listeners don't stack across repeated Connect clicks.
-  if (!popup) {
-    cleanup();
-    return;
-  }
-  pollId = setInterval(() => {
-    if (popup.closed) cleanup();
-  }, 500);
-}
+import { addServer, connectServer, listServers, removeServer } from "../servers";
 
 export default function ServersPanel() {
   const [servers, setServers] = useState(() => listServers());
