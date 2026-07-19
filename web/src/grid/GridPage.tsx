@@ -132,8 +132,10 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
 
   const onServerEvent = useCallback(
     (type: string) => {
-      if (type.startsWith("session_") || type === "git_changed") refreshSessions();
-      if (type === "layout_changed") refreshLayout();
+      // "hello" arrives on every (re)connect; the hub drops events for slow
+      // subscribers, so a reconnected socket must resync everything.
+      if (type.startsWith("session_") || type === "git_changed" || type === "hello") refreshSessions();
+      if (type === "layout_changed" || type === "hello") refreshLayout();
     },
     [refreshSessions, refreshLayout],
   );

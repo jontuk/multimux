@@ -180,6 +180,29 @@ test("git_changed event refetches sessions", async () => {
   await waitFor(() => expect(sessionFetches()).toBeGreaterThan(before));
 });
 
+test("hello event (socket reconnect) refetches sessions and layout", async () => {
+  // The hub drops events for slow subscribers, so a reconnected socket must
+  // resync from scratch; the server sends "hello" on every (re)connect.
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const gets = (path: string) =>
+    fetchMock.mock.calls.filter(([input, init]) => String(input).includes(path) && (init?.method ?? "GET") === "GET")
+      .length;
+  const sessionsBefore = gets("/api/sessions");
+  const layoutBefore = gets("/api/layout");
+
+  const calls = vi.mocked(useEvents).mock.calls;
+  const onEvent = calls[calls.length - 1][1];
+  act(() => onEvent("hello"));
+
+  await waitFor(() => expect(gets("/api/sessions")).toBeGreaterThan(sessionsBefore));
+  await waitFor(() => expect(gets("/api/layout")).toBeGreaterThan(layoutBefore));
+});
+
 test("terminate button confirms then DELETEs the session and drops the tile", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
   const fetchMock = mockFetch(layout);
