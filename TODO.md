@@ -70,7 +70,7 @@ Struck items and reasons are listed at the bottom.
     change nothing, RP-ID-affecting changes with existing credentials require
     explicit confirmation, and only RP-ID-compatible origins are printed.
 
-- [ ] **[bug] Render terminal failure/dead states instead of reconnecting
+- [x] **[bug] Render terminal failure/dead states instead of reconnecting
   forever.** Dead or missing sessions still mount a terminal; 404/409
   WebSocket failures become an endless "daemon unreachable" loop, and the
   offline/exited overlay lacks positioning styles so it is clipped behind the

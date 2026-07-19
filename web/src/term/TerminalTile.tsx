@@ -3,20 +3,45 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import "@xterm/xterm/css/xterm.css";
-import { wsURL } from "../api";
+import { apiFetch, wsURL } from "../api";
 import type { Server } from "../servers";
+import type { Session } from "../grid/types";
 import { encodeResize, parseServerText } from "./protocol";
 
 type Props = { server: Server; sessionId: number; onClose: () => void };
-type ConnState = "connecting" | "open" | "offline" | "exited";
+// "offline" retries automatically; "exited", "missing", and "auth" are
+// terminal — the loop stops and the overlay offers dismiss/reconnect.
+type ConnState = "connecting" | "open" | "offline" | "exited" | "missing" | "auth";
+
+// The browser WS API hides the HTTP status of a failed upgrade, so ask the
+// sessions API which failure this is (same trick as useEvents' classify).
+async function classifyClose(server: Server, sessionId: number): Promise<"retry" | "exited" | "missing" | "auth"> {
+  try {
+    const res = await apiFetch(server, "/api/sessions");
+    if (res.status === 401 || res.status === 403) return "auth";
+    if (!res.ok) return "retry";
+    const sessions = (await res.json()) as Session[];
+    const sess = sessions.find((s) => s.id === sessionId);
+    if (!sess) return "missing";
+    return sess.status === "running" ? "retry" : "exited";
+  } catch {
+    return "retry"; // daemon unreachable — transient
+  }
+}
 
 export default function TerminalTile({ server, sessionId, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<ConnState>("connecting");
+  // Bumped by the auth overlay's reconnect button to restart the effect.
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // Depend on the URL string, not the server object: listServers() returns
   // fresh objects each render, but the string only changes when it matters.
   const url = wsURL(server, `/ws/pty/${sessionId}`);
+  const serverRef = useRef(server);
+  useEffect(() => {
+    serverRef.current = server;
+  });
 
   useEffect(() => {
     const term = new Terminal({
@@ -65,11 +90,18 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
           ws?.close();
         }
       };
-      ws.onclose = () => {
+      ws.onclose = async () => {
         if (closed) return;
         setState("offline");
-        reconnectTimeoutId = setTimeout(connect, backoff);
-        backoff = Math.min(backoff * 2, 10000);
+        const kind = await classifyClose(serverRef.current, sessionId);
+        if (closed) return;
+        if (kind === "retry") {
+          reconnectTimeoutId = setTimeout(connect, backoff);
+          backoff = Math.min(backoff * 2, 10000);
+        } else {
+          closed = true;
+          setState(kind);
+        }
       };
     }
     connect();
@@ -99,7 +131,7 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
       document.removeEventListener("visibilitychange", sendResize);
       term.dispose();
     };
-  }, [url]);
+  }, [url, sessionId, retryNonce]);
 
   return (
     <div className="terminal-tile" style={{ position: "relative", height: "100%" }}>
@@ -108,6 +140,16 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
       {state === "exited" && (
         <div className="overlay">
           session ended <button onClick={onClose}>dismiss</button>
+        </div>
+      )}
+      {state === "missing" && (
+        <div className="overlay">
+          session not found on this daemon <button onClick={onClose}>dismiss</button>
+        </div>
+      )}
+      {state === "auth" && (
+        <div className="overlay">
+          not logged in — log in, then <button onClick={() => setRetryNonce((n) => n + 1)}>reconnect</button>
         </div>
       )}
     </div>

@@ -311,13 +311,21 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                         </button>
                       </span>
                     </div>
-                    <div className="tile-body">
-                      <TerminalTile
-                        server={server}
-                        sessionId={tile.sessionId}
-                        onClose={() => persist(setTile(layout, i, null))}
-                      />
-                    </div>
+                    {session && session.status !== "running" ? (
+                      // Dead sessions must not mount a terminal: the daemon
+                      // rejects the attach and the tile would retry forever.
+                      <div className="tile-body empty-tile-hint">
+                        session ended <button onClick={() => persist(setTile(layout, i, null))}>dismiss</button>
+                      </div>
+                    ) : (
+                      <div className="tile-body">
+                        <TerminalTile
+                          server={server}
+                          sessionId={tile.sessionId}
+                          onClose={() => persist(setTile(layout, i, null))}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })()

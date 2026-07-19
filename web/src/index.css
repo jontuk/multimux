@@ -591,6 +591,25 @@ a {
   min-height: 0;
 }
 
+/* Connection-state overlay inside a terminal tile. The tile wrapper is
+   position:relative; without these styles the overlay lands under the
+   terminal in normal flow and is clipped invisible. */
+.terminal-tile .overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10; /* above xterm's canvas/text layers */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.65);
+}
+
 .empty-tile {
   height: 100%;
   display: flex;

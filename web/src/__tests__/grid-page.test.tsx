@@ -307,6 +307,16 @@ test("removing the maximized tile clears maximized state", async () => {
   expect(document.querySelector(".tile-maximized")).toBeNull();
 });
 
+test("dead session tile shows ended state instead of mounting a terminal", async () => {
+  // Session 4 is dead in the fixtures above.
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 4 }, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByText(/session ended/);
+  expect(screen.queryByTestId("term-4")).toBeNull();
+});
+
 test("stepper arrows change column count and persist it", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const fetchMock = mockFetch(layout);
