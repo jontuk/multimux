@@ -88,7 +88,7 @@ Struck items and reasons are listed at the bottom.
   - Done when each pass does one list call, distinguishes "no server" from
     command errors, and only confirmed-absent sessions are marked dead.
 
-- [ ] **[bug] Make session create/kill failures leave consistent state.**
+- [x] **[bug] Make session create/kill failures leave consistent state.**
   Two adjacent holes: the kill handler discards `KillSession` errors, marks
   the row dead, and returns 204, orphaning a live session
   ([sessions.go](internal/server/sessions.go#L72)); and a `respawn-pane`

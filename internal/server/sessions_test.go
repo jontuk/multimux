@@ -263,6 +263,46 @@ func TestReconcileSparesLiveRowsOnTmuxError(t *testing.T) {
 	}
 }
 
+// A kill that fails for a real reason (not "already gone") must preserve the
+// running row and surface the error — marking it dead would orphan a live
+// tmux session with no UI handle to it.
+func TestKillFailurePreservesRunningRow(t *testing.T) {
+	s, st, token := func() (*Server, *store.Store, string) {
+		s, st, am := newTestServer(t, true)
+		s.cfg.Tmux = tmuxmgr.New("mm", "unused")
+		token, _ := am.CreateSession("UA")
+		return s, st, token
+	}()
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	sess, _ := st.CreateSession(tool.ID, "/tmp")
+
+	fakeTmux(t, "echo 'lost server' >&2\nexit 2\n")
+	if w := do(t, s, "DELETE", fmt.Sprintf("/api/sessions/%d", sess.ID), token); w.Code != 500 {
+		t.Fatalf("kill with failing tmux = %d, want 500", w.Code)
+	}
+	if got, _ := st.GetSession(sess.ID); got.Status != "running" {
+		t.Fatalf("status = %s, want running preserved on kill failure", got.Status)
+	}
+}
+
+// Killing a session whose tmux server is gone (reboot) still succeeds: the
+// session is already absent, so the row is marked dead and 204 returned.
+func TestKillAfterRebootMarksDead(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	s.cfg.Tmux = tmuxmgr.New("mm", "unused")
+	token, _ := am.CreateSession("UA")
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	sess, _ := st.CreateSession(tool.ID, "/tmp")
+
+	fakeTmux(t, "echo 'no server running on /tmp/x' >&2\nexit 1\n")
+	if w := do(t, s, "DELETE", fmt.Sprintf("/api/sessions/%d", sess.ID), token); w.Code != 204 {
+		t.Fatalf("kill after reboot = %d, want 204", w.Code)
+	}
+	if got, _ := st.GetSession(sess.ID); got.Status != "dead" {
+		t.Fatalf("status = %s, want dead", got.Status)
+	}
+}
+
 func TestLayoutAPI(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")

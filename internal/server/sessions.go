@@ -129,8 +129,13 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	// Session may already be gone (reboot); killing is best-effort.
-	_ = s.cfg.Tmux.KillSession(sess.TmuxName)
+	// An already-gone session (reboot) counts as success inside KillSession;
+	// any error here is real, and marking the row dead anyway would orphan a
+	// live tmux session with no UI handle to it.
+	if err := s.cfg.Tmux.KillSession(sess.TmuxName); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := s.cfg.Store.SetSessionStatus(id, "dead"); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return

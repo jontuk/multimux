@@ -87,15 +87,32 @@ func (m *Manager) CreateSession(name, dir, command string) error {
 	_ = m.run("set-option", "-s", "set-clipboard", "on")
 	if command != "" {
 		if err := m.run("respawn-pane", "-k", "-c", dir, "-t", target, command); err != nil {
+			// The caller rolls its DB row back on error; the fresh tmux
+			// session must go with it or it becomes an unreachable orphan.
+			_ = m.KillSession(name)
 			return err
 		}
 	}
 	return nil
 }
 
-// KillSession destroys the session.
+// sessionAbsent reports whether a tmux error message means the target session
+// (or the whole tmux server) is already gone, as opposed to a real failure.
+func sessionAbsent(msg string) bool {
+	return strings.Contains(msg, "can't find session") ||
+		strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "No such file")
+}
+
+// KillSession destroys the session. A session that is already gone — or a
+// tmux server that isn't running at all — counts as success: the goal is
+// absence. Any other error is a real failure the caller must handle.
 func (m *Manager) KillSession(name string) error {
-	return m.run("kill-session", "-t", ExactTarget(name))
+	err := m.run("kill-session", "-t", ExactTarget(name))
+	if err != nil && sessionAbsent(err.Error()) {
+		return nil
+	}
+	return err
 }
 
 // ListSessions returns all session names on the server; nil,nil when the
@@ -108,9 +125,7 @@ func (m *Manager) ListSessions() ([]string, error) {
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		// tmux prints these when there is nothing to list — not an error.
-		if strings.Contains(msg, "no server running") ||
-			strings.Contains(msg, "no sessions") ||
-			strings.Contains(msg, "No such file") {
+		if sessionAbsent(msg) || strings.Contains(msg, "no sessions") {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("tmux list-sessions: %w: %s", err, msg)

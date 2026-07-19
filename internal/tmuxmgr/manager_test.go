@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,6 +77,36 @@ func TestFastExitingCommandSurvives(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if !m.IsAlive(name) {
 		t.Fatal("fast-exiting command killed the session — remain-on-exit race regressed")
+	}
+}
+
+// Killing a session that is already gone achieves the goal — absence — and
+// must not read as failure, with or without a running tmux server.
+func TestKillMissingSessionIsNotAnError(t *testing.T) {
+	m := testManager(t)
+	if err := m.KillSession(m.SessionName(1)); err != nil {
+		t.Fatalf("kill with no server = %v, want nil", err)
+	}
+	if err := m.CreateSession(m.SessionName(12), t.TempDir(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.KillSession(m.SessionName(1)); err != nil {
+		t.Fatalf("kill missing session = %v, want nil", err)
+	}
+}
+
+// A respawn-pane failure after new-session must not leave the fresh tmux
+// session behind: the caller sees an error and deletes the DB row, so a
+// surviving session would be an unreachable orphan.
+func TestFailedRespawnKillsCreatedSession(t *testing.T) {
+	m := testManager(t)
+	name := m.SessionName(3)
+	// An oversized command overflows the exec arg limit, failing respawn-pane.
+	if err := m.CreateSession(name, t.TempDir(), strings.Repeat("x", 2<<20)); err == nil {
+		t.Fatal("CreateSession with oversized command succeeded, want error")
+	}
+	if names, err := m.ListSessions(); err != nil || slices.Contains(names, name) {
+		t.Fatalf("ListSessions = %v, %v; orphan session survived failed create", names, err)
 	}
 }
 
