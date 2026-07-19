@@ -157,11 +157,12 @@ func devOrigins(origins []string, port int) []string {
 	return append(origins, "http://localhost:5173", fmt.Sprintf("https://localhost:%d", port))
 }
 
-// tmuxSocket isolates each throwaway dev data dir on its own tmux server.
-// The same directory keeps its sessions across daemon restarts.
+// tmuxSocket keeps multimux off the user's default tmux server. Production
+// uses one stable private socket ("multimux") so sessions persist across
+// daemon restarts; dev isolates each throwaway data dir on its own socket.
 func tmuxSocket(dev bool, dataDir string) string {
 	if !dev {
-		return ""
+		return "multimux"
 	}
 	absDir, err := filepath.Abs(dataDir)
 	if err != nil {

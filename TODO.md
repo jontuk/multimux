@@ -51,7 +51,7 @@ Struck items and reasons are listed at the bottom.
 
 ## P1 — correctness and reliability
 
-- [ ] **[reliability] Use a private tmux server in production.**
+- [x] **[reliability] Use a private tmux server in production.**
   Production passes an empty socket name ([serve.go](cmd/serve.go#L162)),
   sharing the user's default tmux server: multimux mutates server-global
   options and could collide with or kill a hand-made `mm-*` session. Dev mode

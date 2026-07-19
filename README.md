@@ -114,6 +114,13 @@ multimux --version                           print version
 (plain HTTP on localhost, trusting `X-Forwarded-*` — see
 [docs/proxy.md](docs/proxy.md)).
 
+The daemon runs its sessions on a **private tmux server** (socket name
+`multimux`), so it never touches your personal tmux sessions. If you upgraded
+from a version that used the default tmux server, existing `mm-*` sessions
+stay on the default server; reattach to them directly with
+`tmux attach -t <name>` and let multimux create new sessions on its own
+socket (`tmux -L multimux ls` lists them).
+
 ## Security model 
 
 multimux is a **local, single-user tool** and its security posture reflects that.

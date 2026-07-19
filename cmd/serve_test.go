@@ -114,8 +114,13 @@ func TestDevOrigins(t *testing.T) {
 }
 
 func TestTmuxSocket(t *testing.T) {
-	if got := tmuxSocket(false, "/tmp/multimux-dev-a"); got != "" {
-		t.Fatalf("production tmux socket = %q, want default socket", got)
+	// Production must never share the user's default tmux server: multimux
+	// mutates server-global options and kills mm-* sessions it thinks it owns.
+	if got := tmuxSocket(false, "/tmp/multimux-dev-a"); got != "multimux" {
+		t.Fatalf("production tmux socket = %q, want %q", got, "multimux")
+	}
+	if got := tmuxSocket(false, "/tmp/other-dir"); got != "multimux" {
+		t.Fatalf("production tmux socket must be stable across data dirs, got %q", got)
 	}
 
 	first := tmuxSocket(true, "/tmp/multimux-dev-a")
