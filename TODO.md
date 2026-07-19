@@ -79,7 +79,7 @@ Struck items and reasons are listed at the bottom.
   - Done when permanent states (missing/dead/auth) stop retrying and show a
     visible overlay with dismiss/reconnect actions.
 
-- [ ] **[bug] Reconcile from one tmux listing and don't kill live rows on
+- [x] **[bug] Reconcile from one tmux listing and don't kill live rows on
   transient errors.** The daemon runs `has-session` per DB row every 5s, and
   `IsAlive` maps every tmux error to "missing," so one transient failure
   permanently marks live sessions dead

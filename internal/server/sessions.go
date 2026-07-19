@@ -205,20 +205,29 @@ func (s *Server) handlePutLayout(w http.ResponseWriter, r *http.Request) {
 }
 
 // Reconcile marks DB-running sessions whose tmux session no longer exists as
-// dead. Called at startup and periodically (Task 17). Only sessions tracked
-// by the store are considered — tmuxmgr.ListSessions returns every session on
-// the tmux server, including ones outside multimux's control, but Reconcile
-// never consults that list directly: it walks the DB and asks IsAlive about
-// each known tmux name, so foreign sessions are never touched.
+// dead. Called at startup and periodically (Task 17). Each pass takes one
+// tmux listing and checks the DB rows against it — foreign sessions in that
+// listing are never touched, only membership of multimux-owned names is
+// consulted. A listing error (unlike "no server running", which ListSessions
+// maps to an empty list) confirms nothing, so the pass aborts before marking
+// anything dead: one transient tmux failure must not kill live rows.
 func (s *Server) Reconcile() ([]store.Session, error) {
 	sessions, err := s.cfg.Store.ListSessions()
 	if err != nil {
 		return nil, err
 	}
+	names, err := s.cfg.Tmux.ListSessions()
+	if err != nil {
+		return nil, err
+	}
+	alive := make(map[string]bool, len(names))
+	for _, name := range names {
+		alive[name] = true
+	}
 	var newlyDead []store.Session
 	now := time.Now()
 	for _, sess := range sessions {
-		if sess.Status != "running" || s.cfg.Tmux.IsAlive(sess.TmuxName) {
+		if sess.Status != "running" || alive[sess.TmuxName] {
 			continue
 		}
 		// The DB row is inserted before the tmux session exists (the tmux name

@@ -195,6 +195,74 @@ func TestReconcileSparesFreshSessions(t *testing.T) {
 	}
 }
 
+// fakeTmux puts a shell script named tmux first on PATH and returns the file
+// its invocations are logged to (one line of args per call).
+func fakeTmux(t *testing.T, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	log := dir + "/calls.log"
+	body := "#!/bin/sh\necho \"$@\" >> \"" + log + "\"\n" + script
+	if err := os.WriteFile(dir+"/tmux", []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	return log
+}
+
+// One reconcile pass must issue a single tmux listing — not one has-session
+// per row — and only sessions confirmed absent from it may be marked dead.
+func TestReconcileUsesOneListing(t *testing.T) {
+	s, st, _ := newTestServer(t, true)
+	s.cfg.Tmux = tmuxmgr.New("mm", "unused")
+	s.reconcileGrace = 0
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	a, _ := st.CreateSession(tool.ID, "/tmp") // mm-1: absent → dead
+	b, _ := st.CreateSession(tool.ID, "/tmp") // mm-2: listed → stays running
+	c, _ := st.CreateSession(tool.ID, "/tmp") // mm-3: absent → dead
+
+	log := fakeTmux(t, "echo mm-2\n")
+	dead, err := s.Reconcile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dead) != 2 || dead[0].ID != a.ID || dead[1].ID != c.ID {
+		t.Fatalf("dead = %+v, want sessions %d and %d", dead, a.ID, c.ID)
+	}
+	if got, _ := st.GetSession(b.ID); got.Status != "running" {
+		t.Fatalf("listed session status = %s, want running", got.Status)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "list-sessions") {
+		t.Fatalf("tmux calls = %q, want exactly one list-sessions", lines)
+	}
+}
+
+// A tmux command error (as opposed to "no server running") confirms nothing:
+// live rows must survive the pass untouched.
+func TestReconcileSparesLiveRowsOnTmuxError(t *testing.T) {
+	s, st, _ := newTestServer(t, true)
+	s.cfg.Tmux = tmuxmgr.New("mm", "unused")
+	s.reconcileGrace = 0
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	sess, _ := st.CreateSession(tool.ID, "/tmp")
+
+	fakeTmux(t, "echo 'lost server' >&2\nexit 2\n")
+	dead, err := s.Reconcile()
+	if err == nil {
+		t.Fatal("Reconcile() = nil error, want the tmux failure surfaced")
+	}
+	if len(dead) != 0 {
+		t.Fatalf("dead = %+v, want none on a failed listing", dead)
+	}
+	if got, _ := st.GetSession(sess.ID); got.Status != "running" {
+		t.Fatalf("status = %s, want running after transient tmux error", got.Status)
+	}
+}
+
 func TestLayoutAPI(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")
