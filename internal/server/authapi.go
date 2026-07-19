@@ -3,17 +3,12 @@ package server
 import (
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/jontuk/multimux/internal/auth"
 )
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: auth.CookieName, Value: token, Path: "/",
-		MaxAge:   int((30 * 24 * time.Hour).Seconds()),
-		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
-	})
+	http.SetCookie(w, auth.SessionCookie(token))
 }
 
 func (s *Server) handleSetupBegin(w http.ResponseWriter, r *http.Request) {

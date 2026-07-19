@@ -121,27 +121,41 @@ func (m *Manager) CreateSession(userAgent string) (string, error) {
 	return token, err
 }
 
+// SessionCookie builds the session cookie for a token with the full TTL.
+// Issued at login and re-issued whenever the server-side expiry slides, so the
+// browser's copy never outlives — or dies before — the DB session.
+func SessionCookie(token string) *http.Cookie {
+	return &http.Cookie{
+		Name: CookieName, Value: token, Path: "/",
+		MaxAge:   int(sessionTTL.Seconds()),
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
+	}
+}
+
 // ValidateToken checks a raw token and applies the 30-day sliding expiry.
-func (m *Manager) ValidateToken(token string) (bool, error) {
+// slid reports that the stored expiry was extended — the caller should
+// re-issue the session cookie so the browser's fixed-MaxAge copy slides too.
+func (m *Manager) ValidateToken(token string) (ok, slid bool, err error) {
 	if token == "" {
-		return false, nil
+		return false, false, nil
 	}
 	h := hashToken(token)
 	sess, ok, err := m.store.GetAuthSession(h)
 	if err != nil || !ok {
-		return false, err
+		return false, false, err
 	}
 	now := time.Now().UTC()
 	if now.After(sess.ExpiresAt) {
 		_ = m.store.DeleteAuthSession(h)
-		return false, nil
+		return false, false, nil
 	}
 	if sess.ExpiresAt.Sub(now) < slideThreshold {
 		if err := m.store.TouchAuthSession(h, now.Add(sessionTTL)); err != nil {
-			return false, err
+			return false, false, err
 		}
+		return true, true, nil
 	}
-	return true, nil
+	return true, false, nil
 }
 
 func (m *Manager) Logout(token string) error {
@@ -177,7 +191,8 @@ func TokenFromRequest(r *http.Request) string {
 // Middleware rejects requests without a valid session.
 func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ok, err := m.ValidateToken(TokenFromRequest(r))
+		token := TokenFromRequest(r)
+		ok, slid, err := m.ValidateToken(token)
 		if err != nil {
 			http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 			return
@@ -187,6 +202,11 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
+		}
+		// Only refresh cookie-authenticated requests: an explicit bearer token
+		// may not match this browser's cookie, and has no cookie to keep alive.
+		if slid && ExplicitToken(r) == "" {
+			http.SetCookie(w, SessionCookie(token))
 		}
 		next.ServeHTTP(w, r)
 	})

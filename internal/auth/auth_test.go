@@ -105,11 +105,14 @@ func TestSessionTokenLifecycle(t *testing.T) {
 	if err != nil || token == "" {
 		t.Fatalf("CreateSession: %q, %v", token, err)
 	}
-	ok, err := m.ValidateToken(token)
+	ok, slid, err := m.ValidateToken(token)
 	if err != nil || !ok {
 		t.Fatalf("ValidateToken: %v, %v", ok, err)
 	}
-	if ok, _ := m.ValidateToken("garbage"); ok {
+	if slid {
+		t.Fatal("fresh token should not slide")
+	}
+	if ok, _, _ := m.ValidateToken("garbage"); ok {
 		t.Fatal("garbage token validated")
 	}
 	// Raw token never stored.
@@ -120,7 +123,7 @@ func TestSessionTokenLifecycle(t *testing.T) {
 	if err := m.Logout(token); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := m.ValidateToken(token); ok {
+	if ok, _, _ := m.ValidateToken(token); ok {
 		t.Fatal("token valid after logout")
 	}
 }
@@ -150,6 +153,69 @@ func TestMiddleware(t *testing.T) {
 		if w.Code != c.want {
 			t.Errorf("%s: code = %d, want %d", c.name, w.Code, c.want)
 		}
+	}
+}
+
+// The DB expiry slides on use but the browser cookie's MaxAge is fixed at
+// login time; without a refreshed Set-Cookie the browser drops the cookie 30
+// days after login even though the server-side session is still live.
+func TestMiddlewareRefreshesCookieWhenExpirySlides(t *testing.T) {
+	m, st := testManager(t)
+	token, _ := m.CreateSession("UA")
+	// Age the session so remaining life is under the slide threshold.
+	if err := st.TouchAuthSession(hashToken(token), time.Now().UTC().Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	h := m.Middleware(next)
+
+	r := httptest.NewRequest("GET", "/api/tools", nil)
+	r.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("code = %d, want 200", w.Code)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != CookieName || cookies[0].Value != token {
+		t.Fatalf("want refreshed session cookie, got %+v", cookies)
+	}
+	if cookies[0].MaxAge != int(sessionTTL.Seconds()) {
+		t.Fatalf("MaxAge = %d, want %d", cookies[0].MaxAge, int(sessionTTL.Seconds()))
+	}
+	if !cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("refreshed cookie lost attributes: %+v", cookies[0])
+	}
+}
+
+func TestMiddlewareNoCookieRefreshForBearerOrFreshSessions(t *testing.T) {
+	m, st := testManager(t)
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	h := m.Middleware(next)
+
+	// Fresh session: nothing slid, no Set-Cookie.
+	fresh, _ := m.CreateSession("UA")
+	r := httptest.NewRequest("GET", "/api/tools", nil)
+	r.AddCookie(&http.Cookie{Name: CookieName, Value: fresh})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if got := w.Result().Cookies(); len(got) != 0 {
+		t.Fatalf("fresh session: unexpected Set-Cookie %+v", got)
+	}
+
+	// Aged session presented as a bearer token: no cookie to refresh — setting
+	// one would bind another origin's token into this browser's cookie jar.
+	bearer, _ := m.CreateSession("UA")
+	st.TouchAuthSession(hashToken(bearer), time.Now().UTC().Add(24*time.Hour))
+	r = httptest.NewRequest("GET", "/api/tools", nil)
+	r.Header.Set("Authorization", "Bearer "+bearer)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("bearer code = %d, want 200", w.Code)
+	}
+	if got := w.Result().Cookies(); len(got) != 0 {
+		t.Fatalf("bearer auth: unexpected Set-Cookie %+v", got)
 	}
 }
 
