@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import GridPage from "../grid/GridPage";
@@ -419,6 +419,110 @@ test("layout persistence keeps one PUT in flight and coalesces to the newest sta
   putResolvers.shift()!();
   await waitFor(() => expect(putsInFlight).toBe(0));
   expect(putBodies).toHaveLength(2);
+});
+
+// Minimal stand-in for jsdom's missing DataTransfer.
+function makeDataTransfer(data: Record<string, string> = {}) {
+  return {
+    data,
+    types: Object.keys(data),
+    setData(type: string, value: string) {
+      this.data[type] = value;
+      this.types = Object.keys(this.data);
+    },
+    getData(type: string) {
+      return this.data[type] ?? "";
+    },
+  };
+}
+
+const twoTileLayout = {
+  shape: { rows: 1, cols: 2 },
+  tiles: [
+    { serverId: "local", sessionId: 1 },
+    { serverId: "local", sessionId: 2 },
+  ],
+};
+
+test("dragging a tile onto another swaps them without remounting the terminals", async () => {
+  mockFetch(twoTileLayout);
+
+  render(<GridPage />);
+  const term1 = await screen.findByTestId("term-1");
+  await screen.findByTestId("term-2");
+  const tiles = document.querySelectorAll(".tile");
+
+  const dt = makeDataTransfer();
+  fireEvent.dragStart(tiles[0], { dataTransfer: dt });
+  fireEvent.drop(tiles[1], { dataTransfer: dt });
+
+  // Order swapped…
+  const after = document.querySelectorAll(".tile");
+  expect(after[0].querySelector("[data-testid=term-2]")).not.toBeNull();
+  // …and the terminal kept its DOM node (identity key, not index key), so
+  // xterm and its WebSocket survive the move.
+  expect(screen.getByTestId("term-1")).toBe(term1);
+});
+
+test("drops without the tile MIME type are ignored (no swap of tile zero)", async () => {
+  const fetchMock = mockFetch(twoTileLayout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const tiles = document.querySelectorAll(".tile");
+
+  // A foreign drag (text, file, …) carries no tile index; Number("") === 0
+  // must not be treated as "swap with tile 0".
+  fireEvent.drop(tiles[1], { dataTransfer: makeDataTransfer({ "text/plain": "hello" }) });
+
+  expect(document.querySelectorAll(".tile")[0].querySelector("[data-testid=term-1]")).not.toBeNull();
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+});
+
+test("drops with an out-of-range tile index are ignored", async () => {
+  const fetchMock = mockFetch(twoTileLayout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const tiles = document.querySelectorAll(".tile");
+
+  fireEvent.drop(tiles[1], { dataTransfer: makeDataTransfer({ "text/tile-index": "99" }) });
+
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+});
+
+test("move button offers tap targets that reorder tiles without drag", async () => {
+  const fetchMock = mockFetch(twoTileLayout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await screen.findByTestId("term-2");
+
+  // Tap "move" on tile #2, then tap the target that appears on the other cell.
+  await userEvent.click(screen.getByLabelText("move session 2"));
+  await userEvent.click(screen.getByLabelText("move here"));
+
+  expect(document.querySelectorAll(".tile")[0].querySelector("[data-testid=term-2]")).not.toBeNull();
+  const put = fetchMock.mock.calls.findLast(([, init]) => init?.method === "PUT");
+  expect(JSON.parse(String(put?.[1]?.body)).tiles).toEqual([
+    { serverId: "local", sessionId: 2 },
+    { serverId: "local", sessionId: 1 },
+  ]);
+  // Move mode ends once the move completes.
+  expect(screen.queryByLabelText("move here")).toBeNull();
+});
+
+test("tapping move again cancels move mode", async () => {
+  mockFetch(twoTileLayout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  await userEvent.click(screen.getByLabelText("move session 1"));
+  expect(screen.getByLabelText("move here")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByLabelText("move session 1"));
+  expect(screen.queryByLabelText("move here")).toBeNull();
 });
 
 test("stepper arrows change column count and persist it", async () => {

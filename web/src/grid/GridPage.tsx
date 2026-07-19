@@ -66,6 +66,10 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
   // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
   const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
+  // Tap-to-move for touch devices (native HTML drag has no touch path): the
+  // header ⇅ button arms a move from this tile index, then every other cell
+  // shows a tap target that completes the swap.
+  const [moveFrom, setMoveFrom] = useState<number | null>(null);
   // State (not a per-render listServers() call) so the array identity is
   // stable across re-renders and the events sockets don't churn; refreshed
   // explicitly after reconnect/remove changes the stored list.
@@ -273,16 +277,41 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
       >
         {layout.tiles.map((tile: Tile, i: number) => (
           <div
-            key={i}
+            // Identity keys: swapping tiles moves the DOM nodes instead of
+            // re-rendering each position with a different session, which would
+            // rebuild xterm and reconnect the WebSocket for both tiles.
+            key={tile ? tileKey(tile) : `empty-${i}`}
             className={`tile${tile && tileKey(tile) === maximizedKey ? " tile-maximized" : ""}`}
             draggable={tile !== null}
             onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
-            onDragOver={(e) => e.preventDefault()}
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes("text/tile-index")) e.preventDefault();
+            }}
             onDrop={(e) => {
-              const from = Number(e.dataTransfer.getData("text/tile-index"));
-              if (!Number.isNaN(from) && from !== i) persist((l) => swapTiles(l, from, i));
+              e.preventDefault();
+              // Only our own drags: foreign drops yield "" and Number("")
+              // is 0, which would silently swap with tile zero.
+              const raw = e.dataTransfer.getData("text/tile-index");
+              if (!/^\d+$/.test(raw)) return;
+              const from = Number(raw);
+              if (from === i || from >= layout.tiles.length) return;
+              setMoveFrom(null);
+              persist((l) => swapTiles(l, from, i));
             }}
           >
+            {moveFrom !== null && moveFrom !== i && (
+              <button
+                className="tile-move-target"
+                aria-label="move here"
+                onClick={() => {
+                  const from = moveFrom;
+                  setMoveFrom(null);
+                  persist((l) => (from < l.tiles.length ? swapTiles(l, from, i) : l));
+                }}
+              >
+                ⇅ move here
+              </button>
+            )}
             {tile ? (
               (() => {
                 const server = servers.find((s) => s.id === tile.serverId);
@@ -346,6 +375,14 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                         </a>
                       )}
                       <span className="tile-actions">
+                        <button
+                          aria-label={`move session ${tile.sessionId}`}
+                          title="move tile (tap another cell to swap)"
+                          aria-pressed={moveFrom === i}
+                          onClick={() => setMoveFrom((f) => (f === i ? null : i))}
+                        >
+                          ⇅
+                        </button>
                         <button
                           aria-label={`remove session ${tile.sessionId} from grid`}
                           title="remove from grid"

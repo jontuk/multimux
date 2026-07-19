@@ -453,11 +453,30 @@ a {
 }
 
 .tile {
+  position: relative; /* anchors .tile-move-target */
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   min-height: 0;
   min-width: 0;
+}
+
+/* Tap-to-move (touch): while a move is armed, every other cell is covered by
+   a full-size tap target that completes the swap. */
+.tile-move-target {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
 }
 
 .tile-maximized {
@@ -584,6 +603,12 @@ a {
 .tile-actions button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Armed tap-to-move source. */
+.tile-actions button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--bg);
 }
 
 .tile-body {

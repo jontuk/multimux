@@ -114,19 +114,19 @@ Struck items and reasons are listed at the bottom.
 
 ## P2 — small, cheap fixes; batch opportunistically
 
-- [ ] **[bug] Initialize tmux server options before the first pane.**
+- [x] **[bug] Initialize tmux server options before the first pane.**
   `history-limit` is set before the tmux server exists, so the first pane
   keeps the ~2,000-line default — against the "scrollback is still there"
   promise ([manager.go](internal/tmuxmgr/manager.go#L55)). Pairs naturally
   with the private-socket item (init once at server start, idempotently).
 
-- [ ] **[bug] Key tiles by server/session identity, not array index.**
+- [x] **[bug] Key tiles by server/session identity, not array index.**
   Index keys make swaps rebuild xterm and the WebSocket for the wrong session
   ([GridPage.tsx](web/src/grid/GridPage.tsx#L183)). Also accept only the
   custom drag MIME type with an in-range integer (`Number("") === 0` swaps
   tile zero today).
 
-- [ ] **[usability] Make tile reorder work on touch.** README names tablets
+- [x] **[usability] Make tile reorder work on touch.** README names tablets
   as a target; native HTML drag has no touch path. A simple move/swap
   affordance is enough — no broader a11y/320px program.
 
