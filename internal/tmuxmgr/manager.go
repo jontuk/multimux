@@ -55,9 +55,14 @@ func ExactTarget(name string) string {
 func (m *Manager) CreateSession(name, dir, command string) error {
 	// history-limit must be set globally BEFORE new-session: pane scrollback
 	// capacity is fixed when the pane is created. 50000 lines gives wheel
-	// scrollback real depth (tmux default is 2000).
-	_ = m.run("set-option", "-g", "history-limit", "50000")
-	if err := m.run("new-session", "-d", "-s", name, "-c", dir); err != nil {
+	// scrollback real depth (tmux default is 2000). It is chained with
+	// start-server and new-session in ONE tmux invocation: before the first
+	// session the server doesn't exist (a lone set-option fails), and a server
+	// started with no sessions exits again (exit-empty) before a second
+	// invocation could reach it.
+	if err := m.run("start-server", ";",
+		"set-option", "-g", "history-limit", "50000", ";",
+		"new-session", "-d", "-s", name, "-c", dir); err != nil {
 		return err
 	}
 	target := ExactTarget(name)

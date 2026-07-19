@@ -110,6 +110,24 @@ func TestFailedRespawnKillsCreatedSession(t *testing.T) {
 	}
 }
 
+// The very first CreateSession is the one that starts the tmux server, and
+// pane scrollback capacity is fixed at pane creation — so history-limit must
+// already be set when that first pane appears. Setting it in a separate tmux
+// invocation is silently lost because there is no server to accept it yet.
+func TestFirstPaneGetsFullHistoryLimit(t *testing.T) {
+	m := testManager(t)
+	if err := m.CreateSession(m.SessionName(1), t.TempDir(), ""); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("tmux", m.baseArgs("show-options", "-g", "-v", "history-limit")...).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "50000" {
+		t.Fatalf("history-limit after first create = %s, want 50000 (option was set before the server existed)", got)
+	}
+}
+
 func TestListSessionsNoServer(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
