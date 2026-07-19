@@ -97,7 +97,7 @@ Struck items and reasons are listed at the bottom.
   - Done when kill failure returns an error and preserves the row, and any
     post-create failure kills the just-created tmux session.
 
-- [ ] **[bug] Serialize/coalesce layout persistence so the latest edit wins.**
+- [x] **[bug] Serialize/coalesce layout persistence so the latest edit wins.**
   Every grid action fires an unawaited PUT from captured state; out-of-order
   responses can persist a stale layout
   ([GridPage.tsx](web/src/grid/GridPage.tsx#L56)).

@@ -317,6 +317,51 @@ test("dead session tile shows ended state instead of mounting a terminal", async
   expect(screen.queryByTestId("term-4")).toBeNull();
 });
 
+test("layout persistence keeps one PUT in flight and coalesces to the newest state", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
+  const putBodies: { shape: { rows: number; cols: number } }[] = [];
+  const putResolvers: Array<() => void> = [];
+  let putsInFlight = 0;
+  let maxPutsInFlight = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/api/layout") && method === "PUT") {
+      putBodies.push(JSON.parse(String(init?.body)));
+      putsInFlight++;
+      maxPutsInFlight = Math.max(maxPutsInFlight, putsInFlight);
+      await new Promise<void>((resolve) => putResolvers.push(resolve));
+      putsInFlight--;
+      return new Response("{}");
+    }
+    if (url.includes("/api/layout")) return new Response(JSON.stringify(layout));
+    if (url.includes("/api/sessions")) return new Response(JSON.stringify(sessions));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(dirs));
+    return new Response("[]");
+  });
+
+  render(<GridPage />);
+  const more = await screen.findByLabelText("more columns");
+
+  // Two rapid edits: the first PUT (cols 3) is held open; the second edit must
+  // queue, not fire a concurrent PUT that could land out of order.
+  await userEvent.click(more);
+  await userEvent.click(more);
+  expect(putBodies).toHaveLength(1);
+  expect(putBodies[0].shape).toEqual({ rows: 1, cols: 3 });
+
+  // Releasing the first PUT flushes exactly one follow-up with the newest state.
+  putResolvers.shift()!();
+  await waitFor(() => expect(putBodies).toHaveLength(2));
+  expect(putBodies[1].shape).toEqual({ rows: 1, cols: 4 });
+  expect(maxPutsInFlight).toBe(1);
+
+  putResolvers.shift()!();
+  await waitFor(() => expect(putsInFlight).toBe(0));
+  expect(putBodies).toHaveLength(2);
+});
+
 test("stepper arrows change column count and persist it", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const fetchMock = mockFetch(layout);

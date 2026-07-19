@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { del, getJSON, putJSON } from "../api";
 import { listServers, localServer, type Server } from "../servers";
@@ -70,20 +70,44 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   // reads localStorage and returns a fresh array each call.
   const servers = useMemo(() => listServers(), []);
 
+  // Mirrors `layout` so edits always build on the newest state, not the state
+  // captured when a handler's closure was created.
+  const layoutRef = useRef(layout);
+
   // A maximized tile that leaves the layout (removed, terminated, server-side
   // layout change) must not leave the page stuck fullscreen — or re-maximize
   // if the same session is later re-added.
   const adoptLayout = useCallback((l: Layout) => {
+    layoutRef.current = l;
     setLayout(l);
     setMaximizedKey((k) => (k && !l.tiles.some((t) => t && tileKey(t) === k) ? null : k));
   }, []);
 
+  // At most one layout PUT in flight; edits made during a write coalesce into
+  // `pendingWrite` so the newest layout is always the last one persisted.
+  const pendingWrite = useRef<Layout | null>(null);
+  const writeInFlight = useRef(false);
+  const flushLayout = useCallback(function flush() {
+    if (writeInFlight.current || pendingWrite.current === null) return;
+    const l = pendingWrite.current;
+    pendingWrite.current = null;
+    writeInFlight.current = true;
+    putJSON(localServer(), "/api/layout", l)
+      .catch(() => {})
+      .then(() => {
+        writeInFlight.current = false;
+        flush();
+      });
+  }, []);
+
   const persist = useCallback(
-    (l: Layout) => {
-      adoptLayout(l);
-      putJSON(localServer(), "/api/layout", l).catch(() => {});
+    (update: (prev: Layout) => Layout) => {
+      const next = update(layoutRef.current);
+      adoptLayout(next);
+      pendingWrite.current = next;
+      flushLayout();
     },
-    [adoptLayout],
+    [adoptLayout, flushLayout],
   );
 
   const refreshSessions = useCallback(() => {
@@ -138,11 +162,11 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   );
   function attachSession(server: Server, sessionId: number) {
     if (placed.has(`${server.id}:${sessionId}`)) return;
-    persist(addTile(layout, { serverId: server.id, sessionId }));
+    persist((l) => addTile(l, { serverId: server.id, sessionId }));
   }
 
   function placeSession(server: Server, session: Session) {
-    persist(addTile(layout, { serverId: server.id, sessionId: session.id }));
+    persist((l) => addTile(l, { serverId: server.id, sessionId: session.id }));
     refreshSessions();
   }
 
@@ -153,7 +177,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
     } catch {
       // Session may already be gone; drop the tile either way.
     }
-    persist(setTile(layout, tileIndex, null));
+    persist((l) => setTile(l, tileIndex, null));
     refreshSessions();
   }
 
@@ -183,7 +207,11 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
           ))}
         </div>
       )}
-      <ColumnStepper cols={layout.shape.cols} rows={layout.shape.rows} onChange={(c) => persist(setCols(layout, c))} />
+      <ColumnStepper
+        cols={layout.shape.cols}
+        rows={layout.shape.rows}
+        onChange={(c) => persist((l) => setCols(l, c))}
+      />
     </div>
   );
 
@@ -228,7 +256,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               const from = Number(e.dataTransfer.getData("text/tile-index"));
-              if (!Number.isNaN(from) && from !== i) persist(swapTiles(layout, from, i));
+              if (!Number.isNaN(from) && from !== i) persist((l) => swapTiles(l, from, i));
             }}
           >
             {tile ? (
@@ -245,7 +273,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                           <button
                             aria-label={`remove session ${tile.sessionId} from grid`}
                             title="remove from grid"
-                            onClick={() => persist(setTile(layout, i, null))}
+                            onClick={() => persist((l) => setTile(l, i, null))}
                           >
                             −
                           </button>
@@ -297,7 +325,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                         <button
                           aria-label={`remove session ${tile.sessionId} from grid`}
                           title="remove from grid"
-                          onClick={() => persist(setTile(layout, i, null))}
+                          onClick={() => persist((l) => setTile(l, i, null))}
                         >
                           −
                         </button>
@@ -315,14 +343,14 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                       // Dead sessions must not mount a terminal: the daemon
                       // rejects the attach and the tile would retry forever.
                       <div className="tile-body empty-tile-hint">
-                        session ended <button onClick={() => persist(setTile(layout, i, null))}>dismiss</button>
+                        session ended <button onClick={() => persist((l) => setTile(l, i, null))}>dismiss</button>
                       </div>
                     ) : (
                       <div className="tile-body">
                         <TerminalTile
                           server={server}
                           sessionId={tile.sessionId}
-                          onClose={() => persist(setTile(layout, i, null))}
+                          onClose={() => persist((l) => setTile(l, i, null))}
                         />
                       </div>
                     )}
