@@ -24,14 +24,10 @@ func runAuth(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer st.Close()
-	if err := st.DeleteAllCredentials(); err != nil {
+	if err := st.ResetAuth(); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := st.DeleteAllAuthSessions(); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	fmt.Fprintln(stdout, "credentials wiped — daemon is setup-pending.\nRestart it (or it will notice on next request) and open the setup URL it prints.")
+	fmt.Fprintln(stdout, "credentials wiped — daemon is setup-pending.\nNow restart the daemon and open the setup URL it prints.")
 	return 0
 }

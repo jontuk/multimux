@@ -35,8 +35,13 @@ func TestAuthResetWipes(t *testing.T) {
 	if code := Execute([]string{"auth", "reset", "--yes"}, "dev", fstest.MapFS{}, &out, &errOut); code != 0 {
 		t.Fatalf("code = %d, stderr %s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "setup-pending") {
-		t.Fatalf("output missing guidance: %q", out.String())
+	// Honest guidance: the setup URL is only printed at daemon startup, so a
+	// restart is required; the old text claimed the daemon notices on its own.
+	if !strings.Contains(out.String(), "restart the daemon") {
+		t.Fatalf("output missing restart guidance: %q", out.String())
+	}
+	if strings.Contains(out.String(), "notice on next request") {
+		t.Fatalf("output still claims no restart needed: %q", out.String())
 	}
 
 	st, _ = store.Open(filepath.Join(dir, "multimux.db"))

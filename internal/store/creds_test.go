@@ -62,15 +62,12 @@ func TestAuthSessionLifecycle(t *testing.T) {
 	}
 }
 
-func TestDeleteAll(t *testing.T) {
+func TestResetAuth(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now().UTC()
 	s.AddCredential(Credential{ID: "c1", Name: "a", Data: []byte("{}"), CreatedAt: now, LastUsedAt: now})
 	s.CreateAuthSession(AuthSession{TokenHash: "h", CreatedAt: now, ExpiresAt: now.Add(time.Hour)})
-	if err := s.DeleteAllCredentials(); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DeleteAllAuthSessions(); err != nil {
+	if err := s.ResetAuth(); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := s.CountCredentials(); n != 0 {

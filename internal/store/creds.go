@@ -75,9 +75,22 @@ func (s *Store) CountCredentials() (int, error) {
 	return n, err
 }
 
-func (s *Store) DeleteAllCredentials() error {
-	_, err := s.db.Exec(`DELETE FROM credentials`)
-	return err
+// ResetAuth wipes all credentials and login sessions in one transaction, so a
+// failure partway leaves both tables untouched (never credentials gone but
+// stale sessions still valid).
+func (s *Store) ResetAuth() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM credentials`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM auth_sessions`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CreateAuthSession(a AuthSession) error {
@@ -140,11 +153,6 @@ func (s *Store) ListAuthSessions() ([]AuthSession, error) {
 
 func (s *Store) DeleteAuthSession(tokenHash string) error {
 	_, err := s.db.Exec(`DELETE FROM auth_sessions WHERE token_hash = ?`, tokenHash)
-	return err
-}
-
-func (s *Store) DeleteAllAuthSessions() error {
-	_, err := s.db.Exec(`DELETE FROM auth_sessions`)
 	return err
 }
 
