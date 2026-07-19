@@ -130,19 +130,19 @@ Struck items and reasons are listed at the bottom.
   as a target; native HTML drag has no touch path. A simple move/swap
   affordance is enough — no broader a11y/320px program.
 
-- [ ] **[reliability] Resync state on event-socket reconnect.** The hub drops
+- [x] **[reliability] Resync state on event-socket reconnect.** The hub drops
   messages for slow subscribers and `hello` carries no snapshot, so a
   reconnected tab can stay stale forever
   ([events.go](internal/server/events.go#L57)). Refetch sessions/layout on
   (re)connect; skip sequence-number machinery.
 
-- [ ] **[bug] Make `auth reset` transactional and honest.** Credentials and
+- [x] **[bug] Make `auth reset` transactional and honest.** Credentials and
   sessions are deleted in separate statements, and the success text claims
   the daemon notices without restart when it doesn't
   ([auth.go](cmd/auth.go#L27)). One transaction; accurate "restart the
   daemon" message.
 
-- [ ] **[bug] Refresh the session cookie when the server extends expiry.**
+- [x] **[bug] Refresh the session cookie when the server extends expiry.**
   Sliding DB expiry, fixed 30-day cookie
   ([authapi.go](internal/server/authapi.go#L10)). Re-issue `Set-Cookie` on
   near-expiry authentication.
