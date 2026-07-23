@@ -168,7 +168,7 @@ Struck items and reasons are listed at the bottom.
   ([pki.go](internal/pki/pki.go#L181)). Leaf regeneration is cheap: validate
   the pair, regenerate on any doubt. No fault-injection matrix needed.
 
-- [ ] **[bug] Clear launcher selections while a server switch loads.**
+- [x] **[bug] Clear launcher selections while a server switch loads.**
   Stale tool/directory IDs stay selectable and can launch mismatched IDs on
   the new daemon ([HeaderLauncher.tsx](web/src/grid/HeaderLauncher.tsx#L23)).
   Clear on switch, disable New until fetches for the selected server resolve.

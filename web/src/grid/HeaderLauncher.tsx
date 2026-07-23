@@ -16,12 +16,30 @@ export default function HeaderLauncher({
   const [toolId, setToolId] = useState(0);
   const [dirId, setDirId] = useState(0);
   const [error, setError] = useState("");
+  // `loading` means "this server's tools/dirs are still being fetched";
+  // `busy` means "a launch is in flight".
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const server = servers.find((s) => s.id === serverId);
 
+  // Switching servers must drop the previous daemon's options in the same
+  // render as the switch: tool/dir ids are per-daemon autoincrements, so a
+  // leftover id would launch a different tool on the new daemon.
+  function selectServer(id: string) {
+    setServerId(id);
+    setTools([]);
+    setDirs([]);
+    setToolId(0);
+    setDirId(0);
+    setError("");
+    setLoading(true);
+  }
+
   useEffect(() => {
     if (!server) return;
+    // `loading` is already true here: it starts true and selectServer() re-arms
+    // it in the same render as the switch.
     let stale = false;
     Promise.all([getJSON<Tool[]>(server, "/api/tools"), getJSON<Dir[]>(server, "/api/dirs")])
       .then(([t, d]) => {
@@ -31,12 +49,14 @@ export default function HeaderLauncher({
         setToolId(t[0]?.id ?? 0);
         setDirId(d[0]?.id ?? 0);
         setError("");
+        setLoading(false);
       })
       .catch(() => {
         if (stale) return;
         setTools([]);
         setDirs([]);
         setError(`can't reach ${server.name}`);
+        setLoading(false);
       });
     return () => {
       stale = true;
@@ -46,10 +66,13 @@ export default function HeaderLauncher({
 
   if (!server) return null;
 
-  const unconfigured = !error && (tools.length === 0 || dirs.length === 0);
+  // Empty lists only mean "nothing configured" once the fetch has resolved;
+  // mid-load they are just the cleared state.
+  const unconfigured = !loading && !error && (tools.length === 0 || dirs.length === 0);
+  const canLaunch = !loading && !busy && !error && toolId > 0 && dirId > 0;
 
   async function launch() {
-    if (!server) return;
+    if (!server || !canLaunch) return;
     setBusy(true);
     setError("");
     try {
@@ -65,7 +88,7 @@ export default function HeaderLauncher({
   return (
     <div className="header-launcher">
       {servers.length > 1 && (
-        <select aria-label="server" value={serverId} onChange={(e) => setServerId(e.target.value)}>
+        <select aria-label="server" value={serverId} onChange={(e) => selectServer(e.target.value)}>
           {servers.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -73,7 +96,9 @@ export default function HeaderLauncher({
           ))}
         </select>
       )}
-      {unconfigured ? (
+      {loading ? (
+        <span className="launcher-hint">loading…</span>
+      ) : unconfigured ? (
         <span className="launcher-hint">
           add {tools.length === 0 ? "tools" : "dirs"} in <a href="#/settings">Settings</a>
         </span>
@@ -95,12 +120,7 @@ export default function HeaderLauncher({
           </select>
         </>
       )}
-      <button
-        className="launch"
-        disabled={busy || unconfigured || !!error}
-        title="launch a new session"
-        onClick={launch}
-      >
+      <button className="launch" disabled={!canLaunch} title="launch a new session" onClick={launch}>
         + New
       </button>
       {error && <span className="launcher-error">{error}</span>}
