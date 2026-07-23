@@ -1,0 +1,49 @@
+name: audit
+on:
+  # Weekly rather than per-push: advisory databases change on their own
+  # schedule, not ours, so a new finding usually lands with no code change.
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      # Fails the job. govulncheck does call-graph reachability analysis, so it
+      # only reports vulnerabilities this binary can actually execute — a
+      # finding is always actionable.
+      # No pnpm build needed: web/dist/.gitkeep is committed, so the
+      # //go:embed in main.go resolves in a bare checkout.
+      - name: govulncheck
+        run: govulncheck ./...
+
+  pnpm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      # Fails the job, but only on high/critical. --prod narrows the tree to
+      # what actually ships in the browser bundle, so a finding there is
+      # presumptively relevant; capping at high keeps low/moderate advisory
+      # churn in build tooling from turning the job red every week, which is
+      # the fastest way to get a scheduled job ignored.
+      - name: pnpm audit
+        run: pnpm audit --prod --audit-level high
+        working-directory: web

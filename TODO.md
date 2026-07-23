@@ -186,7 +186,7 @@ Struck items and reasons are listed at the bottom.
   live-terminal app ([sw.js](web/public/sw.js#L1)). Decision: remove rather
   than build out a tested offline shell.
 
-- [ ] **[engineering] Make `verify.sh`/CI build the real binary.** The Go
+- [x] **[engineering] Make `verify.sh`/CI build the real binary.** The Go
   binary with embedded assets is never built in verification
   ([verify.sh](verify.sh#L5)). Build it after `pnpm build`, smoke-test `/`,
   and add a scheduled CI `govulncheck` + `pnpm audit`.
