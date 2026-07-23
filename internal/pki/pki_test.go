@@ -1,6 +1,10 @@
 package pki
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -72,6 +76,54 @@ func TestEnsureIsIdempotent(t *testing.T) {
 	after := loadCert(t, p.LeafCertPath()).SerialNumber
 	if before.Cmp(after) != 0 {
 		t.Fatal("leaf rotated with no reason")
+	}
+}
+
+func TestEnsureRepairsMismatchedLeafKey(t *testing.T) {
+	p := New(t.TempDir())
+	hosts := []string{"mybox", "mybox.local"}
+	if _, err := p.Ensure(hosts); err != nil {
+		t.Fatal(err)
+	}
+	before := loadCert(t, p.LeafCertPath()).SerialNumber
+
+	// A crash between writePair's two renames leaves the new cert beside the
+	// previous generation's key: still valid, chaining and unexpired, so only a
+	// pairing check can spot it.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	if err := os.WriteFile(p.LeafKeyPath(), stray, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tls.LoadX509KeyPair(p.LeafCertPath(), p.LeafKeyPath()); err == nil {
+		t.Fatal("test setup did not produce a mismatched pair")
+	}
+
+	if regen, err := p.Ensure(hosts); err != nil || regen {
+		t.Fatalf("repairing Ensure: regen=%v err=%v", regen, err)
+	}
+	if _, err := tls.LoadX509KeyPair(p.LeafCertPath(), p.LeafKeyPath()); err != nil {
+		t.Fatalf("leaf pair still mismatched after Ensure: %v", err)
+	}
+	if after := loadCert(t, p.LeafCertPath()).SerialNumber; before.Cmp(after) == 0 {
+		t.Fatal("leaf was not regenerated")
+	}
+
+	// The healthy pair that repair just produced must survive untouched;
+	// rotating on every start would churn certs (and user trust prompts).
+	steady := loadCert(t, p.LeafCertPath()).SerialNumber
+	if _, err := p.Ensure(hosts); err != nil {
+		t.Fatal(err)
+	}
+	if now := loadCert(t, p.LeafCertPath()).SerialNumber; steady.Cmp(now) != 0 {
+		t.Fatal("healthy leaf rotated with no reason")
 	}
 }
 

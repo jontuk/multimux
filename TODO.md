@@ -163,7 +163,7 @@ Struck items and reasons are listed at the bottom.
   commits; a newer binary's DB opens silently
   ([store.go](internal/store/store.go#L83)). Both are a few lines.
 
-- [ ] **[reliability] Self-heal a mismatched TLS leaf cert/key pair.**
+- [x] **[reliability] Self-heal a mismatched TLS leaf cert/key pair.**
   Separate renames can crash into a mismatched pair `Ensure` never rechecks
   ([pki.go](internal/pki/pki.go#L181)). Leaf regeneration is cheap: validate
   the pair, regenerate on any doubt. No fault-injection matrix needed.

@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -140,6 +141,15 @@ func (p *PKI) leafNeedsRotation(hostnames []string) bool {
 	if !slices.Equal(cert.DNSNames, hostnames) {
 		return true
 	}
+	// The cert and key land on disk as two separate renames, so a crash in
+	// between leaves generation N's cert next to generation N-1's key: valid,
+	// chaining and unexpired, but unusable. Re-checking the pairing here is what
+	// heals it. tls.LoadX509KeyPair is the same call the serving path
+	// (certReloader.get) makes, so anything it rejects — missing key, corrupt
+	// PEM, wrong key type, mismatched public key — is worth a fresh leaf.
+	if _, err := tls.LoadX509KeyPair(p.LeafCertPath(), p.LeafKeyPath()); err != nil {
+		return true
+	}
 	// Verify the leaf still chains to the current CA (covers CA regeneration).
 	caPEM, err := os.ReadFile(p.CACertPath())
 	if err != nil {
@@ -186,8 +196,10 @@ func (p *PKI) writePair(certPath, keyPath string, certDER []byte, key *ecdsa.Pri
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	// Atomic write via temp file + rename prevents a crash from leaving a
-	// mismatched cert/key pair on disk.
+	// Temp file + rename keeps each file individually whole, but the pair is
+	// still two renames: a crash in between leaves a mismatched cert/key on
+	// disk. leafNeedsRotation re-checks the pairing on the next Ensure and
+	// regenerates, which is what makes that window recoverable.
 	certDir := filepath.Dir(certPath)
 	certTemp, err := os.CreateTemp(certDir, filepath.Base(certPath)+".*")
 	if err != nil {
