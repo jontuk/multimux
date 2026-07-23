@@ -197,7 +197,17 @@ Struck items and reasons are listed at the bottom.
   prominent re-trust instruction, never issue a leaf outliving its issuer.
 
 - [ ] **[docs] Replace the README screenshot placeholder** with a real capture
-  of the grid before the next release.
+  of the grid before the next release. *Blocked on a capture from a real
+  install — everything else is prepared.* Save the PNG as
+  `docs/screenshot.png` (grid route, a few live tiles, dark theme, ~1600px
+  wide) and swap the blockquote at [README.md](README.md#L13) for:
+
+  ```markdown
+  ![The multimux grid: four live terminal tiles in one browser window](docs/screenshot.png)
+  ```
+
+  The reference is deliberately not committed yet: pointing at a missing file
+  renders as a broken image on the repo's front page.
 
 ## Struck (won't do) — conflicts with positioning
 
