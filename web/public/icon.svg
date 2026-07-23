@@ -1,7 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#111111" />
-  <g fill="none" stroke="#4ade80" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M112 168 l64 56 -64 56" />
-    <line x1="216" y1="304" x2="320" y2="304" />
+  <rect width="512" height="512" rx="96" fill="#18142d" />
+  <g stroke="#ffffff" stroke-width="1" opacity="0.05">
+    <path d="M128 0V512 M256 0V512 M384 0V512 M0 128H512 M0 256H512 M0 384H512" />
   </g>
+  <text x="49%" y="48%" dominant-baseline="central" text-anchor="middle"
+        font-family="Menlo, 'DejaVu Sans Mono', monospace" font-weight="700"
+        font-size="200" fill="#e5e8ed" letter-spacing="-6">~mm</text>
 </svg>
