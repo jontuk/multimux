@@ -152,7 +152,7 @@ Struck items and reasons are listed at the bottom.
   commands as root ([trust.go](internal/pki/trust.go#L17)). Marginal threat
   (attacker already controls your env), trivial fix.
 
-- [ ] **[reliability] Persist serve configuration into the service unit.**
+- [x] **[reliability] Persist serve configuration into the service unit.**
   Generated units bake in only PATH ([svc.go](internal/svc/svc.go#L42)); a
   custom `MULTIMUX_DATA_DIR` is silently lost under the service, which
   resolves to a fresh data dir, new CA, and setup-pending. Also propagate

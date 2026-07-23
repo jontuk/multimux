@@ -87,7 +87,11 @@ Privacy & Security → **Open Anyway**. (Binaries fetched by the install script 
 
 The daemon listens on **port 8686** by default (configurable) and stores its data
 under `~/.local/share/multimux` (override with the `MULTIMUX_DATA_DIR`
-environment variable).
+environment variable). If you use a custom data directory, run
+`multimux service install` from a shell where `MULTIMUX_DATA_DIR` is exported —
+install snapshots it into the service unit, so changing it later means
+re-running `service install`. See
+[docs/install.md](docs/install.md#6-service-management).
 
 ### If the setup URL doesn't resolve
 

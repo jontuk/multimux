@@ -48,7 +48,10 @@ multimux serve
 
 Data lives under `~/.local/share/multimux` by default (SQLite database, PKI
 material, logs). Override the location with the `MULTIMUX_DATA_DIR` environment
-variable if you need to.
+variable if you need to. Export it in the same shell you later run
+[`multimux service install`](#6-service-management) from — install bakes the
+value into the unit, and the service would otherwise fall back to the default
+directory (a fresh database and CA).
 
 The daemon prints a setup URL containing a one-time code:
 
@@ -196,6 +199,23 @@ multimux service uninstall
 The service runs `multimux serve` with no extra flags. To change the port or add
 extra SANs, edit them in the daemon's **Settings** page in the UI (they are stored
 in SQLite), or run `serve` manually with flags.
+
+**Environment capture.** `service install` copies `MULTIMUX_DATA_DIR` and
+`MULTIMUX_HOSTNAME` out of the installing shell and writes them into the unit
+(`Environment=` on Linux, `EnvironmentVariables` on macOS), because launchd and
+systemd start the daemon with none of your shell's environment. Without this a
+custom data directory is silently lost and the service comes up on the default
+one — a fresh database, a fresh CA, and a setup-pending daemon. Two
+consequences:
+
+- Run `service install` from a shell where those variables are set as you want
+  them (`export MULTIMUX_DATA_DIR=... && multimux service install`).
+- The captured values are a **snapshot**. Changing the variable in your shell
+  afterwards does not affect the service — re-run `multimux service install` to
+  rewrite the unit.
+
+Variables that are unset at install time are not written at all, so a default
+install keeps resolving them at runtime.
 
 ## 7. Upgrading
 
