@@ -109,5 +109,6 @@ case ":${PATH}:" in
 esac
 
 echo
-echo "Next:  multimux service install   # start the background daemon"
-echo "       multimux ca trust          # trust the local CA (before setup)"
+echo "Next:  multimux serve --hostname mux.example.com   # initial setup: config host and register passkey"
+echo "       multimux ca trust                           # trust the local CA (before opening the setup URL)"
+echo "       multimux service install                    # run as a background daemon"
