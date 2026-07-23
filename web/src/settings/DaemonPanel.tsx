@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, getJSON } from "../api";
 import { localServer } from "../servers";
 
-type Settings = { hostname: string; extraSans: string; port: string };
+type Settings = { hostname: string; extraSans: string; port: string; version: string };
 type SettingsResponse = {
   ok?: boolean;
   rpWarning?: boolean;
@@ -89,6 +89,10 @@ export default function DaemonPanel() {
         </div>
       )}
       <div className="settings-fields">
+        <div className="settings-readonly">
+          <span>Version</span>
+          <span className="daemon-version">{settings.version || "unknown"}</span>
+        </div>
         <label>
           Hostname
           <input value={hostname} onChange={(e) => setHostname(e.target.value)} disabled={loading} />

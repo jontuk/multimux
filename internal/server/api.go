@@ -133,7 +133,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	host, _ := s.cfg.Store.GetSetting("hostname")
 	sans, _ := s.cfg.Store.GetSetting("extra_sans")
 	port, _ := s.cfg.Store.GetSetting("port")
-	writeJSON(w, 200, map[string]string{"hostname": host, "extraSans": sans, "port": port})
+	writeJSON(w, 200, map[string]string{"hostname": host, "extraSans": sans, "port": port, "version": s.cfg.Version})
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {

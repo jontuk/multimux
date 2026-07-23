@@ -170,6 +170,18 @@ test("daemon panel surfaces validation errors", async () => {
   fetchMock.mockRestore();
 });
 
+test("daemon panel shows the daemon version", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ hostname: "host.local", extraSans: "", port: "8686", version: "1.4.0" })),
+    );
+
+  render(<DaemonPanel />);
+  expect(await screen.findByText("1.4.0")).toBeInTheDocument();
+  fetchMock.mockRestore();
+});
+
 test("daemon panel sends port as a string", async () => {
   const fetchMock = vi
     .spyOn(globalThis, "fetch")

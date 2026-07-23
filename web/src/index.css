@@ -845,6 +845,20 @@ a {
   color: var(--muted);
 }
 
+.settings-readonly {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.settings-readonly .daemon-version {
+  color: var(--ink);
+}
+
 /* buttons */
 
 .settings-page button {
