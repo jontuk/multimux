@@ -8,8 +8,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,6 +72,83 @@ func TestDescribeCA(t *testing.T) {
 
 	if _, err := describeCA(filepath.Join(dir, "nope.pem")); err == nil {
 		t.Fatal("describeCA accepted a missing file")
+	}
+}
+
+func TestTrustCA(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.pem")
+	writeTestCA(t, caPath, true, []string{"mux.example.com"})
+
+	t.Run("success installs and reports", func(t *testing.T) {
+		var gotCmd *exec.Cmd
+		orig := runTrustCmd
+		runTrustCmd = func(c *exec.Cmd) error { gotCmd = c; return nil }
+		defer func() { runTrustCmd = orig }()
+
+		var out, errOut bytes.Buffer
+		if err := trustCA(caPath, &out, &errOut); err != nil {
+			t.Fatalf("trustCA err = %v", err)
+		}
+		if gotCmd == nil {
+			t.Fatal("runTrustCmd was not called")
+		}
+		if !strings.Contains(out.String(), "mux.example.com") {
+			t.Fatalf("stdout missing name constraint: %q", out.String())
+		}
+		if !strings.Contains(out.String(), "CA installed into OS trust store") {
+			t.Fatalf("stdout missing install confirmation: %q", out.String())
+		}
+	})
+
+	t.Run("trust command failure is wrapped", func(t *testing.T) {
+		orig := runTrustCmd
+		runTrustCmd = func(c *exec.Cmd) error { return errors.New("boom") }
+		defer func() { runTrustCmd = orig }()
+
+		var out, errOut bytes.Buffer
+		err := trustCA(caPath, &out, &errOut)
+		if err == nil || !strings.Contains(err.Error(), "trust install failed") {
+			t.Fatalf("err = %v, want wrapped trust-install failure", err)
+		}
+	})
+
+	t.Run("bad CA fails before running command", func(t *testing.T) {
+		called := false
+		orig := runTrustCmd
+		runTrustCmd = func(c *exec.Cmd) error { called = true; return nil }
+		defer func() { runTrustCmd = orig }()
+
+		var out, errOut bytes.Buffer
+		if err := trustCA(filepath.Join(dir, "nope.pem"), &out, &errOut); err == nil {
+			t.Fatal("trustCA accepted a missing CA file")
+		}
+		if called {
+			t.Fatal("runTrustCmd ran despite describeCA failure")
+		}
+	})
+}
+
+// TestCATrustInstalls exercises the `ca trust` command end-to-end with the OS
+// trust step stubbed, covering the runCA -> trustCA wiring.
+func TestCATrustInstalls(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MULTIMUX_DATA_DIR", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "pki"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestCA(t, filepath.Join(dir, "pki", "ca.pem"), true, []string{"mux.example.com"})
+
+	orig := runTrustCmd
+	runTrustCmd = func(c *exec.Cmd) error { return nil }
+	defer func() { runTrustCmd = orig }()
+
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"ca", "trust"}, "dev", fstest.MapFS{}, &out, &errOut); code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "CA installed into OS trust store") {
+		t.Fatalf("stdout missing install confirmation: %q", out.String())
 	}
 }
 

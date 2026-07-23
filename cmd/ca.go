@@ -102,25 +102,36 @@ func runCA(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	desc, err := describeCA(caPath)
-	if err != nil {
+	if err := trustCA(caPath, stdout, stderr); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	return 0
+}
+
+// runTrustCmd runs the OS trust-install command. It is a package var so tests
+// can stub it and avoid mutating the real trust store.
+var runTrustCmd = func(c *exec.Cmd) error { return c.Run() }
+
+// trustCA prints the CA's name constraints, then installs it into the OS trust
+// store. Shared by `ca trust` and `serve --trust-ca`.
+func trustCA(caPath string, stdout, stderr io.Writer) error {
+	desc, err := describeCA(caPath)
+	if err != nil {
+		return err
 	}
 	fmt.Fprint(stdout, desc)
 
 	c, err := pki.TrustCommand(runtime.GOOS, caPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		return err
 	}
 	c.Stdout, c.Stderr = stdout, stderr
-	if err := c.Run(); err != nil {
-		fmt.Fprintf(stderr, "trust install failed: %v\n", err)
-		return 1
+	if err := runTrustCmd(c); err != nil {
+		return fmt.Errorf("trust install failed: %w", err)
 	}
 	fmt.Fprintln(stdout, "CA installed into OS trust store")
-	return 0
+	return nil
 }
 
 // describeCA validates that path holds a CA certificate and returns a short
