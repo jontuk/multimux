@@ -181,7 +181,7 @@ Struck items and reasons are listed at the bottom.
   [DaemonPanel.tsx](web/src/settings/DaemonPanel.tsx#L16)). Incremental:
   typed API error, then distinguish unreachable/401/5xx/empty per screen.
 
-- [ ] **[engineering] Remove the service worker and any offline claim.**
+- [x] **[engineering] Remove the service worker and any offline claim.**
   It precaches nothing and can't deliver a useful offline experience for a
   live-terminal app ([sw.js](web/public/sw.js#L1)). Decision: remove rather
   than build out a tested offline shell.

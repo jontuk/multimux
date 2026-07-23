@@ -147,6 +147,10 @@ to print a fresh one.)
 multimux is a Progressive Web App: install it from your browser and it runs in
 its own window with no address bar, like a native app.
 
+Installing changes the window, not the connection — the app has no offline mode.
+Terminals are live tmux sessions on the daemon, so the installed app needs the
+daemon reachable exactly like the browser tab does.
+
 In **Chrome** (desktop), open the daemon URL, then click the install icon in the
 address bar — or **⋮ → Cast, save, and share → Install page as app…** — and
 confirm **Install**.
