@@ -147,7 +147,7 @@ Struck items and reasons are listed at the bottom.
   ([authapi.go](internal/server/authapi.go#L10)). Re-issue `Set-Cookie` on
   near-expiry authentication.
 
-- [ ] **[security] Replace `sudo sh -c` in Linux CA trust with fixed argv.**
+- [x] **[security] Replace `sudo sh -c` in Linux CA trust with fixed argv.**
   Go `%q` is not POSIX quoting; a hostile `MULTIMUX_DATA_DIR` can run
   commands as root ([trust.go](internal/pki/trust.go#L17)). Marginal threat
   (attacker already controls your env), trivial fix.

@@ -109,7 +109,7 @@ func runCA(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runTrustCmd runs the OS trust-install command. It is a package var so tests
+// runTrustCmd runs one OS trust-install command. It is a package var so tests
 // can stub it and avoid mutating the real trust store.
 var runTrustCmd = func(c *exec.Cmd) error { return c.Run() }
 
@@ -122,13 +122,16 @@ func trustCA(caPath string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprint(stdout, desc)
 
-	c, err := pki.TrustCommand(runtime.GOOS, caPath)
+	cmds, err := pki.TrustCommands(runtime.GOOS, caPath)
 	if err != nil {
 		return err
 	}
-	c.Stdout, c.Stderr = stdout, stderr
-	if err := runTrustCmd(c); err != nil {
-		return fmt.Errorf("trust install failed: %w", err)
+	for _, c := range cmds {
+		c.Stdout, c.Stderr = stdout, stderr
+		if err := runTrustCmd(c); err != nil {
+			// Name the step that failed: on Linux the install is two commands.
+			return fmt.Errorf("trust install failed (%s): %w", strings.Join(c.Args, " "), err)
+		}
 	}
 	fmt.Fprintln(stdout, "CA installed into OS trust store")
 	return nil
