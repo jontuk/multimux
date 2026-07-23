@@ -85,15 +85,40 @@ func migrate(db *sql.DB) error {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
 		return err
 	}
+	if v > len(migrations) {
+		return fmt.Errorf(
+			"database schema version %d is newer than this binary understands (%d): "+
+				"it was written by a newer multimux — upgrade multimux to open it",
+			v, len(migrations))
+	}
 	for i := v; i < len(migrations); i++ {
-		if _, err := db.Exec(migrations[i]); err != nil {
+		if err := applyMigration(db, i); err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
-		}
-		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
-			return err
 		}
 	}
 	return nil
+}
+
+// applyMigration runs migrations[i] and the matching user_version bump in one
+// transaction, so a failure or crash leaves the database at the previous
+// version with none of the new schema. SQLite treats PRAGMA user_version as
+// ordinary page-one data, so it rolls back with the enclosing transaction.
+func applyMigration(db *sql.DB, i int) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Each entry may hold several statements; the driver executes them all.
+	if _, err := tx.Exec(migrations[i]); err != nil {
+		return err
+	}
+	// PRAGMA rejects bind parameters ("near \"?\": syntax error"), so the
+	// version is interpolated. It is a loop index, never user input.
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Close() error { return s.db.Close() }

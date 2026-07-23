@@ -158,7 +158,7 @@ Struck items and reasons are listed at the bottom.
   resolves to a fresh data dir, new CA, and setup-pending. Also propagate
   uninstall stop failures instead of ignoring them.
 
-- [ ] **[reliability] Commit each schema migration atomically and reject
+- [x] **[reliability] Commit each schema migration atomically and reject
   future schemas.** Migration body and `PRAGMA user_version` are separate
   commits; a newer binary's DB opens silently
   ([store.go](internal/store/store.go#L83)). Both are a few lines.
