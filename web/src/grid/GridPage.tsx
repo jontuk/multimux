@@ -66,6 +66,9 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
   // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
   const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
+  // Ephemeral: a just-launched tile whose terminal should grab keyboard focus
+  // so the user can type immediately. Only the freshly-mounted tile reads it.
+  const [focusKey, setFocusKey] = useState<string | null>(null);
   // Tap-to-move for touch devices (native HTML drag has no touch path): the
   // header ⇅ button arms a move from this tile index, then every other cell
   // shows a tap target that completes the swap.
@@ -179,6 +182,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
 
   function placeSession(server: Server, session: Session) {
     persist((l) => addTile(l, { serverId: server.id, sessionId: session.id }));
+    setFocusKey(`${server.id}:${session.id}`);
     refreshSessions();
   }
 
@@ -413,6 +417,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
                         <TerminalTile
                           server={server}
                           sessionId={tile.sessionId}
+                          autoFocus={tileKey(tile) === focusKey}
                           onClose={() => persist((l) => setTile(l, i, null))}
                         />
                       </div>

@@ -8,7 +8,7 @@ import type { Server } from "../servers";
 import type { Session } from "../grid/types";
 import { encodeResize, parseServerText } from "./protocol";
 
-type Props = { server: Server; sessionId: number; onClose: () => void };
+type Props = { server: Server; sessionId: number; onClose: () => void; autoFocus?: boolean };
 // "offline" retries automatically; "exited", "missing", and "auth" are
 // terminal — the loop stops and the overlay offers dismiss/reconnect.
 type ConnState = "connecting" | "open" | "offline" | "exited" | "missing" | "auth";
@@ -29,8 +29,14 @@ async function classifyClose(server: Server, sessionId: number): Promise<"retry"
   }
 }
 
-export default function TerminalTile({ server, sessionId, onClose }: Props) {
+export default function TerminalTile({ server, sessionId, onClose, autoFocus }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Fire the initial focus once; reconnects (retryNonce/url) re-run the effect
+  // but must not steal focus back from wherever the user has since moved.
+  const didAutoFocus = useRef(false);
+  // Capture the mount-time value so autoFocus isn't an effect dep — only the
+  // initial focus matters, and a later prop flip must not reconnect the term.
+  const autoFocusRef = useRef(autoFocus);
   const [state, setState] = useState<ConnState>("connecting");
   // Bumped by the auth overlay's reconnect button to restart the effect.
   const [retryNonce, setRetryNonce] = useState(0);
@@ -55,6 +61,10 @@ export default function TerminalTile({ server, sessionId, onClose }: Props) {
     term.loadAddon(fit);
     term.loadAddon(new ClipboardAddon()); // OSC 52: tmux copy-mode yank → system clipboard
     term.open(containerRef.current!);
+    if (autoFocusRef.current && !didAutoFocus.current) {
+      didAutoFocus.current = true;
+      term.focus();
+    }
     const encoder = new TextEncoder();
 
     let ws: WebSocket | null = null;
