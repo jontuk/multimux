@@ -233,7 +233,9 @@ the binary. To upgrade:
    - Linux: `systemctl --user restart multimux`.
 
 Your data directory, passkeys, and CA are untouched by an upgrade. If the CA's
-hostname set has changed you will be told to re-run `multimux ca trust`.
+hostname set has changed — or the CA is within 30 days of its 10-year expiry, in
+which case it is renewed automatically — the daemon prints a warning telling you
+to re-run `multimux ca trust`.
 
 **Linux, units installed before `KillMode=process` was added:** older units kill
 the tmux server (and every session in it) when the service stops or restarts.

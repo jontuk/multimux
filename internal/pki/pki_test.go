@@ -36,8 +36,8 @@ func TestEnsureCreatesConstrainedCAAndLeaf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if regen {
-		t.Fatal("first Ensure should not report regeneration")
+	if regen != CARegenNone {
+		t.Fatalf("first Ensure should not report regeneration, got %v", regen)
 	}
 
 	ca := loadCert(t, p.CACertPath())
@@ -70,7 +70,7 @@ func TestEnsureIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := loadCert(t, p.LeafCertPath()).SerialNumber
-	if regen, err := p.Ensure(hosts); err != nil || regen {
+	if regen, err := p.Ensure(hosts); err != nil || regen != CARegenNone {
 		t.Fatalf("second Ensure: regen=%v err=%v", regen, err)
 	}
 	after := loadCert(t, p.LeafCertPath()).SerialNumber
@@ -106,7 +106,7 @@ func TestEnsureRepairsMismatchedLeafKey(t *testing.T) {
 		t.Fatal("test setup did not produce a mismatched pair")
 	}
 
-	if regen, err := p.Ensure(hosts); err != nil || regen {
+	if regen, err := p.Ensure(hosts); err != nil || regen != CARegenNone {
 		t.Fatalf("repairing Ensure: regen=%v err=%v", regen, err)
 	}
 	if _, err := tls.LoadX509KeyPair(p.LeafCertPath(), p.LeafKeyPath()); err != nil {
@@ -127,6 +127,125 @@ func TestEnsureRepairsMismatchedLeafKey(t *testing.T) {
 	}
 }
 
+// withCAAged runs Ensure with the clock wound back by age, so the CA it writes
+// is that much closer to its NotAfter by the time the test's real clock reads it.
+func withCAAged(t *testing.T, p *PKI, hosts []string, age time.Duration) {
+	t.Helper()
+	old := now
+	now = func() time.Time { return time.Now().Add(-age) }
+	defer func() { now = old }()
+	if _, err := p.Ensure(hosts); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureRegeneratesExpiredCA(t *testing.T) {
+	p := New(t.TempDir())
+	hosts := []string{"mybox", "mybox.local"}
+	withCAAged(t, p, hosts, caValidity+24*time.Hour) // CA expired yesterday
+	oldCA := loadCert(t, p.CACertPath())
+	oldLeaf := loadCert(t, p.LeafCertPath()).SerialNumber
+	if oldCA.NotAfter.After(time.Now()) {
+		t.Fatalf("test setup did not produce an expired CA: NotAfter=%v", oldCA.NotAfter)
+	}
+
+	regen, err := p.Ensure(hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen != CARegenExpiring {
+		t.Fatalf("regen = %v, want CARegenExpiring", regen)
+	}
+	ca := loadCert(t, p.CACertPath())
+	if ca.NotAfter.Before(time.Now().AddDate(9, 0, 0)) {
+		t.Fatalf("replacement CA validity too short: %v", ca.NotAfter)
+	}
+	// The leaf must follow the new CA, or TLS breaks with an unverifiable chain.
+	leaf := loadCert(t, p.LeafCertPath())
+	if leaf.SerialNumber.Cmp(oldLeaf) == 0 {
+		t.Fatal("leaf was not reissued")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "mybox.local"}); err != nil {
+		t.Fatalf("leaf does not chain to the regenerated CA: %v", err)
+	}
+	if _, err := tls.LoadX509KeyPair(p.LeafCertPath(), p.LeafKeyPath()); err != nil {
+		t.Fatalf("leaf pair unusable: %v", err)
+	}
+}
+
+func TestEnsureRenewsCAInsideRenewalWindow(t *testing.T) {
+	p := New(t.TempDir())
+	hosts := []string{"mybox"}
+	// Still valid, but only just: inside caRenewUnder of expiry.
+	withCAAged(t, p, hosts, caValidity-caRenewUnder/2)
+	if before := loadCert(t, p.CACertPath()); !before.NotAfter.After(time.Now()) {
+		t.Fatalf("test setup expired the CA outright: NotAfter=%v", before.NotAfter)
+	}
+
+	regen, err := p.Ensure(hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen != CARegenExpiring {
+		t.Fatalf("regen = %v, want CARegenExpiring", regen)
+	}
+	if ca := loadCert(t, p.CACertPath()); ca.NotAfter.Before(time.Now().AddDate(9, 0, 0)) {
+		t.Fatalf("CA was not renewed: %v", ca.NotAfter)
+	}
+}
+
+func TestEnsureKeepsHealthyCA(t *testing.T) {
+	p := New(t.TempDir())
+	hosts := []string{"mybox"}
+	// Mid-life: well past creation, well clear of the renewal window. Renewing
+	// here would churn the user's trust store on every start.
+	withCAAged(t, p, hosts, caValidity/2)
+	before := loadCert(t, p.CACertPath()).SerialNumber
+
+	regen, err := p.Ensure(hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen != CARegenNone {
+		t.Fatalf("regen = %v, want CARegenNone", regen)
+	}
+	if after := loadCert(t, p.CACertPath()).SerialNumber; before.Cmp(after) != 0 {
+		t.Fatal("healthy CA regenerated with no reason")
+	}
+}
+
+func TestLeafNeverOutlivesCA(t *testing.T) {
+	p := New(t.TempDir())
+	hosts := []string{"mybox"}
+	// CA closer to expiry than a full leaf lifetime, but not yet due for
+	// renewal, so the leaf must be clamped to the CA's NotAfter.
+	withCAAged(t, p, hosts, caValidity-leafValidity/2)
+	ca := loadCert(t, p.CACertPath())
+
+	if _, err := p.Ensure(hosts); err != nil {
+		t.Fatal(err)
+	}
+	leaf := loadCert(t, p.LeafCertPath())
+	if leaf.NotAfter.After(ca.NotAfter) {
+		t.Fatalf("leaf outlives its issuer: leaf=%v ca=%v", leaf.NotAfter, ca.NotAfter)
+	}
+	if !leaf.NotAfter.Equal(ca.NotAfter) {
+		t.Fatalf("leaf NotAfter = %v, want clamp to CA NotAfter %v", leaf.NotAfter, ca.NotAfter)
+	}
+
+	// A clamped leaf must not read as due for rotation, or the daily check
+	// would rewrite it forever.
+	steady := leaf.SerialNumber
+	if _, err := p.Ensure(hosts); err != nil {
+		t.Fatal(err)
+	}
+	if after := loadCert(t, p.LeafCertPath()).SerialNumber; steady.Cmp(after) != 0 {
+		t.Fatal("clamped leaf rotated again: rotation loop")
+	}
+}
+
 func TestEnsureRotatesLeafOnSANChange(t *testing.T) {
 	p := New(t.TempDir())
 	if _, err := p.Ensure([]string{"mybox"}); err != nil {
@@ -137,8 +256,8 @@ func TestEnsureRotatesLeafOnSANChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !regen {
-		t.Fatal("expected CA regeneration to be reported")
+	if regen != CARegenHostnames {
+		t.Fatalf("regen = %v, want CARegenHostnames", regen)
 	}
 	ca := loadCert(t, p.CACertPath())
 	if len(ca.PermittedDNSDomains) != 2 {

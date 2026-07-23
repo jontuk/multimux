@@ -182,6 +182,14 @@ func setupBanner(display []string, code string) string {
 	return b.String()
 }
 
+// caRegenBanner renders the re-trust warning shown whenever the local CA is
+// replaced. It names the cause, because "hostname set changed" and "the old CA
+// expired" call for the same fix but mean very different things.
+func caRegenBanner(reason pki.CARegen) string {
+	return fmt.Sprintf("\n!! WARNING: local CA regenerated (%s)\n"+
+		"!! Browsers will refuse this daemon until you re-run `multimux ca trust`\n\n", reason)
+}
+
 // serveUsage documents `multimux serve` for `multimux help serve`.
 const serveUsage = `usage: multimux serve [flags]
 
@@ -340,19 +348,28 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if regen {
-		fmt.Fprintln(stdout, "WARNING: local CA regenerated (hostname set changed) — re-run `multimux ca trust`")
+	if regen != pki.CARegenNone {
+		fmt.Fprint(stdout, caRegenBanner(regen))
 	}
 	if *trustCAFlag {
 		if err := trustCA(p.CACertPath(), stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "WARNING: auto-trust failed: %v — run `multimux ca trust` manually\n", err)
 		}
 	}
-	// Daily leaf-rotation check for long-running daemons.
+	// Daily cert-rotation check for long-running daemons: leaves rotate on
+	// their own, but a CA renewal needs the user to re-trust, so say so loudly
+	// rather than letting it pass unnoticed months into a run.
 	go func() {
 		for range time.Tick(24 * time.Hour) {
-			if _, err := p.Ensure(names); err != nil {
+			regen, err := p.Ensure(names)
+			if err != nil {
 				slog.Error("cert rotation", "err", err)
+				continue
+			}
+			if regen != pki.CARegenNone {
+				slog.Warn("local CA regenerated — re-run `multimux ca trust` to restore browser trust",
+					"reason", regen.String())
+				fmt.Fprint(stdout, caRegenBanner(regen))
 			}
 		}
 	}()

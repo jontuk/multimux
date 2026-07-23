@@ -22,10 +22,45 @@ import (
 )
 
 const (
-	caValidity      = 10 * 365 * 24 * time.Hour
-	leafValidity    = 90 * 24 * time.Hour
+	caValidity   = 10 * 365 * 24 * time.Hour
+	leafValidity = 90 * 24 * time.Hour
+	// leafRotateUnder must stay <= caRenewUnder: a leaf is clamped to its
+	// issuer's NotAfter (see createLeaf), so if the CA were allowed to age past
+	// the leaf rotation window the clamped leaf would look due for rotation on
+	// every check and be rewritten daily. Renewing the CA first means a clamped
+	// leaf always has at least caRenewUnder left, i.e. it is never in the
+	// rotation window.
 	leafRotateUnder = 30 * 24 * time.Hour
+	caRenewUnder    = 30 * 24 * time.Hour
 )
+
+// now is a seam for tests that need to age the CA. Production always uses the
+// real clock.
+var now = time.Now
+
+// CARegen says whether Ensure recreated the CA — and if so why, since the user
+// has to re-run `multimux ca trust` and deserves to be told the actual reason.
+type CARegen int
+
+const (
+	CARegenNone CARegen = iota
+	// CARegenHostnames: name constraints are baked in at creation, so a changed
+	// hostname set needs a new CA.
+	CARegenHostnames
+	// CARegenExpiring: the old CA had expired, or was inside caRenewUnder of it.
+	CARegenExpiring
+)
+
+func (r CARegen) String() string {
+	switch r {
+	case CARegenHostnames:
+		return "hostname set changed"
+	case CARegenExpiring:
+		return "previous CA expired or was about to"
+	default:
+		return "none"
+	}
+}
 
 type PKI struct {
 	dir string
@@ -38,31 +73,40 @@ func (p *PKI) caKeyPath() string    { return filepath.Join(p.dir, "ca.key") }
 func (p *PKI) LeafCertPath() string { return filepath.Join(p.dir, "cert.pem") }
 func (p *PKI) LeafKeyPath() string  { return filepath.Join(p.dir, "key.pem") }
 
-// Ensure makes CA and leaf valid for hostnames. regenerated=true means the CA
-// itself was recreated (constraints changed) and the caller should tell the
-// user to re-run `multimux ca trust`.
-func (p *PKI) Ensure(hostnames []string) (regenerated bool, err error) {
+// Ensure makes CA and leaf valid for hostnames. A non-None return means the CA
+// itself was recreated and the caller should tell the user to re-run
+// `multimux ca trust`, quoting the reason. Creating the CA from scratch (first
+// run) is not a regeneration: there is no previous trust decision to redo.
+func (p *PKI) Ensure(hostnames []string) (regenerated CARegen, err error) {
 	if len(hostnames) == 0 {
-		return false, errors.New("pki: no hostnames configured")
+		return CARegenNone, errors.New("pki: no hostnames configured")
 	}
 	if err := os.MkdirAll(p.dir, 0o700); err != nil {
-		return false, err
+		return CARegenNone, err
 	}
 	caCert, caKey, err := p.loadCA()
 	switch {
-	case err == nil && !slices.Equal(caCert.PermittedDNSDomains, hostnames):
-		// Name constraints are baked into the CA at creation; a changed
-		// hostname set forces a new CA (and a fresh user trust decision).
-		regenerated = true
-		fallthrough
-	case errors.Is(err, os.ErrNotExist):
+	case err == nil:
+		switch {
+		case !slices.Equal(caCert.PermittedDNSDomains, hostnames):
+			regenerated = CARegenHostnames
+		case !now().Before(caCert.NotAfter.Add(-caRenewUnder)):
+			// Renew ahead of the cliff: an expired CA breaks every browser at
+			// once, and re-trusting it is a manual step on every device.
+			regenerated = CARegenExpiring
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return CARegenNone, err
+	}
+	if err != nil || regenerated != CARegenNone {
+		// err here is only ErrNotExist: no CA on disk yet.
 		caCert, caKey, err = p.createCA(hostnames)
 		if err != nil {
 			return regenerated, err
 		}
-	case err != nil:
-		return false, err
 	}
+	// A regenerated CA leaves the old leaf unable to chain, which
+	// leafNeedsRotation catches, so the leaf follows the CA automatically.
 	if p.leafNeedsRotation(hostnames) {
 		if err := p.createLeaf(caCert, caKey, hostnames); err != nil {
 			return regenerated, err
@@ -104,8 +148,8 @@ func (p *PKI) createCA(hostnames []string) (*x509.Certificate, *ecdsa.PrivateKey
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: fmt.Sprintf("multimux local CA (%s)", hostnames[0])},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(caValidity),
+		NotBefore:             now().Add(-time.Hour),
+		NotAfter:              now().Add(caValidity),
 		IsCA:                  true,
 		BasicConstraintsValid: true,
 		MaxPathLenZero:        true,
@@ -135,7 +179,7 @@ func (p *PKI) leafNeedsRotation(hostnames []string) bool {
 	if err != nil {
 		return true
 	}
-	if time.Until(cert.NotAfter) < leafRotateUnder {
+	if cert.NotAfter.Sub(now()) < leafRotateUnder {
 		return true
 	}
 	if !slices.Equal(cert.DNSNames, hostnames) {
@@ -172,11 +216,20 @@ func (p *PKI) createLeaf(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, host
 	if err != nil {
 		return err
 	}
+	// A leaf outliving its issuer is a cert clients reject anyway (the chain
+	// fails once the CA expires), so cap it at the CA's own NotAfter. Ensure
+	// renews the CA at caRenewUnder, which is >= leafRotateUnder, so a clamped
+	// leaf still has enough life left not to look due for rotation — no daily
+	// rewrite loop.
+	notAfter := now().Add(leafValidity)
+	if notAfter.After(caCert.NotAfter) {
+		notAfter = caCert.NotAfter
+	}
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: hostnames[0]},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(leafValidity),
+		NotBefore:    now().Add(-time.Hour),
+		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     hostnames,

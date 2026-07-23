@@ -191,7 +191,7 @@ Struck items and reasons are listed at the bottom.
   ([verify.sh](verify.sh#L5)). Build it after `pnpm build`, smoke-test `/`,
   and add a scheduled CI `govulncheck` + `pnpm audit`.
 
-- [ ] **[reliability] Warn on and recover from CA expiry.** `Ensure` rotates
+- [x] **[reliability] Warn on and recover from CA expiry.** `Ensure` rotates
   leaves but never checks the CA's own validity
   ([pki.go](internal/pki/pki.go#L50)). Detect early, regenerate with a
   prominent re-trust instruction, never issue a leaf outliving its issuer.
