@@ -13,24 +13,36 @@ daemon minting its own name-constrained local certificate authority so you get
 > _Screenshot placeholder: the terminal grid with several tiles running Claude
 > Code, a shell, and a build watcher side by side._
 
+## Install
+
+macOS or Linux, one line:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jontuk/multimux/main/install.sh | sh
+```
+
+It detects your OS/arch, downloads the latest release, verifies its checksum,
+and installs the `multimux` binary to `/usr/local/bin` (using `sudo` if that
+directory isn't writable). Override with environment variables:
+
+```sh
+# install a specific version to a custom directory
+MULTIMUX_VERSION=v0.2.0 MULTIMUX_INSTALL_DIR="$HOME/.local/bin" \
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/jontuk/multimux/main/install.sh)"
+```
+
+**Manual download** — grab the archive for your OS/arch from the
+[releases page](https://github.com/jontuk/multimux/releases), extract the
+`multimux` binary, and put it on your `PATH`. On macOS, Gatekeeper blocks
+binaries downloaded via a browser (*“Apple could not verify 'multimux' is free
+from malware”*); clear the quarantine attribute with
+`xattr -d com.apple.quarantine /path/to/multimux`, or use System Settings →
+Privacy & Security → **Open Anyway**. (Binaries fetched by the install script or
+`curl` aren't quarantined, so this only affects browser downloads.)
+
 ## Quick start
 
-1. **Download** the release archive for your OS/arch from the
-   [releases page](https://github.com/jontuk/multimux/releases) and put the
-   `multimux` binary somewhere on your `PATH`.
-
-   On macOS, Gatekeeper blocks downloaded binaries that aren't notarized with a
-   message like *“Apple could not verify 'multimux' is free from malware”*.
-   Remove the quarantine attribute to allow it to run:
-
-   ```
-   xattr -d com.apple.quarantine /path/to/multimux
-   ```
-
-   (Alternatively: System Settings → Privacy & Security → **Open Anyway** after
-   the first blocked attempt.)
-
-2. **Install the background service** (launchd on macOS, systemd user unit on
+1. **Install the background service** (launchd on macOS, systemd user unit on
    Linux). This starts the daemon and keeps it running across logout/login:
 
    ```
@@ -52,7 +64,7 @@ daemon minting its own name-constrained local certificate authority so you get
    the daemon in the foreground with `multimux serve`, which prints the setup URL
    straight to the terminal.
 
-3. **Trust the local CA** — and do it **before** opening the setup URL:
+2. **Trust the local CA** — and do it **before** opening the setup URL:
    browsers refuse WebAuthn (passkey creation) on pages served with an
    untrusted certificate, so registration fails if you skip this. The CA
    exists as soon as the daemon has started once. Run once per client machine:
@@ -63,7 +75,7 @@ daemon minting its own name-constrained local certificate authority so you get
 
    See [docs/install.md](docs/install.md) for the per-browser details on Linux.
 
-4. **Open the setup URL** in a browser on the same machine or network. Your
+3. **Open the setup URL** in a browser on the same machine or network. Your
    browser prompts you to create a passkey (Touch ID, Windows Hello, a security
    key, or a phone). That passkey becomes your login; the setup code is then
    consumed and the daemon is no longer setup-pending.
