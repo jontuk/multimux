@@ -208,3 +208,43 @@ test("daemon panel sends port as a string", async () => {
   expect(typeof body.port).toBe("string");
   fetchMock.mockRestore();
 });
+
+test("a failed tools fetch shows an error with a working Retry, not an empty list", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 1, name: "zsh", command: "zsh" }])));
+
+  render(<ToolsPanel />);
+  expect(await screen.findByText("Can't reach the daemon.")).toBeInTheDocument();
+  // The "nothing configured" note must not stand in for a failed request.
+  expect(screen.queryByText(/No tools yet/)).toBeNull();
+
+  await userEvent.click(screen.getByText("Retry"));
+
+  await screen.findByText((content, element) => content === "zsh" && element?.tagName === "TD");
+  expect(screen.queryByText("Can't reach the daemon.")).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  fetchMock.mockRestore();
+});
+
+test("a 500 on the passkey list is reported, not shown as zero passkeys", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify({ error: "credential store unreadable" }), { status: 500 }));
+
+  render(<PasskeysPanel />);
+  expect(await screen.findByText(/credential store unreadable/)).toBeInTheDocument();
+  expect(screen.queryByText(/No passkeys registered/)).toBeNull();
+  fetchMock.mockRestore();
+});
+
+test("a failed daemon-settings fetch reports the error instead of spinning forever", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+  render(<DaemonPanel />);
+  expect(await screen.findByText("Can't reach the daemon.")).toBeInTheDocument();
+  expect(screen.getByText("Retry")).toBeInTheDocument();
+  expect(screen.queryByText("Save")).toBeNull();
+  fetchMock.mockRestore();
+});

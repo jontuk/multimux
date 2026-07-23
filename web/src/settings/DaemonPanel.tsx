@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch, getJSON } from "../api";
+import { useCallback, useState } from "react";
+import { apiFetch, errorText } from "../api";
 import { localServer } from "../servers";
+import { useFetch } from "../useFetch";
+import PanelState from "./PanelState";
 
 type Settings = { hostname: string; extraSans: string; port: string; version: string };
 type SettingsResponse = {
@@ -13,7 +15,6 @@ type SettingsResponse = {
 };
 
 export default function DaemonPanel() {
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [hostname, setHostname] = useState("");
   const [extraSans, setExtraSans] = useState("");
   const [port, setPort] = useState("");
@@ -22,17 +23,17 @@ export default function DaemonPanel() {
   const [pendingRpChange, setPendingRpChange] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const refresh = useCallback(() => {
-    getJSON<Settings>(localServer(), "/api/settings")
-      .then((s) => {
-        setSettings(s);
-        setHostname(s.hostname);
-        setExtraSans(s.extraSans);
-        setPort(s.port);
-      })
-      .catch(() => setSettings(null));
+  const seed = useCallback((s: Settings) => {
+    setHostname(s.hostname);
+    setExtraSans(s.extraSans);
+    setPort(s.port);
   }, []);
-  useEffect(refresh, [refresh]);
+  const {
+    data: settings,
+    error: loadError,
+    loading: loadingSettings,
+    reload,
+  } = useFetch<Settings>("/api/settings", seed);
 
   async function save(confirmRpChange: boolean) {
     if (!settings) return;
@@ -60,19 +61,18 @@ export default function DaemonPanel() {
       if (data.rpWarning) {
         setRpWarning(true);
       }
-      refresh();
+      reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "save failed");
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }
   }
 
-  if (!settings) return <div>Loading daemon settings…</div>;
-
   return (
     <section>
       <h2>Daemon Settings</h2>
+      <PanelState loading={loadingSettings} error={loadError} onRetry={reload} />
       {rpWarning && (
         <div className="server-status-banner">Changing hostname invalidates ALL passkeys after restart</div>
       )}
@@ -88,27 +88,31 @@ export default function DaemonPanel() {
           </button>
         </div>
       )}
-      <div className="settings-fields">
-        <div className="settings-readonly">
-          <span>Version</span>
-          <span className="daemon-version">{settings.version || "unknown"}</span>
-        </div>
-        <label>
-          Hostname
-          <input value={hostname} onChange={(e) => setHostname(e.target.value)} disabled={loading} />
-        </label>
-        <label>
-          Extra SANs
-          <input value={extraSans} onChange={(e) => setExtraSans(e.target.value)} disabled={loading} />
-        </label>
-        <label>
-          Port
-          <input type="number" value={port} onChange={(e) => setPort(e.target.value)} disabled={loading} />
-        </label>
-      </div>
-      <button className="primary" disabled={loading} onClick={() => save(false)}>
-        Save
-      </button>
+      {settings && !loadingSettings && !loadError && (
+        <>
+          <div className="settings-fields">
+            <div className="settings-readonly">
+              <span>Version</span>
+              <span className="daemon-version">{settings.version || "unknown"}</span>
+            </div>
+            <label>
+              Hostname
+              <input value={hostname} onChange={(e) => setHostname(e.target.value)} disabled={loading} />
+            </label>
+            <label>
+              Extra SANs
+              <input value={extraSans} onChange={(e) => setExtraSans(e.target.value)} disabled={loading} />
+            </label>
+            <label>
+              Port
+              <input type="number" value={port} onChange={(e) => setPort(e.target.value)} disabled={loading} />
+            </label>
+          </div>
+          <button className="primary" disabled={loading} onClick={() => save(false)}>
+            Save
+          </button>
+        </>
+      )}
     </section>
   );
 }

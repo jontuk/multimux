@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { getJSON, putJSON } from "../api";
+import { useCallback, useState } from "react";
+import { errorText, putJSON } from "../api";
 import { localServer } from "../servers";
+import { useFetch } from "../useFetch";
+import PanelState from "./PanelState";
 
 type Appearance = { hostLabel: string; accentColor: string; osHostname: string };
 
@@ -9,41 +11,35 @@ export const APPEARANCE_EVENT = "multimux:appearance";
 export type AppearanceDetail = { hostLabel: string; accentColor: string };
 
 export default function AppearancePanel() {
-  const [appearance, setAppearance] = useState<Appearance | null>(null);
   const [hostLabel, setHostLabel] = useState("");
   const [accentColor, setAccentColor] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
-  const refresh = useCallback(() => {
-    getJSON<Appearance>(localServer(), "/api/settings/appearance")
-      .then((a) => {
-        setAppearance(a);
-        setHostLabel(a.hostLabel);
-        setAccentColor(a.accentColor);
-      })
-      .catch(() => setAppearance(null));
+  const seed = useCallback((a: Appearance) => {
+    setHostLabel(a.hostLabel);
+    setAccentColor(a.accentColor);
   }, []);
-  useEffect(refresh, [refresh]);
+  const { data: appearance, error, loading, reload } = useFetch<Appearance>("/api/settings/appearance", seed);
 
   async function save() {
     if (!appearance) return;
+    setSaveError("");
     try {
-      setLoading(true);
+      setSaving(true);
       await putJSON(localServer(), "/api/settings/appearance", { hostLabel, accentColor });
       window.dispatchEvent(
         new CustomEvent<AppearanceDetail>(APPEARANCE_EVENT, {
           detail: { hostLabel: hostLabel || appearance.osHostname, accentColor },
         }),
       );
-      refresh();
-    } catch (error) {
-      console.error("Failed to save appearance:", error);
+      reload();
+    } catch (err) {
+      setSaveError(errorText(err));
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
-
-  if (!appearance) return <div>Loading appearance settings…</div>;
 
   return (
     <section>
@@ -51,38 +47,44 @@ export default function AppearancePanel() {
       <p className="settings-hint">
         Shown in the header bar so you can tell this host apart from other multimux instances.
       </p>
-      <div className="settings-fields">
-        <label>
-          Host label
-          <input
-            value={hostLabel}
-            placeholder={appearance.osHostname}
-            onChange={(e) => setHostLabel(e.target.value)}
-            maxLength={64}
-            disabled={loading}
-          />
-        </label>
-        <label>
-          Accent colour
-          <span className="accent-picker">
-            <input
-              type="color"
-              aria-label="accent colour"
-              value={accentColor || "#000000"}
-              onChange={(e) => setAccentColor(e.target.value)}
-              disabled={loading}
-            />
-            {accentColor && (
-              <button type="button" className="link" onClick={() => setAccentColor("")} disabled={loading}>
-                clear
-              </button>
-            )}
-          </span>
-        </label>
-      </div>
-      <button className="primary" disabled={loading} onClick={save}>
-        Save
-      </button>
+      <PanelState loading={loading} error={error} onRetry={reload} />
+      {saveError && <div className="server-status-banner">{saveError}</div>}
+      {appearance && !loading && !error && (
+        <>
+          <div className="settings-fields">
+            <label>
+              Host label
+              <input
+                value={hostLabel}
+                placeholder={appearance.osHostname}
+                onChange={(e) => setHostLabel(e.target.value)}
+                maxLength={64}
+                disabled={saving}
+              />
+            </label>
+            <label>
+              Accent colour
+              <span className="accent-picker">
+                <input
+                  type="color"
+                  aria-label="accent colour"
+                  value={accentColor || "#000000"}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  disabled={saving}
+                />
+                {accentColor && (
+                  <button type="button" className="link" onClick={() => setAccentColor("")} disabled={saving}>
+                    clear
+                  </button>
+                )}
+              </span>
+            </label>
+          </div>
+          <button className="primary" disabled={saving} onClick={save}>
+            Save
+          </button>
+        </>
+      )}
     </section>
   );
 }

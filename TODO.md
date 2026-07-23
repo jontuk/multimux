@@ -175,7 +175,7 @@ Struck items and reasons are listed at the bottom.
 
 ## P3 — polish
 
-- [ ] **[usability] Surface real error states in the UI.** Startup maps
+- [x] **[usability] Surface real error states in the UI.** Startup maps
   network/500 from `/me` to the login page; settings panels show permanent
   spinners or fake empty lists ([App.tsx](web/src/App.tsx#L24),
   [DaemonPanel.tsx](web/src/settings/DaemonPanel.tsx#L16)). Incremental:

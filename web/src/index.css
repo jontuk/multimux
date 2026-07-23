@@ -671,6 +671,26 @@ a {
   color: var(--muted);
 }
 
+.app-startup-problem {
+  flex-direction: column;
+  gap: 0.9rem;
+  text-align: center;
+  padding: 1.5rem;
+}
+
+.app-startup-problem h1 {
+  font-size: 1rem;
+  color: var(--error);
+  margin: 0;
+}
+
+.app-startup-problem p {
+  margin: 0;
+  max-width: 34rem;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
 /* ---- settings ---- */
 
 .settings-page {
@@ -794,6 +814,21 @@ a {
   font-size: 0.85rem;
   color: var(--muted);
   margin: 0 0 1.4rem;
+}
+
+.panel-state {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 1.4rem;
+}
+
+.panel-state-error {
+  color: var(--error);
+  overflow-wrap: anywhere;
 }
 
 /* forms */

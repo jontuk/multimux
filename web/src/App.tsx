@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import SetupPage from "./pages/SetupPage";
 import SettingsPage from "./pages/SettingsPage";
 import ConnectPage from "./pages/ConnectPage";
-import { apiFetch, getJSON } from "./api";
+import { errorText, getJSON, isUnauthorized, isUnreachable } from "./api";
 import { localServer } from "./servers";
 import GridPage from "./grid/GridPage";
 import { APPEARANCE_EVENT, type AppearanceDetail } from "./settings/AppearancePanel";
@@ -16,9 +16,44 @@ type Health = {
   accentColor?: string;
 };
 
+/**
+ * Startup only sends you to the login page when the daemon actually said
+ * "unauthenticated". An unreachable or broken daemon gets its own screen —
+ * a passkey prompt cannot fix either of those.
+ */
+type Startup =
+  | { kind: "loading" }
+  | { kind: "ready" }
+  | { kind: "unauthed" }
+  | { kind: "unreachable" }
+  | { kind: "error"; detail: string };
+
+function problem(e: unknown): Startup {
+  return isUnreachable(e) ? { kind: "unreachable" } : { kind: "error", detail: errorText(e) };
+}
+
+function StartupProblem({ state, onRetry }: { state: Startup; onRetry: () => void }) {
+  const unreachable = state.kind === "unreachable";
+  return (
+    <div className="app-loading app-startup-problem">
+      <h1>{unreachable ? "Can't reach the multimux daemon" : "The daemon returned an error"}</h1>
+      <p>
+        {unreachable
+          ? "It may be stopped, or this browser can't get to it. Start it and try again."
+          : state.kind === "error"
+            ? state.detail
+            : ""}
+      </p>
+      <button className="primary" onClick={onRetry}>
+        Retry
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
-  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [startup, setStartup] = useState<Startup>({ kind: "loading" });
   const [route, setRoute] = useState(window.location.hash || "#/");
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
 
@@ -41,18 +76,38 @@ export default function App() {
     return () => window.removeEventListener(APPEARANCE_EVENT, onAppearance);
   }, []);
 
+  const check = useCallback(
+    () =>
+      getJSON<Health>(localServer(), "/healthz")
+        .then((h) => {
+          setHealth(h);
+          return getJSON(localServer(), "/api/auth/me").then(
+            () => setStartup({ kind: "ready" }),
+            // Only the daemon saying "unauthenticated" earns the login page.
+            (e: unknown) => setStartup(isUnauthorized(e) ? { kind: "unauthed" } : problem(e)),
+          );
+        })
+        .catch((e: unknown) => {
+          setHealth(null);
+          setStartup(problem(e));
+        }),
+    [],
+  );
+
+  const retry = useCallback(() => {
+    setStartup({ kind: "loading" });
+    void check();
+  }, [check]);
+
   useEffect(() => {
-    getJSON<Health>(localServer(), "/healthz")
-      .then(setHealth)
-      .catch(() => setHealth(null));
-    apiFetch(localServer(), "/api/auth/me")
-      .then((r) => setAuthed(r.ok))
-      .catch(() => setAuthed(false));
-  }, []);
+    void check();
+  }, [check]);
 
   if (window.location.pathname === "/setup" || health?.setupPending) return <SetupPage />;
-  if (authed === false) return <LoginPage />;
-  if (authed === null) return <div className="app-loading">multimux loading…</div>;
+  if (startup.kind === "unauthed") return <LoginPage />;
+  if (startup.kind === "unreachable" || startup.kind === "error")
+    return <StartupProblem state={startup} onRetry={retry} />;
+  if (startup.kind === "loading") return <div className="app-loading">multimux loading…</div>;
 
   // Settings (Task 23), Connect (Task 24) routed here.
   return (
