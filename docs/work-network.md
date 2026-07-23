@@ -22,6 +22,57 @@ flag them for review. multimux mitigates this two ways:
   [Tailscale Serve](proxy.md#worked-example-tailscale-serve), whose certificate is
   trusted without any local CA install. See [docs/proxy.md](proxy.md).
 
+## Connecting from another machine
+
+The common cloud setup is a daemon on a remote box (a VPS, or an OCI/EC2 instance
+reachable over Tailscale) driven from a laptop. The daemon terminates TLS with its
+own name-constrained CA; the laptop's browser rejects that certificate until the
+laptop trusts the CA. The catch: running `multimux ca trust` on the laptop trusts
+the *laptop's* local CA, which is a different key from the one the remote daemon
+serves.
+
+Two ways to close that gap.
+
+### Option A — trust the remote CA (no reverse proxy)
+
+Run the daemon in its default direct-TLS mode and copy its CA to the client. This
+keeps the setup simple — no proxy — and works under `multimux service install`,
+since the installed unit runs a bare `multimux serve` with no flags.
+
+1. **On the remote box**, pick a stable hostname up front (it becomes the WebAuthn
+   RP ID; a Tailscale MagicDNS name is ideal because it resolves from anywhere on
+   your tailnet) and start the daemon or install the service:
+
+   ```
+   multimux serve --hostname <box>.<tailnet>.ts.net     # persists the hostname
+   # (Ctrl-C once the setup URL prints, then:)
+   multimux service install
+   ```
+
+2. **On the client**, trust the remote box's CA. `--remote` copies
+   `~/.local/share/multimux/pki/ca.pem` from the box over `scp` and installs it,
+   using your existing SSH access as the transport's trust:
+
+   ```
+   multimux ca trust --remote <user>@<box>.<tailnet>.ts.net
+   ```
+
+   multimux prints the CA subject and the hostnames its name constraints permit
+   before installing, so you can confirm you are trusting the right box.
+   Add `--remote-path` if the daemon runs under a custom `MULTIMUX_DATA_DIR`.
+
+3. Open `https://<box>.<tailnet>.ts.net:8686/` on the client and register a
+   passkey. On Linux clients, remember the Firefox/Chromium NSS caveat from
+   [docs/install.md](install.md#linux-browser-caveat-firefox--chromium).
+
+### Option B — terminate TLS at Tailscale Serve (no CA install)
+
+If you would rather not install any CA on the client, put the daemon behind
+[Tailscale Serve](proxy.md#worked-example-tailscale-serve), whose certificate the
+client already trusts. This needs `--behind-proxy`, which is runtime-only and not
+persisted, so it does **not** work through `multimux service install` without
+hand-editing the unit. See [docs/proxy.md](proxy.md).
+
 ## Corporate DNS that blocks mDNS / `.local`
 
 multimux defaults to your machine's hostname plus its `.local` (mDNS/Bonjour)

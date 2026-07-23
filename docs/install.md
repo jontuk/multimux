@@ -72,11 +72,31 @@ section.
 
 To load `https://` without a certificate warning, install the daemon's
 name-constrained CA into your OS trust store. Run this on **each client machine**
-that will open the UI:
+that will open the UI.
+
+**On the daemon host itself**, trust its own CA:
 
 ```
 multimux ca trust
 ```
+
+**From a different machine** (e.g. a laptop connecting to a cloud box over
+Tailscale), you need that box's CA, not the laptop's own. Point `--remote` at the
+daemon host and multimux copies the CA over `scp` and installs it — no manual file
+juggling:
+
+```
+multimux ca trust --remote user@daemon-host
+```
+
+This uses your existing SSH access as the transport's trust (no chicken-and-egg
+of fetching a CA over an untrusted TLS connection). It reads the CA from
+`~/.local/share/multimux/pki/ca.pem` on the remote; override with `--remote-path`
+if the daemon runs under a custom `MULTIMUX_DATA_DIR`. Before installing, multimux
+prints the CA's subject and the hostnames its name constraints permit, so you can
+confirm what you are trusting. See
+[Connecting from another machine](work-network.md#connecting-from-another-machine)
+for the full cloud-box walkthrough.
 
 - **macOS** adds the CA to your **login keychain** (no `sudo`; Keychain Access
   may prompt once to confirm). Verify with:

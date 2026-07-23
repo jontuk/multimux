@@ -182,14 +182,42 @@ func setupBanner(display []string, code string) string {
 	return b.String()
 }
 
+// serveUsage documents `multimux serve` for `multimux help serve`.
+const serveUsage = `usage: multimux serve [flags]
+
+Run the multimux daemon in the foreground. By default it terminates TLS itself
+using a name-constrained local CA and listens on all interfaces.
+
+flags:
+  --hostname <name>   hostname browsers reach this daemon at; must contain a dot
+                      or be "localhost". Becomes the WebAuthn RP ID and a TLS SAN.
+                      Persisted; also settable via MULTIMUX_HOSTNAME. Choose a
+                      stable name BEFORE registering the first passkey — changing
+                      it later invalidates all passkeys.
+  --port <n>          listen port (persisted; default from settings, else 8686)
+  --behind-proxy      serve plain HTTP on 127.0.0.1 and trust X-Forwarded-*, to
+                      terminate TLS at a reverse proxy (Caddy, Tailscale Serve).
+                      Runtime-only — NOT persisted, so a service install cannot
+                      enable it.
+  --dev               DEV MODE for throwaway installs only (see docs/security.md).
+
+Environment:
+  MULTIMUX_HOSTNAME   default for --hostname
+  MULTIMUX_DATA_DIR   data directory (default ~/.local/share/multimux)
+`
+
 func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writer) int {
 	fs2 := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs2.SetOutput(stderr)
+	fs2.Usage = func() { fmt.Fprint(stderr, serveUsage) }
 	behindProxy := fs2.Bool("behind-proxy", false, "plain HTTP on localhost, trust X-Forwarded-*")
 	port := fs2.Int("port", 0, "listen port (default from settings, else 8686)")
 	hostname := fs2.String("hostname", "", "hostname browsers reach this daemon at; must contain a dot or be \"localhost\" (persisted; default from settings, else os.Hostname; env MULTIMUX_HOSTNAME)")
 	dev := fs2.Bool("dev", false, "DEV MODE: RP ID localhost, allow the Vite dev origin http://localhost:5173 (throwaway MULTIMUX_DATA_DIR only)")
 	if err := fs2.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
 		return 2
 	}
 	if *hostname == "" {
