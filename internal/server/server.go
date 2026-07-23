@@ -51,6 +51,8 @@ func New(cfg Config) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /manifest.webmanifest", s.handleManifest)
+	s.mux.HandleFunc("GET /icon.svg", s.handleIconSVG)
 	// Auth ceremonies (open — they ARE the login): Task 15.
 	s.mux.HandleFunc("POST /api/auth/setup/begin", s.handleSetupBegin)
 	s.mux.HandleFunc("POST /api/auth/setup/finish", s.handleSetupFinish)

@@ -139,7 +139,35 @@ With the CA trusted, open the setup URL from step 2 and register a passkey.
 (If the one-time code has expired — they last 15 minutes — restart the daemon
 to print a fresh one.)
 
-## 5. Service management
+## 5. Install as an app (PWA)
+
+multimux is a Progressive Web App: install it from your browser and it runs in
+its own window with no address bar, like a native app.
+
+In **Chrome** (desktop), open the daemon URL, then click the install icon in the
+address bar — or **⋮ → Cast, save, and share → Install page as app…** — and
+confirm **Install**.
+
+Each daemon installs as a **separate app**, keyed to its origin (host + port), so
+you can install one per host and switch between them from your dock or app
+launcher. To tell them apart, give each daemon a distinct **host label** and
+**accent color** under **Settings → Appearance**: the label becomes the app name
+and the accent tints its icon. After changing either, reinstall the app to pick
+up the new name and icon.
+
+**Firefox** does not support installing PWAs on the desktop. multimux still works
+normally in a Firefox tab; to get the installed-app window, use Chrome.
+
+Firefox also can't use your Chrome/Safari platform passkey — passkeys don't roam
+between browsers' platform stores, and Firefox on macOS doesn't integrate with
+Touch ID / iCloud Keychain at all. To log in from Firefox, either use a hardware
+security key or phone-via-QR (both work in any browser), or register a dedicated
+Firefox passkey under **Settings → Passkeys**. On **Linux**, Firefox keeps its
+own certificate store, so import the CA into its NSS database (see the [Linux
+browser caveat](#linux-browser-caveat-firefox--chromium) above) or the passkey
+ceremony is blocked.
+
+## 6. Service management
 
 Instead of running `multimux serve` by hand, install it as a user-level service
 so it starts at login and restarts on failure:
@@ -169,7 +197,7 @@ The service runs `multimux serve` with no extra flags. To change the port or add
 extra SANs, edit them in the daemon's **Settings** page in the UI (they are stored
 in SQLite), or run `serve` manually with flags.
 
-## 6. Upgrading
+## 7. Upgrading
 
 multimux keeps no schema migrations you need to run by hand and stores nothing in
 the binary. To upgrade:
