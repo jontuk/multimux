@@ -17,6 +17,7 @@ commands:
                                  manage the launchd (macOS) / systemd (Linux) user service
   ca trust [flags]               install a multimux CA into the OS trust store
                                  (this host's own, or a remote host's via --remote)
+  config list|get|set            read and change user-configurable settings
   auth reset --yes               wipe credentials and return to setup-pending
   help [command]                 show detailed help for a command
   --version                      print version
@@ -28,6 +29,7 @@ Examples:
   multimux service install                    install and start the background service
   multimux ca trust                           trust this host's own CA
   multimux ca trust --remote user@host        trust a remote host's multimux CA from this machine
+  multimux config set confirm-terminate true  confirm before terminating a session
 `
 
 // Execute runs the CLI and returns a process exit code. webFS is the
@@ -51,6 +53,8 @@ func Execute(args []string, version string, webFS fs.FS, stdout, stderr io.Write
 		return runCA(args[1:], stdout, stderr)
 	case "auth":
 		return runAuth(args[1:], stdout, stderr)
+	case "config":
+		return runConfig(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], version, webFS, stdout, stderr)
 	case "service":
@@ -72,6 +76,8 @@ func helpFor(cmd string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, caUsage)
 	case "auth":
 		fmt.Fprint(stdout, authUsage)
+	case "config":
+		fmt.Fprint(stdout, configUsage)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n%s", cmd, usage)
 		return 2
