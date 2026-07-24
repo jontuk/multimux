@@ -10,9 +10,9 @@ afterEach(() => {
 test("preferences panel loads, saves, and dispatches the update event", async () => {
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
-    .mockResolvedValueOnce(new Response(JSON.stringify({ confirmTerminate: false })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ confirmTerminate: true })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ confirmTerminate: true })));
+    .mockResolvedValueOnce(new Response(JSON.stringify({ confirmTerminate: false })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ confirmTerminate: false })));
 
   const events: CustomEvent[] = [];
   const listener = (e: Event) => events.push(e as CustomEvent);
@@ -20,7 +20,8 @@ test("preferences panel loads, saves, and dispatches the update event", async ()
 
   render(<PreferencesPanel />);
   const box = (await screen.findByLabelText(/ask before terminating/i)) as HTMLInputElement;
-  expect(box.checked).toBe(false);
+  // The panel starts at false, so this only passes if the fetched value was applied.
+  expect(box.checked).toBe(true);
 
   await userEvent.click(box);
   await userEvent.click(screen.getByText("Save"));
@@ -29,9 +30,9 @@ test("preferences panel loads, saves, and dispatches the update event", async ()
   const put = fetchMock.mock.calls[1];
   expect(String(put[0])).toContain("/api/settings/preferences");
   expect((put[1] as RequestInit).method).toBe("PUT");
-  expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual({ confirmTerminate: true });
+  expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual({ confirmTerminate: false });
   expect(events).toHaveLength(1);
-  expect(events[0].detail).toEqual({ confirmTerminate: true });
+  expect(events[0].detail).toEqual({ confirmTerminate: false });
 
   window.removeEventListener(PREFERENCES_EVENT, listener);
 });
