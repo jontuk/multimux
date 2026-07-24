@@ -120,7 +120,7 @@ refuses any change that would alter the RP ID and points you at
 
 ```
 multimux serve                              run the daemon in the foreground (--port, --hostname, --dev, --behind-proxy)
-multimux service install|uninstall|status|logs   manage the launchd/systemd user service
+multimux service install|uninstall|upgrade|status|logs   manage the launchd/systemd user service
 multimux auth reset --yes                    wipe credentials and return to setup-pending
 multimux ca trust                            install the local CA into the OS trust store
 multimux config list|get|set                 read and change user-configurable settings

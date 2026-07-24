@@ -182,6 +182,7 @@ so it starts at login and restarts on failure:
 ```
 multimux service install     # launchd LaunchAgent (macOS) / systemd user unit (Linux)
 multimux service status
+multimux service upgrade     # fetch the latest release binary, then reinstall the unit
 multimux service uninstall
 ```
 
@@ -224,7 +225,18 @@ install keeps resolving them at runtime.
 ## 7. Upgrading
 
 multimux keeps no schema migrations you need to run by hand and stores nothing in
-the binary. To upgrade:
+the binary. If you run it as a service, one command does the whole upgrade:
+
+```
+multimux service upgrade
+```
+
+That pipes the same `install.sh` used for a first install into `sh` (fetching the
+latest release binary for your OS/arch) and then re-runs `multimux service
+install` so the unit points at the new binary. It needs network access, and may
+prompt for sudo if the install directory is not writable.
+
+To upgrade by hand instead:
 
 1. Download the new archive and replace the `multimux` binary in place.
 2. Restart the service:

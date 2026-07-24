@@ -13,7 +13,7 @@ multimux runs a daemon that serves a browser-based tmux terminal grid over HTTPS
 
 commands:
   serve [flags]                  run the daemon in the foreground
-  service install|uninstall|status|logs
+  service install|uninstall|upgrade|status|logs
                                  manage the launchd (macOS) / systemd (Linux) user service
   ca trust [flags]               install a multimux CA into the OS trust store
                                  (this host's own, or a remote host's via --remote)
