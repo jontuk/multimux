@@ -116,7 +116,32 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     }
     connect();
 
+    // Shift+Enter: xterm.js has no CSI-u encoder, so it emits a bare \r that is
+    // indistinguishable from Enter. Intercept at the DOM capture phase — before
+    // the event reaches xterm.js's textarea — and send the extended-key
+    // sequence ourselves. tmux forwards it via terminal-features xterm*:extkeys.
+    let suppressNextCR = false;
+    const captureContainer = containerRef.current!;
+    const shiftEnterCapture = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        // Belt-and-braces: if the keypress still produces onData, drop that \r.
+        suppressNextCR = true;
+        setTimeout(() => {
+          suppressNextCR = false;
+        }, 0);
+        if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode("\x1b[13;2u"));
+      }
+    };
+    captureContainer.addEventListener("keydown", shiftEnterCapture, true);
+
     const dataSub = term.onData((data) => {
+      if (suppressNextCR && data === "\r") {
+        suppressNextCR = false;
+        return;
+      }
       if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data));
     });
     const ro = new ResizeObserver(() => {
@@ -135,6 +160,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
         ws.onclose = null;
         ws.close();
       }
+      captureContainer.removeEventListener("keydown", shiftEnterCapture, true);
       dataSub.dispose();
       ro.disconnect();
       window.removeEventListener("focus", sendResize);
