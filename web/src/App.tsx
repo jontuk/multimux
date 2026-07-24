@@ -7,6 +7,7 @@ import { errorText, getJSON, isUnauthorized, isUnreachable } from "./api";
 import { localServer } from "./servers";
 import GridPage from "./grid/GridPage";
 import { APPEARANCE_EVENT, type AppearanceDetail } from "./settings/AppearancePanel";
+import { PREFERENCES_EVENT, type Preferences, type PreferencesDetail } from "./settings/PreferencesPanel";
 
 type Health = {
   status: string;
@@ -56,6 +57,7 @@ export default function App() {
   const [startup, setStartup] = useState<Startup>({ kind: "loading" });
   const [route, setRoute] = useState(window.location.hash || "#/");
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [confirmTerminate, setConfirmTerminate] = useState(false);
 
   useEffect(() => {
     document.title = health?.hostLabel ? `multimux @${health.hostLabel}` : "multimux";
@@ -74,6 +76,22 @@ export default function App() {
     };
     window.addEventListener(APPEARANCE_EVENT, onAppearance);
     return () => window.removeEventListener(APPEARANCE_EVENT, onAppearance);
+  }, []);
+
+  // Preferences are read once at startup; a failure leaves the defaults in
+  // place rather than blocking the app on a non-essential fetch.
+  useEffect(() => {
+    getJSON<Preferences>(localServer(), "/api/settings/preferences")
+      .then((p) => setConfirmTerminate(p.confirmTerminate))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const onPreferences = (e: Event) => {
+      setConfirmTerminate((e as CustomEvent<PreferencesDetail>).detail.confirmTerminate);
+    };
+    window.addEventListener(PREFERENCES_EVENT, onPreferences);
+    return () => window.removeEventListener(PREFERENCES_EVENT, onPreferences);
   }, []);
 
   const check = useCallback(
@@ -132,7 +150,7 @@ export default function App() {
         </nav>
       </header>
       <main id="page-root">
-        {route === "#/" && <GridPage headerSlot={headerSlot} />}
+        {route === "#/" && <GridPage headerSlot={headerSlot} confirmTerminate={confirmTerminate} />}
         {route === "#/settings" && <SettingsPage />}
         {route.startsWith("#/connect") && <ConnectPage />}
       </main>

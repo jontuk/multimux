@@ -59,7 +59,14 @@ function toolName(tools: Tool[] | undefined, session: Session | undefined): stri
   return tools?.find((t) => t.id === session.toolId)?.name ?? session.tmuxName;
 }
 
-export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLElement | null }) {
+export default function GridPage({
+  headerSlot = null,
+  confirmTerminate = false,
+}: {
+  headerSlot?: HTMLElement | null;
+  // Off by default: terminating is one click unless the user opts in.
+  confirmTerminate?: boolean;
+}) {
   const [layout, setLayout] = useState<Layout>(emptyLayout());
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
   const [toolsByServer, setToolsByServer] = useState<Record<string, Tool[]>>({});
@@ -187,7 +194,7 @@ export default function GridPage({ headerSlot = null }: { headerSlot?: HTMLEleme
   }
 
   async function terminateSession(server: Server, sessionId: number, tileIndex: number) {
-    if (!window.confirm(`Terminate session #${sessionId}?`)) return;
+    if (confirmTerminate && !window.confirm(`Terminate session #${sessionId}?`)) return;
     try {
       await del(server, `/api/sessions/${sessionId}`);
     } catch {

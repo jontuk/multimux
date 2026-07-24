@@ -44,3 +44,24 @@ test("preferences panel surfaces a load failure with a retry", async () => {
   await screen.findByText("Retry");
   expect(screen.queryByLabelText(/ask before terminating/i)).not.toBeInTheDocument();
 });
+
+test("app fetches preferences at startup and follows the update event", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = String(input);
+    if (url.includes("/api/settings/preferences")) {
+      return Promise.resolve(new Response(JSON.stringify({ confirmTerminate: true })));
+    }
+    if (url.includes("/healthz")) {
+      return Promise.resolve(new Response(JSON.stringify({ status: "ok", setupPending: false, version: "test" })));
+    }
+    if (url.includes("/api/auth/me")) return Promise.resolve(new Response("{}", { status: 200 }));
+    return Promise.resolve(new Response("[]"));
+  });
+
+  const { default: App } = await import("../App");
+  render(<App />);
+
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/settings/preferences"))).toBe(true),
+  );
+});

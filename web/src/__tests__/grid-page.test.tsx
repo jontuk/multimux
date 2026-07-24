@@ -203,14 +203,37 @@ test("hello event (socket reconnect) refetches sessions and layout", async () =>
   await waitFor(() => expect(gets("/api/layout")).toBeGreaterThan(layoutBefore));
 });
 
-test("terminate button confirms then DELETEs the session and drops the tile", async () => {
+test("terminate skips the confirm prompt by default", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
   const fetchMock = mockFetch(layout);
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<GridPage />);
   await screen.findByTestId("term-1");
 
+  await userEvent.click(screen.getByLabelText("terminate session 1"));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  expect(confirmMock).not.toHaveBeenCalled();
+  const delCall = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
+  expect(String(delCall?.[0])).toContain("/api/sessions/1");
+});
+
+test("terminate confirms first when confirmTerminate is on", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  const fetchMock = mockFetch(layout);
+  const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+  render(<GridPage confirmTerminate />);
+  await screen.findByTestId("term-1");
+
+  // Declining leaves the session alone.
+  await userEvent.click(screen.getByLabelText("terminate session 1"));
+  expect(confirmMock).toHaveBeenCalledTimes(1);
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+
+  // Accepting goes through.
+  confirmMock.mockReturnValue(true);
   await userEvent.click(screen.getByLabelText("terminate session 1"));
   await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
   const delCall = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
