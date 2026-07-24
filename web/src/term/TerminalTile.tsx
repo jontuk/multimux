@@ -9,6 +9,12 @@ import type { Session } from "../grid/types";
 import { encodeResize, parseServerText } from "./protocol";
 
 type Props = { server: Server; sessionId: number; onClose: () => void; autoFocus?: boolean };
+
+// Mirrors xterm.js's own isMac (common/Platform.ts) — it gates selection
+// behaviour on exactly this list, so shiftDragCapture must agree with it or
+// the bypass fires on a platform where Shift already works.
+const isMac = ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(navigator.platform);
+
 // "offline" retries automatically; "exited", "missing", and "auth" are
 // terminal — the loop stops and the overlay offers dismiss/reconnect.
 type ConnState = "connecting" | "open" | "offline" | "exited" | "missing" | "auth";
@@ -55,6 +61,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       fontSize: 13,
       // On Mac, xterm.js only bypasses app mouse-mode for Option+drag (never
       // Shift — that's hardcoded Linux/Windows-only in SelectionService).
+      // shiftDragCapture below makes Shift+drag work too.
       macOptionClickForcesSelection: true,
     });
     const fit = new FitAddon();
@@ -137,6 +144,19 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     };
     captureContainer.addEventListener("keydown", shiftEnterCapture, true);
 
+    // Shift+drag selection. tmux mouse mode owns click-drag, and xterm.js's
+    // escape hatch (shouldForceSelection) is Option-only on Mac — Shift is
+    // hardcoded Linux/Windows-only. Both call sites read event.altKey off the
+    // mousedown, so shadow it on the instance in the capture phase, before
+    // xterm.js's bubble-phase listeners see the event. Mac only: elsewhere
+    // Shift already works, and a forced altKey would trip column-select.
+    const shiftDragCapture = (e: MouseEvent) => {
+      if (isMac && e.button === 0 && e.shiftKey && !e.altKey) {
+        Object.defineProperty(e, "altKey", { value: true, configurable: true });
+      }
+    };
+    captureContainer.addEventListener("mousedown", shiftDragCapture, true);
+
     const dataSub = term.onData((data) => {
       if (suppressNextCR && data === "\r") {
         suppressNextCR = false;
@@ -161,6 +181,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
         ws.close();
       }
       captureContainer.removeEventListener("keydown", shiftEnterCapture, true);
+      captureContainer.removeEventListener("mousedown", shiftDragCapture, true);
       dataSub.dispose();
       ro.disconnect();
       window.removeEventListener("focus", sendResize);
