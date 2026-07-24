@@ -126,29 +126,77 @@ func toolNames(t *testing.T, s *Store) string {
 
 func TestSeedDefaults(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.SeedDefaults("darwin"); err != nil {
+	if err := s.SeedDefaults("darwin", "/Users/someone"); err != nil {
 		t.Fatal(err)
 	}
 	tools, _ := s.ListTools()
 	if len(tools) != 1 || tools[0].Name != "zsh" || tools[0].Command != "zsh" {
 		t.Fatalf("darwin seed = %+v", tools)
 	}
+	dirs, _ := s.ListDirs()
+	if len(dirs) != 1 || dirs[0].Name != "Home" || dirs[0].Path != "/Users/someone" {
+		t.Fatalf("dir seed = %+v", dirs)
+	}
 	// Idempotent: second seed adds nothing.
-	if err := s.SeedDefaults("darwin"); err != nil {
+	if err := s.SeedDefaults("darwin", "/Users/someone"); err != nil {
 		t.Fatal(err)
 	}
 	if tools, _ = s.ListTools(); len(tools) != 1 {
 		t.Fatalf("seed not idempotent: %+v", tools)
 	}
+	if dirs, _ = s.ListDirs(); len(dirs) != 1 {
+		t.Fatalf("dir seed not idempotent: %+v", dirs)
+	}
 }
 
 func TestSeedDefaultsLinux(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.SeedDefaults("linux"); err != nil {
+	if err := s.SeedDefaults("linux", "/home/someone"); err != nil {
 		t.Fatal(err)
 	}
 	tools, _ := s.ListTools()
 	if len(tools) != 1 || tools[0].Name != "bash" {
 		t.Fatalf("linux seed = %+v", tools)
+	}
+}
+
+// Each table is checked on its own, so an empty dirs table still gets seeded
+// while tools are populated, and vice versa.
+func TestSeedDefaultsSeedsTablesIndependently(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.SeedDefaults("linux", "/home/someone"); err != nil {
+		t.Fatal(err)
+	}
+	dirs, _ := s.ListDirs()
+	if err := s.DeleteDir(dirs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	// Tools are still populated, so an all-or-nothing seed would skip the dir.
+	if err := s.SeedDefaults("linux", "/home/someone"); err != nil {
+		t.Fatal(err)
+	}
+	if dirs, _ = s.ListDirs(); len(dirs) != 1 {
+		t.Fatalf("dirs after reseed = %+v", dirs)
+	}
+	tools, _ := s.ListTools()
+	if err := s.DeleteTool(tools[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedDefaults("linux", "/home/someone"); err != nil {
+		t.Fatal(err)
+	}
+	if tools, _ = s.ListTools(); len(tools) != 1 {
+		t.Fatalf("tools after reseed = %+v", tools)
+	}
+}
+
+// No home directory available is not an error; the user can add one by hand.
+func TestSeedDefaultsWithoutHome(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.SeedDefaults("linux", ""); err != nil {
+		t.Fatal(err)
+	}
+	if dirs, _ := s.ListDirs(); len(dirs) != 0 {
+		t.Fatalf("dirs = %+v", dirs)
 	}
 }

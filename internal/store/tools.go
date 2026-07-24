@@ -174,20 +174,48 @@ func checkIDSet(tx *sql.Tx, table string, ids []int64) error {
 	return nil
 }
 
-// SeedDefaults inserts the default shell tool on an empty tools table:
-// zsh on macOS, bash on Linux.
-func (s *Store) SeedDefaults(goos string) error {
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tools`).Scan(&n); err != nil {
+// SeedDefaults inserts the default shell tool on an empty tools table (zsh on
+// macOS, bash on Linux) and the user's home directory on an empty dirs table.
+// Each table is seeded independently, so clearing one out does not resurrect
+// entries the user deleted from the other. home may be empty, in which case no
+// directory is seeded.
+func (s *Store) SeedDefaults(goos, home string) error {
+	if err := s.seedTool(goos); err != nil {
 		return err
 	}
-	if n > 0 {
-		return nil
+	return s.seedDir(home)
+}
+
+func (s *Store) seedTool(goos string) error {
+	empty, err := s.isEmpty("tools")
+	if err != nil || !empty {
+		return err
 	}
 	shell := "bash"
 	if goos == "darwin" {
 		shell = "zsh"
 	}
-	_, err := s.CreateTool(shell, shell)
+	_, err = s.CreateTool(shell, shell)
 	return err
+}
+
+func (s *Store) seedDir(home string) error {
+	if home == "" {
+		return nil
+	}
+	empty, err := s.isEmpty("dirs")
+	if err != nil || !empty {
+		return err
+	}
+	_, err = s.CreateDir("Home", home)
+	return err
+}
+
+func (s *Store) isEmpty(table string) (bool, error) {
+	var n int
+	// Table names cannot be bound; they are package constants, never user input.
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+		return false, err
+	}
+	return n == 0, nil
 }

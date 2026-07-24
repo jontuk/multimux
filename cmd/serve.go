@@ -243,7 +243,9 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		return 1
 	}
 	defer st.Close()
-	if err := st.SeedDefaults(runtime.GOOS); err != nil {
+	// No home directory just means no seeded directory; not worth failing on.
+	home, _ := os.UserHomeDir()
+	if err := st.SeedDefaults(runtime.GOOS, home); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
