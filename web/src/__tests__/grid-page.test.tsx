@@ -84,7 +84,7 @@ test("launcher defaults to first tool and dir, launches into first empty tile", 
 
   const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
   expect(post).toBeTruthy();
-  expect(JSON.parse(String(post?.[1]?.body))).toEqual({ toolId: 1, dirId: 1 });
+  expect(JSON.parse(String(post?.[1]?.body))).toEqual({ toolId: 1, dirId: 1, subdir: "" });
 });
 
 test("launching when grid is full grows the grid instead of blocking", async () => {

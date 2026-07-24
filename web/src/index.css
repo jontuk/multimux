@@ -324,7 +324,20 @@ a {
   max-width: 11rem;
 }
 
+.header-launcher input.subdir {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.4rem;
+  width: 9rem;
+  min-width: 0;
+}
+
 .header-launcher select:focus-visible,
+.header-launcher input.subdir:focus-visible,
 .header-launcher button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

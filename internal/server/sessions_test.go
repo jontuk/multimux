@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,63 @@ func TestSessionCreateKillDismiss(t *testing.T) {
 	}
 	if strings.Contains(logged, dir.Path) {
 		t.Fatalf("session log exposed directory path: %s", logged)
+	}
+}
+
+func TestCreateSessionSubdir(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "web", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := st.CreateDir("tmp", base)
+
+	w := do(t, s, "POST", "/api/sessions", token,
+		fmt.Sprintf(`{"toolId":%d,"dirId":%d,"subdir":"web/src"}`, tool.ID, dir.ID))
+	if w.Code != 201 {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+	var sess store.Session
+	json.Unmarshal(w.Body.Bytes(), &sess)
+	// EvalSymlinks resolves the temp dir (/var → /private/var on macOS), so
+	// compare against the resolved base rather than the raw one.
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(realBase, "web", "src"); sess.Dir != want {
+		t.Fatalf("session dir = %q, want %q", sess.Dir, want)
+	}
+	if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
+		t.Fatal("tmux session not created")
+	}
+}
+
+// The configured dirs are the whole allow-list of launch locations: a subdir
+// must not reach outside one, and must not create anything.
+func TestCreateSessionSubdirRejected(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	base := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(base, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := st.CreateDir("tmp", base)
+
+	for _, subdir := range []string{"..", "../..", "web/../..", "escape", "/etc", "missing"} {
+		body := fmt.Sprintf(`{"toolId":%d,"dirId":%d,"subdir":%q}`, tool.ID, dir.ID, subdir)
+		if w := do(t, s, "POST", "/api/sessions", token, body); w.Code != 400 {
+			t.Fatalf("subdir %q = %d, want 400: %s", subdir, w.Code, w.Body.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(base, "missing")); !os.IsNotExist(err) {
+		t.Fatalf("a rejected launch created the subdirectory: %v", err)
+	}
+	sessions, _ := st.ListSessions()
+	if len(sessions) != 0 {
+		t.Fatalf("rejected launches left rows: %+v", sessions)
 	}
 }
 

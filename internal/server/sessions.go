@@ -6,6 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jontuk/multimux/internal/gitinfo"
@@ -48,7 +51,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	var in struct{ ToolID, DirID int64 }
+	var in struct {
+		ToolID, DirID int64
+		Subdir        string
+	}
 	if err := readJSON(r, &in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "bad body"})
 		return
@@ -79,7 +85,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "unknown tool or dir"})
 		return
 	}
-	sess, err := s.cfg.Store.CreateSession(tool.ID, dir.Path)
+	workdir, err := resolveSubdir(dir.Path, in.Subdir)
+	if err != nil {
+		// The message names no path: the client supplied the subdir, and the
+		// configured dir's location is not something the response should leak.
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	sess, err := s.cfg.Store.CreateSession(tool.ID, workdir)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
@@ -96,7 +109,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		replacedOrphan = true
 	}
-	if err := s.cfg.Tmux.CreateSession(sess.TmuxName, dir.Path, tool.Command); err != nil {
+	if err := s.cfg.Tmux.CreateSession(sess.TmuxName, workdir, tool.Command); err != nil {
 		// No orphan rows: roll the DB back when tmux fails.
 		_ = s.cfg.Store.DeleteSession(sess.ID)
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -112,6 +125,37 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"directory_id", dir.ID)
 	s.broadcast("session_created", sess)
 	writeJSON(w, 201, sess)
+}
+
+// resolveSubdir extends a configured directory with a client-supplied relative
+// path. The configured dirs are the whole allow-list for where sessions may
+// start, so the result must stay inside base: the subdir is checked after
+// cleaning and after resolving symlinks, which stops both `../..` and a symlink
+// inside base pointing out of it. The directory must already exist — a launch
+// never creates one.
+func resolveSubdir(base, subdir string) (string, error) {
+	subdir = strings.TrimSpace(subdir)
+	if subdir == "" {
+		return base, nil
+	}
+	if filepath.IsAbs(subdir) {
+		return "", errors.New("subdirectory must be relative")
+	}
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return "", errors.New("directory is unavailable")
+	}
+	full, err := filepath.EvalSymlinks(filepath.Join(realBase, subdir))
+	if err != nil {
+		return "", errors.New("subdirectory does not exist")
+	}
+	if full != realBase && !strings.HasPrefix(full, realBase+string(filepath.Separator)) {
+		return "", errors.New("subdirectory must stay inside the selected directory")
+	}
+	if info, err := os.Stat(full); err != nil || !info.IsDir() {
+		return "", errors.New("subdirectory does not exist")
+	}
+	return full, nil
 }
 
 func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {

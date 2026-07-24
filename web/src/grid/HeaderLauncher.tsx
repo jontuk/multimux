@@ -15,6 +15,7 @@ export default function HeaderLauncher({
   const [dirs, setDirs] = useState<Dir[]>([]);
   const [toolId, setToolId] = useState(0);
   const [dirId, setDirId] = useState(0);
+  const [subdir, setSubdir] = useState("");
   const [error, setError] = useState("");
   // `loading` means "this server's tools/dirs are still being fetched";
   // `busy` means "a launch is in flight".
@@ -32,6 +33,9 @@ export default function HeaderLauncher({
     setDirs([]);
     setToolId(0);
     setDirId(0);
+    // A subdir is relative to the previous daemon's directory; it rarely means
+    // the same thing on another machine, so it does not survive the switch.
+    setSubdir("");
     setError("");
     setLoading(true);
   }
@@ -76,7 +80,7 @@ export default function HeaderLauncher({
     setBusy(true);
     setError("");
     try {
-      const sess = await postJSON<Session>(server, "/api/sessions", { toolId, dirId });
+      const sess = await postJSON<Session>(server, "/api/sessions", { toolId, dirId, subdir });
       onLaunched(server, sess);
     } catch (e) {
       setError(`launch failed: ${e instanceof Error ? e.message : e}`);
@@ -118,6 +122,19 @@ export default function HeaderLauncher({
               </option>
             ))}
           </select>
+          <input
+            className="subdir"
+            aria-label="subdirectory"
+            placeholder="subdir (optional)"
+            value={subdir}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            onChange={(e) => setSubdir(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") launch();
+            }}
+          />
         </>
       )}
       <button className="launch" disabled={!canLaunch} title="launch a new session" onClick={launch}>
