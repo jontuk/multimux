@@ -49,11 +49,10 @@ func BranchStatus(dir string) (branch, state string) {
 }
 
 // WebURL converts a git remote URL to a browsable https URL. Only GitHub and
-// GitHub Enterprise remotes (hostname containing "github") are linked; other
-// hosts return "".
+// GitHub Enterprise remotes are linked; other hosts return "".
 func WebURL(remote string) string {
 	host, path := splitRemote(remote)
-	if host == "" || !strings.Contains(strings.ToLower(host), "github") {
+	if host == "" || !isGitHubHost(host) {
 		return ""
 	}
 	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
@@ -61,6 +60,24 @@ func WebURL(remote string) string {
 		return ""
 	}
 	return "https://" + host + "/" + path
+}
+
+// isGitHubHost reports whether host looks like GitHub or a GitHub Enterprise
+// install. GHE deployments are commonly named either after github itself
+// (github.corp.net) or with a "ghe" label (ghe.corp.net, corp.ghe.com). "ghe"
+// must be a whole label: a substring match would also hit hosts like
+// hughes.com.
+func isGitHubHost(host string) bool {
+	host = strings.ToLower(host)
+	if strings.Contains(host, "github") {
+		return true
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "ghe" {
+			return true
+		}
+	}
+	return false
 }
 
 func splitRemote(remote string) (host, path string) {

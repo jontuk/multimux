@@ -19,9 +19,16 @@ func TestWebURL(t *testing.T) {
 		// GitHub Enterprise: any host containing "github".
 		{"git@github.example.com:org/repo.git", "https://github.example.com/org/repo"},
 		{"https://github.corp.net/org/repo.git", "https://github.corp.net/org/repo"},
+		// GitHub Enterprise: hosts with a "ghe" label, either position, and
+		// with a non-git ssh user.
+		{"git@ghe.example.net:org/repo.git", "https://ghe.example.net/org/repo"},
+		{"acme@example.ghe.com:org/repo.git", "https://example.ghe.com/org/repo"},
+		{"https://ghe.example.net/org/repo.git", "https://ghe.example.net/org/repo"},
 		// Non-GitHub hosts are not linked.
 		{"git@gitlab.com:org/repo.git", ""},
 		{"https://bitbucket.org/org/repo.git", ""},
+		// "ghe" only counts as a whole label.
+		{"git@hughes.com:org/repo.git", ""},
 		// Garbage.
 		{"", ""},
 		{"not a url", ""},
