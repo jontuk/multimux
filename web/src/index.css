@@ -809,6 +809,44 @@ a {
   padding: 0.15rem 0.4rem;
 }
 
+/* reorder handles */
+
+.settings-page td.drag-handle {
+  width: 1.5rem;
+  padding-right: 0;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+  text-align: center;
+}
+
+.settings-page td.drag-handle:active {
+  cursor: grabbing;
+}
+
+.settings-page td.drag-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The row the pointer is currently over during a drag. */
+.settings-page td.drag-handle.drag-over {
+  color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.reorder-note,
+.reorder-error {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 0.6rem;
+}
+
+.reorder-error {
+  color: var(--error);
+}
+
 .empty-note {
   font-family: var(--mono);
   font-size: 0.85rem;

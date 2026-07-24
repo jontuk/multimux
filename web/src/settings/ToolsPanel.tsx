@@ -3,6 +3,7 @@ import { del, postJSON, putJSON } from "../api";
 import { localServer } from "../servers";
 import { useFetch } from "../useFetch";
 import PanelState from "./PanelState";
+import { useReorder } from "./useReorder";
 
 type Tool = { id: number; name: string; command: string };
 
@@ -13,7 +14,7 @@ export default function ToolsPanel() {
   const [editId, setEditId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editCommand, setEditCommand] = useState("");
-  const tools = data ?? [];
+  const { ordered: tools, handleProps, reorderError } = useReorder(data ?? [], "/api/tools/order", reload);
 
   async function add() {
     await postJSON(localServer(), "/api/tools", { name, command });
@@ -47,11 +48,16 @@ export default function ToolsPanel() {
       {!loading && !error && (
         <>
           {tools.length === 0 && <p className="empty-note">No tools yet. Add one below.</p>}
+          {tools.length > 1 && (
+            <p className="reorder-note">Drag the handle to reorder, or focus it and press the arrow keys.</p>
+          )}
+          {reorderError && <p className="reorder-error">{reorderError}</p>}
           <table>
             <tbody>
-              {tools.map((t) =>
+              {tools.map((t, i) =>
                 editId === t.id ? (
                   <tr key={t.id}>
+                    <td className="drag-handle" aria-hidden="true" />
                     <td>
                       <input aria-label="edit name" value={editName} onChange={(e) => setEditName(e.target.value)} />
                     </td>
@@ -71,6 +77,7 @@ export default function ToolsPanel() {
                   </tr>
                 ) : (
                   <tr key={t.id}>
+                    <td {...handleProps(i, t.name)}>⠿</td>
                     <td>{t.name}</td>
                     <td>
                       <code>{t.command}</code>

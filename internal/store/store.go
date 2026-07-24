@@ -58,6 +58,12 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		expires_at TEXT NOT NULL
 	);`,
+	// User-chosen ordering for tools and dirs. Backfilling position from id
+	// keeps every existing install's order exactly as it was.
+	`ALTER TABLE tools ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE dirs ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+	UPDATE tools SET position = id;
+	UPDATE dirs SET position = id;`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and

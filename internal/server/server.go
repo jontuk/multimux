@@ -70,10 +70,12 @@ func (s *Server) routes() {
 	// REST API: Tasks 13-14. WS: Tasks 16-17.
 	s.mux.HandleFunc("GET /api/tools", s.handleListTools)
 	s.mux.HandleFunc("POST /api/tools", s.handleCreateTool)
+	s.mux.HandleFunc("PUT /api/tools/order", s.handleReorderTools)
 	s.mux.HandleFunc("PUT /api/tools/{id}", s.handleUpdateTool)
 	s.mux.HandleFunc("DELETE /api/tools/{id}", s.handleDeleteTool)
 	s.mux.HandleFunc("GET /api/dirs", s.handleListDirs)
 	s.mux.HandleFunc("POST /api/dirs", s.handleCreateDir)
+	s.mux.HandleFunc("PUT /api/dirs/order", s.handleReorderDirs)
 	s.mux.HandleFunc("DELETE /api/dirs/{id}", s.handleDeleteDir)
 	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/settings", s.handlePutSettings)

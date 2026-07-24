@@ -134,6 +134,60 @@ func TestToolsCRUDOverHTTP(t *testing.T) {
 	}
 }
 
+func TestReorderToolsOverHTTP(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	var ids []int64
+	for _, name := range []string{"zsh", "claude", "codex"} {
+		tool, err := st.CreateTool(name, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, tool.ID)
+	}
+
+	body := fmt.Sprintf(`{"ids":[%d,%d,%d]}`, ids[2], ids[0], ids[1])
+	// PUT /api/tools/order must reach the reorder handler, not the "{id}" one.
+	if w := do(t, s, "PUT", "/api/tools/order", token, body); w.Code != 204 {
+		t.Fatalf("reorder = %d: %s", w.Code, w.Body.String())
+	}
+
+	w := do(t, s, "GET", "/api/tools", token)
+	var tools []store.Tool
+	json.Unmarshal(w.Body.Bytes(), &tools)
+	var names []string
+	for _, tl := range tools {
+		names = append(names, tl.Name)
+	}
+	if strings.Join(names, ",") != "codex,zsh,claude" {
+		t.Fatalf("listed order = %v, want codex,zsh,claude", names)
+	}
+
+	stale := fmt.Sprintf(`{"ids":[%d,%d]}`, ids[0], ids[1])
+	if w := do(t, s, "PUT", "/api/tools/order", token, stale); w.Code != 400 {
+		t.Fatalf("stale reorder = %d, want 400", w.Code)
+	}
+}
+
+func TestReorderDirsOverHTTP(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	a, _ := st.CreateDir("repos", "/a")
+	b, _ := st.CreateDir("tmp", "/b")
+
+	body := fmt.Sprintf(`{"ids":[%d,%d]}`, b.ID, a.ID)
+	if w := do(t, s, "PUT", "/api/dirs/order", token, body); w.Code != 204 {
+		t.Fatalf("reorder = %d: %s", w.Code, w.Body.String())
+	}
+	w := do(t, s, "GET", "/api/dirs", token)
+	var dirs []store.Dir
+	json.Unmarshal(w.Body.Bytes(), &dirs)
+	if len(dirs) != 2 || dirs[0].Name != "tmp" {
+		t.Fatalf("listed dirs = %+v", dirs)
+	}
+}
+
 func TestDirsValidation(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")

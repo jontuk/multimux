@@ -106,6 +106,47 @@ func TestOpenRejectsFutureSchema(t *testing.T) {
 	}
 }
 
+// Upgrading an install that predates the position column must preserve the
+// order its owner already sees, which is id order.
+func TestPositionBackfillPreservesExistingOrder(t *testing.T) {
+	const preOrdering = 4 // migrations up to and including auth tables
+
+	path := filepath.Join(t.TempDir(), "test.db")
+	db := rawOpen(t, path)
+	for i := range preOrdering {
+		if err := applyMigration(db, i); err != nil {
+			t.Fatalf("apply migration %d: %v", i+1, err)
+		}
+	}
+	for _, name := range []string{"zsh", "claude", "codex"} {
+		if _, err := db.Exec(`INSERT INTO tools (name, command) VALUES (?, ?)`, name, name); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO dirs (name, path) VALUES ('repos', '/repos')`); err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after upgrade: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if got := toolNames(t, s); got != "zsh,claude,codex" {
+		t.Fatalf("order after upgrade = %s, want zsh,claude,codex", got)
+	}
+	// Backfilled rows must not collide with the position given to new ones.
+	if _, err := s.CreateTool("bash", "bash"); err != nil {
+		t.Fatal(err)
+	}
+	if got := toolNames(t, s); got != "zsh,claude,codex,bash" {
+		t.Fatalf("order after adding = %s, want bash last", got)
+	}
+}
+
 // A migration that fails partway must leave neither its tables nor its version
 // bump behind.
 func TestMigrationIsAtomic(t *testing.T) {

@@ -81,6 +81,36 @@ func (s *Server) handleDeleteTool(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (s *Server) handleReorderTools(w http.ResponseWriter, r *http.Request) {
+	s.reorder(w, r, "tools", s.cfg.Store.ReorderTools)
+}
+
+func (s *Server) handleReorderDirs(w http.ResponseWriter, r *http.Request) {
+	s.reorder(w, r, "directories", s.cfg.Store.ReorderDirs)
+}
+
+// reorder applies a full-list ordering. A mismatched id set means the client is
+// working from a stale list, which is its problem to fix, so it gets a 400.
+func (s *Server) reorder(w http.ResponseWriter, r *http.Request, what string, apply func([]int64) error) {
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "ids required"})
+		return
+	}
+	if err := apply(in.IDs); err != nil {
+		if errors.Is(err, store.ErrOrderMismatch) {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	slog.Info("reordered", "what", what, "count", len(in.IDs))
+	w.WriteHeader(204)
+}
+
 func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
 	dirs, err := s.cfg.Store.ListDirs()
 	if err != nil {
