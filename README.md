@@ -123,6 +123,7 @@ multimux serve                              run the daemon in the foreground (--
 multimux service install|uninstall|status|logs   manage the launchd/systemd user service
 multimux auth reset --yes                    wipe credentials and return to setup-pending
 multimux ca trust                            install the local CA into the OS trust store
+multimux config list|get|set                 read and change user-configurable settings
 multimux --version                           print version
 ```
 
@@ -136,6 +137,24 @@ from a version that used the default tmux server, existing `mm-*` sessions
 stay on the default server; reattach to them directly with
 `tmux attach -t <name>` and let multimux create new sessions on its own
 socket (`tmux -L multimux ls` lists them).
+
+### Settings
+
+Some behaviour is configurable, from the shell or from the web Settings page's
+**Preferences** tab. Both write to the same daemon database.
+
+```sh
+multimux config list                          # every setting and its value
+multimux config get confirm-terminate         # one value, bare, for scripts
+multimux config set confirm-terminate true    # change it
+```
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `confirm-terminate` | `false` | Ask for confirmation before terminating a session. |
+
+Changes made from the shell reach open browser tabs on their next reload;
+changes made from the Preferences tab apply immediately.
 
 ## Security model 
 
