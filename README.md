@@ -153,8 +153,11 @@ multimux config set confirm-terminate true    # change it
 | --- | --- | --- |
 | `confirm-terminate` | `false` | Ask for confirmation before terminating a session. |
 
-Changes made from the shell reach open browser tabs on their next reload;
-changes made from the Preferences tab apply immediately.
+Earlier versions always confirmed before terminating a session; that prompt is
+now opt-in, so run `multimux config set confirm-terminate true` to get it back.
+
+A change applies immediately in the browser tab that saved it; every other open
+tab, and any change made from the shell, is picked up on the next reload.
 
 ## Security model 
 
