@@ -272,3 +272,57 @@ func TestAppearanceValidation(t *testing.T) {
 		t.Fatalf("empty values = %d, want 200", w.Code)
 	}
 }
+
+func TestPreferencesDefaultAndRoundTrip(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	var resp map[string]any
+	w := do(t, s, "GET", "/api/settings/preferences", token)
+	if w.Code != 200 {
+		t.Fatalf("get preferences = %d: %s", w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	// Default is off: terminating must not confirm unless asked.
+	if resp["confirmTerminate"] != false {
+		t.Fatalf("confirmTerminate = %v, want false", resp["confirmTerminate"])
+	}
+
+	w = do(t, s, "PUT", "/api/settings/preferences", token, `{"confirmTerminate":true}`)
+	if w.Code != 200 {
+		t.Fatalf("put preferences = %d: %s", w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["confirmTerminate"] != true {
+		t.Fatalf("put should echo the stored state, got %v", resp)
+	}
+
+	w = do(t, s, "GET", "/api/settings/preferences", token)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["confirmTerminate"] != true {
+		t.Fatalf("confirmTerminate did not persist: %v", resp)
+	}
+}
+
+func TestPreferencesRejectsBadBody(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	if w := do(t, s, "PUT", "/api/settings/preferences", token, `{`); w.Code != 400 {
+		t.Fatalf("malformed body = %d, want 400", w.Code)
+	}
+	if w := do(t, s, "PUT", "/api/settings/preferences", token, `{"confirmTerminate":"yes"}`); w.Code != 400 {
+		t.Fatalf("wrong type = %d, want 400", w.Code)
+	}
+}
+
+func TestPreferencesRequireAuth(t *testing.T) {
+	s, _, _ := newTestServer(t, true)
+
+	if w := do(t, s, "GET", "/api/settings/preferences", ""); w.Code != 401 {
+		t.Fatalf("unauthenticated GET = %d, want 401", w.Code)
+	}
+	if w := do(t, s, "PUT", "/api/settings/preferences", "", `{"confirmTerminate":true}`); w.Code != 401 {
+		t.Fatalf("unauthenticated PUT = %d, want 401", w.Code)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/jontuk/multimux/internal/config"
 	"github.com/jontuk/multimux/internal/identity"
 	"github.com/jontuk/multimux/internal/store"
 )
@@ -203,4 +204,30 @@ func (s *Server) handlePutAppearance(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("appearance changed", "keys", []string{"host_label", "accent_color"})
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) handleGetPreferences(w http.ResponseWriter, r *http.Request) {
+	confirmTerminate, err := config.Bool(s.cfg.Store, config.ConfirmTerminate)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"confirmTerminate": confirmTerminate})
+}
+
+func (s *Server) handlePutPreferences(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ConfirmTerminate bool `json:"confirmTerminate"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "bad body"})
+		return
+	}
+	if err := config.Set(s.cfg.Store, config.ConfirmTerminate, strconv.FormatBool(in.ConfirmTerminate)); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	slog.Info("preferences changed", "keys", []string{config.ConfirmTerminate})
+	// Echo the stored state so the client reconciles against the daemon.
+	writeJSON(w, 200, map[string]any{"confirmTerminate": in.ConfirmTerminate})
 }
