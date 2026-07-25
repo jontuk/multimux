@@ -294,11 +294,10 @@ func TestDisplayableOriginsFiltersToRPID(t *testing.T) {
 
 func TestComputeOrigins(t *testing.T) {
 	cases := []struct {
-		name        string
-		names       []string
-		port        int
-		behindProxy bool
-		want        []string
+		name  string
+		names []string
+		port  int
+		want  []string
 	}{
 		{
 			name:  "direct TLS on custom port",
@@ -311,20 +310,13 @@ func TestComputeOrigins(t *testing.T) {
 			names: []string{"mux.example.com"}, port: 443,
 			want: []string{"https://mux.example.com"},
 		},
-		{
-			// Behind Caddy/Tailscale Serve the public origin is portless; the
-			// explicit-port form stays for proxies published on odd ports.
-			name:  "behind proxy adds portless origins",
-			names: []string{"mux.example.com"}, port: 8686, behindProxy: true,
-			want: []string{"https://mux.example.com:8686", "https://mux.example.com"},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := computeOrigins(tc.names, tc.port, tc.behindProxy)
+			got := computeOrigins(tc.names, tc.port)
 			if !slices.Equal(got, tc.want) {
-				t.Fatalf("computeOrigins(%v, %d, %v) = %v, want %v",
-					tc.names, tc.port, tc.behindProxy, got, tc.want)
+				t.Fatalf("computeOrigins(%v, %d) = %v, want %v",
+					tc.names, tc.port, got, tc.want)
 			}
 		})
 	}

@@ -86,13 +86,9 @@ func applyHostname(st *store.Store, host string) error {
 
 // computeOrigins returns the browser origins allowed to authenticate against
 // this daemon (WebAuthn RP origins and the cookie-auth WebSocket origin
-// check), one or two per hostname. Browsers omit a default ":443" from the
-// Origin, so the portless form is what arrives when the daemon listens on 443
-// or sits behind a TLS-terminating proxy (Caddy, Tailscale Serve — see
-// docs/proxy.md); without it, login and terminal sockets fail behind a proxy.
-// The explicit-port form is kept in proxy mode for proxies that publish a
-// non-default port.
-func computeOrigins(names []string, port int, behindProxy bool) []string {
+// check), one per hostname. Browsers omit a default ":443" from the Origin, so
+// the portless form is what arrives when the daemon listens on 443.
+func computeOrigins(names []string, port int) []string {
 	var origins []string
 	for _, n := range names {
 		if port == 443 {
@@ -100,9 +96,6 @@ func computeOrigins(names []string, port int, behindProxy bool) []string {
 			continue
 		}
 		origins = append(origins, fmt.Sprintf("https://%s:%d", n, port))
-		if behindProxy {
-			origins = append(origins, "https://"+n)
-		}
 	}
 	return origins
 }
@@ -206,10 +199,6 @@ flags:
                       machine's OS trust store (same as "multimux ca trust").
                       Convenience for first-run setup; failure is non-fatal.
   --port <n>          listen port (persisted; default from settings, else 8686)
-  --behind-proxy      serve plain HTTP on 127.0.0.1 and trust X-Forwarded-*, to
-                      terminate TLS at a reverse proxy (Caddy, Tailscale Serve).
-                      Runtime-only — NOT persisted, so a service install cannot
-                      enable it.
   --dev               DEV MODE for throwaway installs only (see docs/security.md).
 
 Environment:
@@ -221,7 +210,6 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	fs2 := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs2.SetOutput(stderr)
 	fs2.Usage = func() { fmt.Fprint(stderr, serveUsage) }
-	behindProxy := fs2.Bool("behind-proxy", false, "plain HTTP on localhost, trust X-Forwarded-*")
 	port := fs2.Int("port", 0, "listen port (default from settings, else 8686)")
 	hostname := fs2.String("hostname", "", "hostname browsers reach this daemon at; must contain a dot or be \"localhost\" (persisted; default from settings, else os.Hostname; env MULTIMUX_HOSTNAME)")
 	dev := fs2.Bool("dev", false, "DEV MODE: RP ID localhost, allow the Vite dev origin http://localhost:5173 (throwaway MULTIMUX_DATA_DIR only)")
@@ -286,7 +274,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		return 1
 	}
 	rpID := rpIDForHost(names[0])
-	origins := computeOrigins(names, *port, *behindProxy)
+	origins := computeOrigins(names, *port)
 	if *dev {
 		rpID = "localhost"
 		origins = devOrigins(origins, *port)
@@ -331,17 +319,6 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 			return 1
 		}
 		fmt.Fprint(stdout, setupBanner(display, code))
-	}
-
-	if *behindProxy {
-		addr := fmt.Sprintf("127.0.0.1:%d", *port)
-		fmt.Fprintf(stdout, "multimux %s listening on http://%s (proxy mode)\n", version, addr)
-		httpSrv := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
-		if err := httpSrv.ListenAndServe(); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
 	}
 
 	p := pki.New(filepath.Join(dir, "pki"))

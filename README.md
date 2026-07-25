@@ -122,7 +122,7 @@ refuses any change that would alter the RP ID and points you at
 ## Commands
 
 ```
-multimux serve                               run the daemon in the foreground (--hostname, --trust-ca, --port, --dev, --behind-proxy)
+multimux serve                               run the daemon in the foreground (--hostname, --trust-ca, --port, --dev)
 multimux service install|uninstall|upgrade|status|logs   manage the launchd/systemd user service
 multimux auth reset --yes                    wipe credentials and return to setup-pending
 multimux ca trust                            install the local CA into the OS trust store
@@ -131,10 +131,9 @@ multimux --version                           print version
 ```
 
 `serve` accepts `--trust-ca` (install the local CA into this machine's trust
-store once it exists — first-run convenience, non-fatal if it fails),
-`--port <n>` (overrides the stored setting) and `--behind-proxy` (plain HTTP on
-localhost, trusting `X-Forwarded-*` — see [docs/proxy.md](docs/proxy.md)).
-`multimux help serve` prints the full flag list.
+store once it exists — first-run convenience, non-fatal if it fails) and
+`--port <n>` (overrides the stored setting). `multimux help serve` prints the
+full flag list.
 
 **Upgrading a managed install** is one step: `multimux service upgrade` fetches
 the latest release binary (the same `install.sh` path as a fresh install) and
@@ -313,6 +312,5 @@ Releases are cut by pushing a `v*` tag; goreleaser
   service management, upgrades.
 - [docs/security.md](docs/security.md) — threat model, passkey lifecycle, session
   storage, RP-ID/hostname warnings, cross-daemon design.
-- [docs/proxy.md](docs/proxy.md) — running behind Caddy or Tailscale Serve.
 - [docs/work-network.md](docs/work-network.md) — managed devices, corporate DNS,
   and recovery.

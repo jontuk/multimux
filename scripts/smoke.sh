@@ -26,14 +26,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --behind-proxy serves plain HTTP on 127.0.0.1, which skips local-CA
-# generation and lets curl work without --insecure; the handler chain (and so
-# the static/embedded-asset path) is identical to the TLS listener.
+# The daemon terminates TLS with a local CA generated into the throwaway data
+# dir, so every curl below needs -k: that CA is in no trust store and is
+# discarded with the directory.
 # --dev puts the daemon on a tmux socket derived from the throwaway data dir,
 # so a smoke run never touches the user's real multimux tmux server.
 start_daemon() {
   port=$((20000 + RANDOM % 20000))
-  MULTIMUX_DATA_DIR="$data_dir" "$bin" serve --dev --behind-proxy --port "$port" \
+  MULTIMUX_DATA_DIR="$data_dir" "$bin" serve --dev --port "$port" \
     >"$log" 2>&1 &
   pid=$!
   # Poll rather than sleep: ready as soon as /healthz answers, and bail early
@@ -45,7 +45,7 @@ start_daemon() {
       pid=""
       return 1
     fi
-    if curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; then
+    if curl -fsSk -m 2 -o /dev/null "https://127.0.0.1:$port/healthz" 2>/dev/null; then
       return 0
     fi
     sleep 0.1
@@ -72,7 +72,7 @@ while :; do
   exit 1
 done
 
-code=$(curl -sS -m 10 -o "$body" -w '%{http_code}' "http://127.0.0.1:$port/")
+code=$(curl -sSk -m 10 -o "$body" -w '%{http_code}' "https://127.0.0.1:$port/")
 if [ "$code" != "200" ]; then
   echo "smoke: GET / returned $code, want 200" >&2
   head -c 500 "$body" >&2
@@ -97,7 +97,7 @@ done
 # 200, so a missing asset would otherwise look like a pass.
 asset=$(grep -o '/assets/index-[A-Za-z0-9_-]*\.js' "$body" | head -1)
 read -r code ctype <<EOF
-$(curl -sS -m 10 -o /dev/null -w '%{http_code} %{content_type}' "http://127.0.0.1:$port$asset")
+$(curl -sSk -m 10 -o /dev/null -w '%{http_code} %{content_type}' "https://127.0.0.1:$port$asset")
 EOF
 case "$code/$ctype" in
   200/*javascript*) ;;

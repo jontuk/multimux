@@ -26,8 +26,7 @@ captures MULTIMUX_DATA_DIR and MULTIMUX_HOSTNAME from the installing shell into
 the unit, so the service uses the same data directory. Change either variable
 later and you must re-run "multimux service install". To set a port, persist it
 first (run "multimux serve --port <n>" once, then Ctrl-C) or use the Settings
-page. --behind-proxy is runtime-only and NOT persisted, so a service install
-always runs in direct-TLS mode.
+page.
 
 "upgrade" pipes the project's install.sh into sh and then, if a unit is already
 installed, reinstalls it so it points at the freshly downloaded binary and the

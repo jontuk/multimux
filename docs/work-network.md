@@ -7,20 +7,15 @@ restrictions, `.local` name resolution, and recovering a corrupted database.
 ## Managed devices that block custom root CAs
 
 Many MDM-managed machines forbid adding custom root certificate authorities, or
-flag them for review. multimux mitigates this two ways:
+flag them for review. **Name constraints make multimux's CA far less
+objectionable.** The local CA is X.509 name-constrained to only its own hostnames
+(see [docs/security.md](security.md)). Unlike a normal root CA, it is
+cryptographically unable to sign certificates for any other domain, so trusting it
+cannot be used to MITM your bank or your employer's intranet. Where a policy allows
+_constrained_ roots, this is the CA to point at.
 
-- **Name constraints make the CA far less objectionable.** multimux's local CA is
-  X.509 name-constrained to only its own hostnames (see
-  [docs/security.md](security.md)). Unlike a normal root CA, it is
-  cryptographically unable to sign certificates for any other domain, so trusting
-  it cannot be used to MITM your bank or your employer's intranet. Where a policy
-  allows _constrained_ roots, this is the CA to point at.
-
-- **`--behind-proxy` is the escape hatch.** If you cannot add a root CA at all,
-  don't. Run the daemon in proxy mode and terminate TLS at something whose
-  certificate the device already trusts — most cleanly
-  [Tailscale Serve](proxy.md#worked-example-tailscale-serve), whose certificate is
-  trusted without any local CA install. See [docs/proxy.md](proxy.md).
+multimux always terminates TLS itself, so a device that can install no custom root
+at all cannot reach it in a browser — there is no reverse-proxy mode.
 
 ## Connecting from another machine
 
@@ -31,13 +26,9 @@ laptop trusts the CA. The catch: running `multimux ca trust` on the laptop trust
 the *laptop's* local CA, which is a different key from the one the remote daemon
 serves.
 
-Two ways to close that gap.
-
-### Option A — trust the remote CA (no reverse proxy)
-
-Run the daemon in its default direct-TLS mode and copy its CA to the client. This
-keeps the setup simple — no proxy — and works under `multimux service install`,
-since the installed unit runs a bare `multimux serve` with no flags.
+Close it by copying the daemon's CA to the client. This works under
+`multimux service install`, since the installed unit runs a bare `multimux serve`
+with no flags.
 
 1. **On the remote box**, pick a stable hostname up front (it becomes the WebAuthn
    RP ID; a Tailscale MagicDNS name is ideal because it resolves from anywhere on
@@ -64,14 +55,6 @@ since the installed unit runs a bare `multimux serve` with no flags.
 3. Open `https://<box>.<tailnet>.ts.net:8686/` on the client and register a
    passkey. On Linux clients, remember the Firefox/Chromium NSS caveat from
    [docs/install.md](install.md#linux-browser-caveat-firefox--chromium).
-
-### Option B — terminate TLS at Tailscale Serve (no CA install)
-
-If you would rather not install any CA on the client, put the daemon behind
-[Tailscale Serve](proxy.md#worked-example-tailscale-serve), whose certificate the
-client already trusts. This needs `--behind-proxy`, which is runtime-only and not
-persisted, so it does **not** work through `multimux service install` without
-hand-editing the unit. See [docs/proxy.md](proxy.md).
 
 ## Corporate DNS that blocks mDNS / `.local`
 
