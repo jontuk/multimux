@@ -9,6 +9,10 @@ import GridPage from "./grid/GridPage";
 import { APPEARANCE_EVENT, type AppearanceDetail } from "./settings/AppearancePanel";
 import { PREFERENCES_EVENT, type Preferences, type PreferencesDetail } from "./settings/PreferencesPanel";
 
+// Matches defaultThemeColor in internal/server/pwa.go and the static
+// theme-color in index.html: the fallback when no accent is configured.
+const DEFAULT_THEME_COLOR = "#18142d";
+
 type Health = {
   status: string;
   setupPending: boolean;
@@ -62,6 +66,14 @@ export default function App() {
   useEffect(() => {
     document.title = health?.hostLabel ? `multimux @${health.hostLabel}` : "multimux";
   }, [health?.hostLabel]);
+
+  // index.html ships a static theme-color so the browser has one before React
+  // boots; once the accent is known it wins, otherwise we restore the default.
+  // Without this the meta tag overrides the manifest's per-host theme_color.
+  useEffect(() => {
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (meta) meta.content = health?.accentColor || DEFAULT_THEME_COLOR;
+  }, [health?.accentColor]);
 
   useEffect(() => {
     const onHash = () => setRoute(window.location.hash || "#/");

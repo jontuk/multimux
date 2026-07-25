@@ -1,12 +1,25 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import App from "../App";
 import AppearancePanel, { APPEARANCE_EVENT } from "../settings/AppearancePanel";
 
+// index.html ships this tag; jsdom starts with a bare document, so recreate it.
+beforeEach(() => {
+  const meta = document.createElement("meta");
+  meta.name = "theme-color";
+  meta.content = "#18142d";
+  document.head.append(meta);
+});
+
 afterEach(() => {
+  themeColor()?.remove();
   vi.restoreAllMocks();
 });
+
+function themeColor() {
+  return document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+}
 
 function mockFetchByURL(routes: Record<string, () => Response>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
@@ -44,6 +57,7 @@ test("app appearance follows healthz and live updates", async () => {
   expect(header).not.toBeNull();
   expect(header.style.getPropertyValue("--host-accent")).toBe("#3fb950");
   expect(document.title).toBe("multimux @work-mac");
+  expect(themeColor()?.content).toBe("#3fb950");
 
   window.dispatchEvent(
     new CustomEvent(APPEARANCE_EVENT, {
@@ -52,6 +66,7 @@ test("app appearance follows healthz and live updates", async () => {
   );
 
   await waitFor(() => expect(document.title).toBe("multimux @home-server"));
+  expect(themeColor()?.content).toBe("#ff0000");
   fetchMock.mockRestore();
 });
 
@@ -77,6 +92,7 @@ test("browser title falls back to multimux without a host label", async () => {
   render(<App />);
 
   await waitFor(() => expect(document.title).toBe("multimux"));
+  expect(themeColor()?.content).toBe("#18142d");
   fetchMock.mockRestore();
 });
 
