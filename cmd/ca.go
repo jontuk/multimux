@@ -50,7 +50,7 @@ are printed before the trust is installed.
 Platform notes:
   macOS   adds to your login keychain (Keychain may prompt once; no sudo).
   Linux   copies into the system trust anchors and refreshes (needs sudo).
-          Firefox/Chromium keep their own NSS store — see docs/install.md.
+          Firefox/Chromium keep their own NSS store — see the README.
 `
 
 func runCA(args []string, stdout, stderr io.Writer) int {

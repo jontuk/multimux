@@ -46,8 +46,8 @@ var dirExists = func(path string) bool {
 // darwin: adds to the user's login keychain (no sudo; Keychain prompts once).
 // linux: copies into the distro's anchors dir and refreshes — needs sudo, and
 // therefore takes two commands.
-// Note for docs: Firefox/Chromium on Linux use their own NSS store; see
-// docs/install.md for the certutil incantation.
+// Note for docs: Firefox/Chromium on Linux use their own NSS store; see the
+// README for the certutil incantation.
 func TrustCommands(goos, caPath string) ([]*exec.Cmd, error) {
 	switch goos {
 	case "darwin":

@@ -199,7 +199,7 @@ flags:
                       machine's OS trust store (same as "multimux ca trust").
                       Convenience for first-run setup; failure is non-fatal.
   --port <n>          listen port (persisted; default from settings, else 8686)
-  --dev               DEV MODE for throwaway installs only (see docs/security.md).
+  --dev               DEV MODE for throwaway installs only (see the README).
 
 Environment:
   MULTIMUX_HOSTNAME   default for --hostname
