@@ -54,9 +54,9 @@ func TestBranchStatus(t *testing.T) {
 	}
 	check := func(label, wantBranch, wantState string) {
 		t.Helper()
-		branch, state := BranchStatus(dir)
-		if branch != wantBranch || state != wantState {
-			t.Errorf("%s: BranchStatus = (%q, %q), want (%q, %q)", label, branch, state, wantBranch, wantState)
+		st := BranchStatus(dir)
+		if st.Branch != wantBranch || st.State != wantState {
+			t.Errorf("%s: BranchStatus = (%q, %q), want (%q, %q)", label, st.Branch, st.State, wantBranch, wantState)
 		}
 	}
 
@@ -79,6 +79,71 @@ func TestBranchStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("both", "feat", "untracked")
+}
+
+func TestBranchStatusUpstream(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	remote := root + "/remote.git"
+	work := root + "/work"
+	other := root + "/other"
+
+	run := func(dir string, args ...string) {
+		t.Helper()
+		// Identity is set per-command so the test does not depend on the
+		// machine's global git config.
+		full := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=test"}
+		cmd := exec.Command("git", append(full, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	commit := func(dir, name string) {
+		t.Helper()
+		if err := os.WriteFile(dir+"/"+name, []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run(dir, "add", name)
+		run(dir, "commit", "-m", name)
+	}
+	check := func(label string, wantAhead, wantBehind int, wantNoUpstream bool) {
+		t.Helper()
+		st := BranchStatus(work)
+		if st.Ahead != wantAhead || st.Behind != wantBehind || st.NoUpstream != wantNoUpstream {
+			t.Errorf("%s: ahead=%d behind=%d noUpstream=%v, want %d/%d/%v",
+				label, st.Ahead, st.Behind, st.NoUpstream, wantAhead, wantBehind, wantNoUpstream)
+		}
+	}
+
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(root, "init", "--bare", remote)
+	run(root, "init", work)
+	run(work, "checkout", "-b", "main")
+
+	// Unborn branch: nothing has been committed, so there is nothing unpushed.
+	check("unborn", 0, 0, false)
+
+	commit(work, "a.txt")
+	// Committed but never pushed, and no tracking branch configured.
+	check("no upstream", 0, 0, true)
+
+	run(work, "remote", "add", "origin", remote)
+	run(work, "push", "-u", "origin", "main")
+	check("pushed", 0, 0, false)
+
+	commit(work, "b.txt")
+	check("ahead", 1, 0, false)
+
+	// A second clone pushes a commit the work tree has not seen yet.
+	run(root, "clone", remote, other)
+	commit(other, "c.txt")
+	run(other, "push")
+	run(work, "fetch")
+	check("diverged", 1, 1, false)
 }
 
 func TestRepoWebURL(t *testing.T) {

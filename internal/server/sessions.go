@@ -22,11 +22,19 @@ type sessionJSON struct {
 	RepoURL  string `json:"repoUrl,omitempty"`
 	Branch   string `json:"branch,omitempty"`
 	GitState string `json:"gitState,omitempty"`
+	// Ahead/Behind count commits against the upstream branch; NoUpstream
+	// marks a branch that has never been pushed anywhere.
+	Ahead      int  `json:"ahead,omitempty"`
+	Behind     int  `json:"behind,omitempty"`
+	NoUpstream bool `json:"noUpstream,omitempty"`
 }
 
-// dirGitInfo is the per-directory git data resolved while listing sessions.
+// dirGitInfo is the per-directory git data resolved while listing sessions. It
+// must stay comparable — CheckGitInfo diffs values with != to decide whether
+// to broadcast.
 type dirGitInfo struct {
-	url, branch, state string
+	url string
+	gitinfo.Status
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -42,10 +50,18 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		info, ok := infos[sess.Dir]
 		if !ok {
 			info.url = gitinfo.RepoWebURL(sess.Dir)
-			info.branch, info.state = gitinfo.BranchStatus(sess.Dir)
+			info.Status = gitinfo.BranchStatus(sess.Dir)
 			infos[sess.Dir] = info
 		}
-		out = append(out, sessionJSON{Session: sess, RepoURL: info.url, Branch: info.branch, GitState: info.state})
+		out = append(out, sessionJSON{
+			Session:    sess,
+			RepoURL:    info.url,
+			Branch:     info.Branch,
+			GitState:   info.State,
+			Ahead:      info.Ahead,
+			Behind:     info.Behind,
+			NoUpstream: info.NoUpstream,
+		})
 	}
 	writeJSON(w, 200, out)
 }
@@ -314,9 +330,7 @@ func (s *Server) CheckGitInfo() error {
 		if _, ok := seen[sess.Dir]; ok {
 			continue
 		}
-		var info dirGitInfo
-		info.branch, info.state = gitinfo.BranchStatus(sess.Dir)
-		seen[sess.Dir] = info
+		seen[sess.Dir] = dirGitInfo{Status: gitinfo.BranchStatus(sess.Dir)}
 	}
 	changed := false
 	if s.gitSeen != nil {

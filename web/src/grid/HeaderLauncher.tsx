@@ -125,7 +125,7 @@ export default function HeaderLauncher({
           <input
             className="subdir"
             aria-label="subdirectory"
-            placeholder="subdir (optional)"
+            placeholder="subdir"
             value={subdir}
             spellCheck={false}
             autoCapitalize="off"

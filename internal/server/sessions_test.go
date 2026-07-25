@@ -448,6 +448,15 @@ func TestListSessionsIncludesBranchAndGitState(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
+	// A commit with no remote makes the branch never-pushed; a.txt stays
+	// untracked on top of it.
+	for _, args := range [][]string{
+		{"-C", repo, "-c", "user.email=t@example.com", "-c", "user.name=test", "commit", "--allow-empty", "-m", "init"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
 	if err := os.WriteFile(repo+"/a.txt", []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -460,8 +469,9 @@ func TestListSessionsIncludesBranchAndGitState(t *testing.T) {
 		t.Fatalf("list = %d: %s", w.Code, w.Body.String())
 	}
 	var got []struct {
-		Branch   string `json:"branch"`
-		GitState string `json:"gitState"`
+		Branch     string `json:"branch"`
+		GitState   string `json:"gitState"`
+		NoUpstream bool   `json:"noUpstream"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if len(got) != 2 {
@@ -470,8 +480,11 @@ func TestListSessionsIncludesBranchAndGitState(t *testing.T) {
 	if got[0].Branch != "feat" || got[0].GitState != "untracked" {
 		t.Errorf("repo session = (%q, %q), want (feat, untracked)", got[0].Branch, got[0].GitState)
 	}
-	if got[1].Branch != "" || got[1].GitState != "" {
-		t.Errorf("non-repo session = (%q, %q), want empty", got[1].Branch, got[1].GitState)
+	if !got[0].NoUpstream {
+		t.Error("repo session noUpstream = false, want true (committed, no remote)")
+	}
+	if got[1].Branch != "" || got[1].GitState != "" || got[1].NoUpstream {
+		t.Errorf("non-repo session = (%q, %q, %v), want empty", got[1].Branch, got[1].GitState, got[1].NoUpstream)
 	}
 }
 

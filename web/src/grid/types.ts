@@ -7,6 +7,9 @@ export type Session = {
   repoUrl?: string;
   branch?: string;
   gitState?: "untracked" | "modified" | "clean";
+  ahead?: number;
+  behind?: number;
+  noUpstream?: boolean;
 };
 export type Tool = { id: number; name: string; command: string };
 export type Dir = { id: number; name: string; path: string };

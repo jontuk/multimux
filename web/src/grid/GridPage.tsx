@@ -49,6 +49,35 @@ const gitStateTitles = {
   clean: "working tree clean",
 } as const;
 
+// Commits the branch holds that its upstream does not, and vice versa. A
+// branch that was never pushed shows "↑?" — the whole history is unpushed, but
+// with no upstream there is no count to report.
+function TrackingMarks({ session }: { session: Session }) {
+  const { ahead = 0, behind = 0, noUpstream } = session;
+  if (noUpstream) {
+    return (
+      <span className="git-track git-track-unpushed" title="branch has never been pushed">
+        ↑?
+      </span>
+    );
+  }
+  if (!ahead && !behind) return null;
+  return (
+    <>
+      {ahead > 0 && (
+        <span className="git-track git-track-ahead" title={`${ahead} commit(s) not pushed`}>
+          ↑{ahead}
+        </span>
+      )}
+      {behind > 0 && (
+        <span className="git-track git-track-behind" title={`${behind} commit(s) not pulled`}>
+          ↓{behind}
+        </span>
+      )}
+    </>
+  );
+}
+
 function tileKey(t: NonNullable<Tile>): string {
   return `${t.serverId}:${t.sessionId}`;
 }
@@ -372,7 +401,8 @@ export default function GridPage({
                             className={`git-dot git-dot-${session.gitState}`}
                             title={gitStateTitles[session.gitState]}
                           />
-                          {session.branch}
+                          <span className="tile-branch-name">{session.branch}</span>
+                          <TrackingMarks session={session} />
                         </span>
                       )}
                       {session?.repoUrl && (

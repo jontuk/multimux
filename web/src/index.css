@@ -332,7 +332,7 @@ a {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.3rem 0.4rem;
-  width: 9rem;
+  width: 5rem;
   min-width: 0;
 }
 
@@ -563,6 +563,28 @@ a {
 
 .git-dot-clean {
   background: #57ab5a;
+}
+
+/* The name yields first, so the tracking counts survive a long branch name. */
+.tile-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* flex: none keeps the counts visible when a long branch name is ellipsised. */
+.git-track {
+  flex: none;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-track-ahead,
+.git-track-unpushed {
+  color: #d29922;
+}
+
+.git-track-behind {
+  color: #539bf5;
 }
 
 .tile-repo-link {

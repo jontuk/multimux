@@ -19,9 +19,21 @@ const sessions = [
     repoUrl: "https://github.com/org/repo",
     branch: "feat",
     gitState: "untracked",
+    ahead: 2,
+    behind: 1,
   },
   { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/b", status: "running" },
   { id: 4, tmuxName: "mm-4", toolId: 1, dir: "/c", status: "dead" },
+  {
+    id: 5,
+    tmuxName: "mm-5",
+    toolId: 1,
+    dir: "/d",
+    status: "running",
+    branch: "wip",
+    gitState: "clean",
+    noUpstream: true,
+  },
 ];
 const tools = [
   { id: 1, name: "claude", command: "claude" },
@@ -161,6 +173,28 @@ test("tile header shows branch name and git state dot when the session dir is a 
   const dot = screen.getByTitle("untracked files present");
   expect(dot.className).toContain("git-dot-untracked");
   expect(screen.getAllByText("feat")).toHaveLength(1);
+});
+
+test("tile header shows ahead/behind counts and marks a never-pushed branch", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 5 },
+    ],
+  };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await screen.findByTestId("term-5");
+
+  // Session 1 is 2 ahead / 1 behind its upstream.
+  expect(await screen.findByText("↑2")).toBeTruthy();
+  expect(screen.getByText("↓1")).toBeTruthy();
+  // Session 5 has commits but no upstream at all.
+  const unpushed = screen.getByTitle("branch has never been pushed");
+  expect(unpushed.textContent).toBe("↑?");
 });
 
 test("git_changed event refetches sessions", async () => {

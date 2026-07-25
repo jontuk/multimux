@@ -6,6 +6,7 @@ package gitinfo
 import (
 	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -28,32 +29,100 @@ func RepoWebURL(dir string) string {
 	return WebURL(strings.TrimSpace(string(out)))
 }
 
-// BranchStatus reports dir's checked-out branch and working-tree state:
-// "untracked" when untracked files exist (regardless of other changes),
-// "modified" when only tracked files have changes, "clean" otherwise. Both
-// results are empty when dir is not a git repo or git is absent. On a
-// detached HEAD the branch is empty but the state is still reported.
-func BranchStatus(dir string) (branch, state string) {
-	out, err := git(dir, "status", "--porcelain").Output()
+// Status is a directory's git state as of one inspection. The zero value means
+// "not a git repo" — State is empty in that case and never otherwise.
+type Status struct {
+	// Branch is the checked-out branch, empty on a detached HEAD.
+	Branch string
+	// State is "untracked", "modified" or "clean".
+	State string
+	// Ahead and Behind count commits relative to the upstream branch; both
+	// are zero when there is no upstream.
+	Ahead, Behind int
+	// NoUpstream marks a branch with commits but no tracking branch — its
+	// history has never been pushed anywhere.
+	NoUpstream bool
+}
+
+// BranchStatus reports dir's branch, working-tree state and position relative
+// to its upstream. State is "untracked" when untracked files exist (regardless
+// of other changes), "modified" when only tracked files have changes, "clean"
+// otherwise. The zero Status is returned when dir is not a git repo or git is
+// absent. On a detached HEAD the branch is empty but the rest is still
+// reported.
+func BranchStatus(dir string) Status {
+	// --branch adds a "## " header carrying the upstream and the ahead/behind
+	// counts, so divergence costs no extra git process.
+	out, err := git(dir, "status", "--porcelain", "--branch").Output()
 	if err != nil {
-		return "", ""
+		return Status{}
 	}
-	state = "clean"
+	st := Status{State: "clean"}
 	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "## ") {
+			st.Ahead, st.Behind, st.NoUpstream = parseBranchHeader(line)
+			continue
+		}
 		if strings.HasPrefix(line, "??") {
-			state = "untracked"
+			st.State = "untracked"
 			break
 		}
 		if line != "" {
-			state = "modified"
+			st.State = "modified"
 		}
 	}
 	// symbolic-ref works on an unborn branch (fresh init); it fails on a
 	// detached HEAD, where we leave the branch empty.
 	if b, err := git(dir, "symbolic-ref", "--short", "-q", "HEAD").Output(); err == nil {
-		branch = strings.TrimSpace(string(b))
+		st.Branch = strings.TrimSpace(string(b))
 	}
-	return branch, state
+	return st
+}
+
+// parseBranchHeader reads the "## " line of `git status --porcelain --branch`.
+// The forms are:
+//
+//	## main...origin/main [ahead 2, behind 1]
+//	## main...origin/main
+//	## main                      (no upstream configured)
+//	## No commits yet on main    (unborn branch)
+//	## HEAD (no branch)          (detached HEAD)
+//
+// Only a branch that has commits but no upstream counts as never-pushed: an
+// unborn branch has nothing to push, and a detached HEAD is not a branch.
+func parseBranchHeader(line string) (ahead, behind int, noUpstream bool) {
+	rest := strings.TrimPrefix(line, "## ")
+	if strings.HasPrefix(rest, "No commits yet on ") || strings.HasPrefix(rest, "HEAD (no branch)") {
+		return 0, 0, false
+	}
+	name, tracking, found := strings.Cut(rest, "...")
+	if !found {
+		// Bare branch name: no tracking branch configured. Guard against a
+		// branch literally named "No commits yet on x" being misread above by
+		// requiring a non-empty name here.
+		return 0, 0, strings.TrimSpace(name) != ""
+	}
+	open := strings.Index(tracking, " [")
+	if open < 0 || !strings.HasSuffix(tracking, "]") {
+		return 0, 0, false
+	}
+	for _, part := range strings.Split(tracking[open+2:len(tracking)-1], ", ") {
+		kind, num, ok := strings.Cut(part, " ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil {
+			continue
+		}
+		switch kind {
+		case "ahead":
+			ahead = n
+		case "behind":
+			behind = n
+		}
+	}
+	return ahead, behind, false
 }
 
 // WebURL converts a git remote URL to a browsable https URL. Only GitHub and
