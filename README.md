@@ -10,8 +10,7 @@ you reattach and your scrollback is still there. Access is gated by
 daemon minting its own name-constrained local certificate authority so you get
 `https://` without a certificate warning and without a public CA.
 
-> _Screenshot placeholder: the terminal grid with several tiles running Claude
-> Code, a shell, and a build watcher side by side._
+<img width="1706" height="875" alt="image" src="https://github.com/user-attachments/assets/f76b818b-55e1-407a-b630-b4239542a546" />
 
 ## Install
 
