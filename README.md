@@ -41,48 +41,51 @@ Privacy & Security → **Open Anyway**. (Binaries fetched by the install script 
 
 ## Quick start
 
-1. **Install the background service** (launchd on macOS, systemd user unit on
-   Linux). This starts the daemon and keeps it running across logout/login:
+1. **Run the daemon once in the foreground with `--trust-ca`.** This picks the
+   hostname, generates the local CA *and* installs it into this machine's trust
+   store, then prints the setup URL to your terminal — one command instead of
+   three:
+
+   ```
+   multimux serve --hostname your-machine.example.com --trust-ca
+   ```
+
+   ```
+   === multimux setup ===
+   Open: https://your-machine.example.com:8686/setup?code=ABC123
+   (code expires in 15 minutes; restart to regenerate)
+   ```
+
+   `--hostname` is optional — leave it off and the daemon uses your OS hostname
+   (plus a `.local` mDNS form). Either way the name is persisted, so later runs
+   and `multimux service install` reuse it. Pick a name that resolves from the
+   device you'll browse on (`ping your-machine.example.com`) and get it right
+   *before* registering a passkey — see the next section. `--trust-ca` is the
+   same work as `multimux ca trust`, and failing to trust is non-fatal: the
+   daemon still starts and tells you.
+
+   Trusting the CA matters **before** you open the setup URL: browsers refuse
+   WebAuthn (passkey creation) on pages served with an untrusted certificate,
+   so registration fails if you skip it. Run it once per *client* machine —
+   any other laptop or tablet you browse from needs its own `multimux ca trust`.
+   See [docs/install.md](docs/install.md) for the per-browser details on Linux.
+
+2. **Open the setup URL** in a browser on the same machine or network. Your
+   browser prompts you to create a passkey (Touch ID, Windows Hello, a security
+   key, or a phone). That passkey becomes your login; the setup code is then
+   consumed and the daemon is no longer setup-pending.
+
+3. **Install the background service** (launchd on macOS, systemd user unit on
+   Linux) so the daemon keeps running across logout/login. Stop the foreground
+   daemon first:
 
    ```
    multimux service install
    ```
 
-   On first run the daemon prints a one-time **setup URL** to its log, for
-   example:
-
-   ```
-   === multimux setup ===
-   Open: https://your-host.local:8686/setup?code=ABC123
-   (code expires in 15 minutes; restart to regenerate)
-   ```
-
-   View the daemon log with `multimux service logs` (less on
-   `~/.local/share/multimux/multimux.log` on macOS, `journalctl --user -u
-   multimux` on Linux). You can also run
-   the daemon in the foreground with `multimux serve`, which prints the setup URL
-   straight to the terminal.
-
-2. **Trust the local CA** — and do it **before** opening the setup URL:
-   browsers refuse WebAuthn (passkey creation) on pages served with an
-   untrusted certificate, so registration fails if you skip this. The CA
-   exists as soon as the daemon has started once. Run once per client machine:
-
-   ```
-   multimux ca trust
-   ```
-
-   See [docs/install.md](docs/install.md) for the per-browser details on Linux.
-
-3. **Open the setup URL** in a browser on the same machine or network. Your
-   browser prompts you to create a passkey (Touch ID, Windows Hello, a security
-   key, or a phone). That passkey becomes your login; the setup code is then
-   consumed and the daemon is no longer setup-pending.
-
-   The URL uses your machine's hostname — **check that it resolves from the
-   device you're browsing on** (`ping your-host.local`). If it doesn't, fix
-   the hostname *first* (next section), so you don't register a passkey
-   against a name you can't reach.
+   It reuses the hostname, port, and CA you just set up. View its log with
+   `multimux service logs` (`~/.local/share/multimux/multimux.log` on macOS,
+   `journalctl --user -u multimux` on Linux).
 
 The daemon listens on **port 8686** by default (configurable) and stores its data
 under `~/.local/share/multimux` (override with the `MULTIMUX_DATA_DIR`
@@ -101,7 +104,7 @@ reachable through Tailscale or internal DNS. Restart with a name that does
 resolve:
 
 ```bash
-multimux serve --hostname your-machine.your-tailnet.ts.net
+multimux serve --hostname your-machine.your-tailnet.ts.net --trust-ca
 ```
 
 The name is persisted (the `MULTIMUX_HOSTNAME` environment variable works too,
@@ -110,7 +113,8 @@ doubles as the WebAuthn **RP ID** your passkey is bound to; see
 [docs/security.md](docs/security.md#rp-id-and-the-hostname-change-warning).
 Good choices: a Tailscale MagicDNS FQDN or a name your internal DNS serves —
 see [docs/work-network.md](docs/work-network.md). The daemon regenerates its
-CA and leaf certificate for the new name, so re-run `multimux ca trust`.
+CA and leaf certificate for the new name, which is why `--trust-ca` above
+re-installs it; from the service, re-run `multimux ca trust` by hand.
 Do this **before** registering your passkey: once passkeys exist, `--hostname`
 refuses any change that would alter the RP ID and points you at
 `multimux auth reset --yes`.
@@ -118,7 +122,7 @@ refuses any change that would alter the RP ID and points you at
 ## Commands
 
 ```
-multimux serve                              run the daemon in the foreground (--port, --hostname, --dev, --behind-proxy)
+multimux serve                               run the daemon in the foreground (--hostname, --trust-ca, --port, --dev, --behind-proxy)
 multimux service install|uninstall|upgrade|status|logs   manage the launchd/systemd user service
 multimux auth reset --yes                    wipe credentials and return to setup-pending
 multimux ca trust                            install the local CA into the OS trust store
@@ -126,9 +130,16 @@ multimux config list|get|set                 read and change user-configurable s
 multimux --version                           print version
 ```
 
-`serve` accepts `--port <n>` (overrides the stored setting) and `--behind-proxy`
-(plain HTTP on localhost, trusting `X-Forwarded-*` — see
-[docs/proxy.md](docs/proxy.md)).
+`serve` accepts `--trust-ca` (install the local CA into this machine's trust
+store once it exists — first-run convenience, non-fatal if it fails),
+`--port <n>` (overrides the stored setting) and `--behind-proxy` (plain HTTP on
+localhost, trusting `X-Forwarded-*` — see [docs/proxy.md](docs/proxy.md)).
+`multimux help serve` prints the full flag list.
+
+**Upgrading a managed install** is one step: `multimux service upgrade` fetches
+the latest release binary (the same `install.sh` path as a fresh install) and
+restarts the service on it. Without a service unit installed it just replaces
+the binary and says so.
 
 The daemon runs its sessions on a **private tmux server** (socket name
 `multimux`), so it never touches your personal tmux sessions. If you upgraded
@@ -136,6 +147,19 @@ from a version that used the default tmux server, existing `mm-*` sessions
 stay on the default server; reattach to them directly with
 `tmux attach -t <name>` and let multimux create new sessions on its own
 socket (`tmux -L multimux ls` lists them).
+
+### Launcher
+
+The header launcher starts a session from a **tool** (the command to run) and a
+**directory**, both managed on the Settings page. Two conveniences:
+
+- **Subdirectory** — an optional path relative to the chosen directory, so one
+  entry covers a whole tree of repos instead of one per project.
+- **Drag to reorder** — tools and directories each have a drag handle (arrow
+  keys work too, for keyboard and touch); the order you save is the order the
+  launcher lists. Existing installs keep the order they already had.
+
+Your home directory is seeded as a starting directory on first run.
 
 ### Settings
 
@@ -218,7 +242,8 @@ go run . serve
 The dev daemon is a full install as far as auth is concerned: the same
 hostname rules apply (see *If the setup URL doesn't resolve* above —
 `--hostname` persists into the throwaway data dir), the CA needs trusting
-(`go run . ca trust` with the same `MULTIMUX_DATA_DIR` exported), and it prints a
+(`go run . serve --trust-ca`, or `go run . ca trust` with the same
+`MULTIMUX_DATA_DIR` exported), and it prints a
 setup URL on which you register a throwaway passkey — **at the daemon's own
 `https://` origin**, not through Vite. For the frontend hot-reload loop none
 of that is needed; see below.
