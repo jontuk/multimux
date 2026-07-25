@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/jontuk/multimux/internal/svc"
@@ -16,7 +17,7 @@ Manage the multimux background service (launchd on macOS, systemd --user on Linu
 
   install     write the unit, enable it, and start the daemon
   uninstall   stop and remove the unit (leaves data and tmux sessions intact)
-  upgrade     download the latest release binary, then re-run "service install"
+  upgrade     download the latest release binary and restart the service on it
   status      print the service manager's status for the daemon
   logs        follow the daemon's logs
 
@@ -28,16 +29,48 @@ first (run "multimux serve --port <n>" once, then Ctrl-C) or use the Settings
 page. --behind-proxy is runtime-only and NOT persisted, so a service install
 always runs in direct-TLS mode.
 
-"upgrade" pipes the project's install.sh into sh and then runs "multimux service
-install" from PATH, so the reinstalled unit points at the freshly downloaded
-binary. It needs network access and may prompt for sudo if the install
-directory is not writable.
+"upgrade" pipes the project's install.sh into sh and then, if a unit is already
+installed, reinstalls it so it points at the freshly downloaded binary and the
+daemon is restarted onto it. It needs network access and may prompt for sudo if
+the install directory is not writable. MULTIMUX_INSTALL_DIR is honoured, exactly
+as install.sh honours it.
 `
 
-// upgradeScript is run by "service upgrade": fetch the latest release binary,
-// then reinstall the unit so it points at it. The second command resolves
-// multimux from PATH on purpose — that is the binary install.sh just wrote.
-const upgradeScript = "curl -fsSL https://raw.githubusercontent.com/jontuk/multimux/main/install.sh | sh && multimux service install"
+// upgradeScript is run by "service upgrade": fetch the latest release binary.
+// Reinstalling the unit is done in-process afterwards rather than by chaining
+// "multimux service install" here — a PATH lookup can resolve a *different,
+// older* multimux than the one install.sh just wrote.
+const upgradeScript = "curl -fsSL https://raw.githubusercontent.com/jontuk/multimux/main/install.sh | sh"
+
+// defaultInstallDir mirrors install.sh's INSTALL_DIR default.
+const defaultInstallDir = "/usr/local/bin"
+
+// upgradedBinary locates the binary install.sh just wrote. os.Executable() is
+// deliberately not used: the running process may be a dev build somewhere else
+// entirely, and pointing the unit at that would undo the upgrade.
+func upgradedBinary() (string, error) {
+	dir := os.Getenv("MULTIMUX_INSTALL_DIR")
+	if dir == "" {
+		dir = defaultInstallDir
+	}
+	path := filepath.Join(dir, "multimux")
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+	// install.sh reported success, so an absent binary at the expected path
+	// means a non-default install location; PATH is the remaining clue.
+	path, err := exec.LookPath("multimux")
+	if err != nil {
+		return "", fmt.Errorf("cannot find the upgraded multimux binary: %w", err)
+	}
+	return path, nil
+}
+
+// serviceUnitInstalled and installService wrap the svc package so tests can
+// exercise the command without touching the real launchd/systemd unit.
+var serviceUnitInstalled = func() bool { return svc.Installed(runtime.GOOS) }
+
+var installService = func(execPath string) error { return svc.Install(runtime.GOOS, execPath) }
 
 // runUpgradeScript is a variable so tests can stub the shell-out.
 var runUpgradeScript = func(script string) error {
@@ -60,7 +93,7 @@ func runService(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if err := svc.Install(runtime.GOOS, exe); err != nil {
+		if err := installService(exe); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -77,11 +110,28 @@ func runService(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "service removed")
 		return 0
 	case "upgrade":
+		// Checked before the download: install.sh does not touch the unit, and
+		// after a failed download there is nothing to reinstall anyway.
+		hadUnit := serviceUnitInstalled()
 		if err := runUpgradeScript(upgradeScript); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintln(stdout, "upgraded and service reinstalled — check `multimux service status`")
+		if !hadUnit {
+			fmt.Fprintln(stdout, "binary upgraded; no service unit is installed — run `multimux service install` to run it as a service")
+			return 0
+		}
+		exe, err := upgradedBinary()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(stderr, "the new binary is installed; re-run `multimux service install` yourself to point the service at it")
+			return 1
+		}
+		if err := installService(exe); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "upgraded and service restarted on the new binary — check `multimux service status`")
 		return 0
 	case "status":
 		out, err := svc.Status(runtime.GOOS)

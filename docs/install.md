@@ -182,7 +182,7 @@ so it starts at login and restarts on failure:
 ```
 multimux service install     # launchd LaunchAgent (macOS) / systemd user unit (Linux)
 multimux service status
-multimux service upgrade     # fetch the latest release binary, then reinstall the unit
+multimux service upgrade     # fetch the latest release binary, restart the service on it
 multimux service uninstall
 ```
 
@@ -191,7 +191,9 @@ multimux service uninstall
   `~/.local/share/multimux/multimux.log`. `install` is idempotent — it re-bootstraps
   cleanly if already installed.
 - **Linux**: a systemd **user** unit `multimux.service` is written to
-  `~/.config/systemd/user/`, enabled with `--now` and `Restart=on-failure`. The
+  `~/.config/systemd/user/`, enabled with `Restart=on-failure`, then restarted
+  (a restart rather than a plain start, so re-installing over a running daemon
+  actually picks up a new binary). The
   unit sets `KillMode=process` so stopping or restarting the service signals
   only the daemon — your tmux sessions (which live in the same cgroup) survive
   service stops, restarts, and upgrades. For the daemon to keep running after
@@ -232,9 +234,15 @@ multimux service upgrade
 ```
 
 That pipes the same `install.sh` used for a first install into `sh` (fetching the
-latest release binary for your OS/arch) and then re-runs `multimux service
-install` so the unit points at the new binary. It needs network access, and may
-prompt for sudo if the install directory is not writable.
+latest release binary for your OS/arch) and then rewrites the unit and restarts
+the daemon onto the new binary — no manual reinstall, and no need to kill the old
+`multimux serve` yourself. It needs network access, and may prompt for sudo if
+the install directory is not writable.
+
+The unit is rewritten to point at the binary `install.sh` wrote:
+`$MULTIMUX_INSTALL_DIR/multimux`, defaulting to `/usr/local/bin/multimux`. If no
+unit is installed, `upgrade` only replaces the binary and says so — it will not
+install a service you never asked for.
 
 To upgrade by hand instead:
 

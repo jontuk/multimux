@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -56,7 +58,22 @@ func TestNoArgsPrintsUsage(t *testing.T) {
 	}
 }
 
-func TestServiceUpgradeRunsScript(t *testing.T) {
+// stubServiceInstall makes the service-management calls inert so the upgrade
+// tests never touch the real launchd/systemd unit on the machine running them.
+func stubServiceInstall(t *testing.T, installed bool) *[]string {
+	t.Helper()
+	origInstalled, origInstall := serviceUnitInstalled, installService
+	t.Cleanup(func() { serviceUnitInstalled, installService = origInstalled, origInstall })
+	var got []string
+	serviceUnitInstalled = func() bool { return installed }
+	installService = func(execPath string) error {
+		got = append(got, execPath)
+		return nil
+	}
+	return &got
+}
+
+func TestServiceUpgradeRunsScriptThenReinstalls(t *testing.T) {
 	orig := runUpgradeScript
 	t.Cleanup(func() { runUpgradeScript = orig })
 	var got string
@@ -64,12 +81,43 @@ func TestServiceUpgradeRunsScript(t *testing.T) {
 		got = script
 		return nil
 	}
+	dir := t.TempDir()
+	t.Setenv("MULTIMUX_INSTALL_DIR", dir)
+	exe := filepath.Join(dir, "multimux")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installed := stubServiceInstall(t, true)
+
 	var out, errOut bytes.Buffer
 	if code := Execute([]string{"service", "upgrade"}, "dev", fstest.MapFS{}, &out, &errOut); code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, errOut.String())
 	}
-	if !strings.Contains(got, "install.sh | sh") || !strings.Contains(got, "&& multimux service install") {
+	if !strings.Contains(got, "install.sh | sh") {
 		t.Fatalf("script = %q", got)
+	}
+	// The unit must point at the freshly downloaded binary, not at whatever
+	// "multimux" a PATH lookup would have found.
+	if len(*installed) != 1 || (*installed)[0] != exe {
+		t.Fatalf("installService calls = %v, want [%s]", *installed, exe)
+	}
+}
+
+func TestServiceUpgradeSkipsReinstallWithoutUnit(t *testing.T) {
+	orig := runUpgradeScript
+	t.Cleanup(func() { runUpgradeScript = orig })
+	runUpgradeScript = func(string) error { return nil }
+	installed := stubServiceInstall(t, false)
+
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"service", "upgrade"}, "dev", fstest.MapFS{}, &out, &errOut); code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, errOut.String())
+	}
+	if len(*installed) != 0 {
+		t.Fatalf("installService called %v, want no service install", *installed)
+	}
+	if !strings.Contains(out.String(), "no service unit is installed") {
+		t.Fatalf("stdout = %q", out.String())
 	}
 }
 

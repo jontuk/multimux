@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -384,5 +385,64 @@ func TestUninstallMissingUnitFileIsNotAnError(t *testing.T) {
 	stubStop(t, "", nil)
 	if err := Uninstall("linux"); err != nil {
 		t.Fatalf("Uninstall = %v, want nil", err)
+	}
+}
+
+// stubRunCmd records the service-manager commands Install issues instead of
+// running them.
+func stubRunCmd(t *testing.T) *[]string {
+	t.Helper()
+	orig := runCmd
+	t.Cleanup(func() { runCmd = orig })
+	var got []string
+	runCmd = func(name string, args ...string) error {
+		got = append(got, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+	return &got
+}
+
+// A reinstall over a running daemon has to *restart* it: "enable --now" only
+// starts an inactive unit, so an upgraded binary would otherwise never replace
+// the old serve process.
+func TestInstallLinuxRestartsUnit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	got := stubRunCmd(t)
+	if err := Install("linux", "/usr/local/bin/multimux"); err != nil {
+		t.Fatalf("Install = %v", err)
+	}
+	want := []string{
+		"systemctl --user daemon-reload",
+		"systemctl --user enable multimux",
+		"systemctl --user restart multimux",
+	}
+	if !slices.Equal(*got, want) {
+		t.Fatalf("commands = %v, want %v", *got, want)
+	}
+}
+
+// On macOS the equivalent restart is bootout-then-bootstrap.
+func TestInstallDarwinBootsOutBeforeBootstrap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	got := stubRunCmd(t)
+	if err := Install("darwin", "/usr/local/bin/multimux"); err != nil {
+		t.Fatalf("Install = %v", err)
+	}
+	if len(*got) != 2 || !strings.Contains((*got)[0], "launchctl bootout") || !strings.Contains((*got)[1], "launchctl bootstrap") {
+		t.Fatalf("commands = %v", *got)
+	}
+}
+
+func TestInstalledReportsUnitPresence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if Installed("linux") {
+		t.Fatal("Installed = true with no unit file")
+	}
+	stubRunCmd(t)
+	if err := Install("linux", "/usr/local/bin/multimux"); err != nil {
+		t.Fatalf("Install = %v", err)
+	}
+	if !Installed("linux") {
+		t.Fatal("Installed = false after Install")
 	}
 }

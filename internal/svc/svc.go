@@ -268,15 +268,36 @@ func Install(goos, execPath string) error {
 		}
 
 		uid := os.Getuid()
-		// bootout first so re-install is idempotent; ignore its error.
-		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, label)).Run()
+		// bootout first so re-install is idempotent (and so an upgraded binary
+		// actually replaces the running daemon); ignore its error.
+		_ = runCmd("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, label))
 		return runCmd("launchctl", "bootstrap", fmt.Sprintf("gui/%d", uid), path)
 	default:
 		if err := runCmd("systemctl", "--user", "daemon-reload"); err != nil {
 			return err
 		}
-		return runCmd("systemctl", "--user", "enable", "--now", "multimux")
+		if err := runCmd("systemctl", "--user", "enable", "multimux"); err != nil {
+			return err
+		}
+		// "restart" rather than "enable --now": --now only *starts* an inactive
+		// unit, so re-installing over an already-running daemon left the old
+		// process (and the old binary) serving after an upgrade. restart also
+		// starts the unit when it is inactive, so this covers a first install.
+		return runCmd("systemctl", "--user", "restart", "multimux")
 	}
+}
+
+// Installed reports whether a service unit for goos is present on disk. Used
+// by "service upgrade" to decide whether reinstalling the unit is wanted at
+// all — someone running multimux by hand should not get a daemon installed as
+// a side effect of upgrading the binary.
+func Installed(goos string) bool {
+	path, err := unitPath(goos)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
 }
 
 // runStopCmd runs the service manager's stop command. Package var so tests can
@@ -368,7 +389,9 @@ func Status(goos string) (string, error) {
 	}
 }
 
-func runCmd(name string, args ...string) error {
+// runCmd runs a service-manager command. Package var so tests can assert the
+// exact sequence Install issues without a real launchd/systemd.
+var runCmd = func(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %v: %w: %s", name, args, err, out)
