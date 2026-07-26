@@ -18,6 +18,8 @@ type Session struct {
 	Dir       string    `json:"dir"`
 	Status    string    `json:"status"` // "running" | "dead"
 	CreatedAt time.Time `json:"createdAt"`
+	// Label is the user's display name for this session, or "" for none.
+	Label string `json:"label,omitempty"`
 }
 
 // CreateSession inserts a running session and derives its tmux name from the
@@ -54,7 +56,7 @@ func (s *Store) CreateSession(toolID int64, dir string) (Session, error) {
 func scanSession(scan func(...any) error) (Session, error) {
 	var sess Session
 	var created string
-	if err := scan(&sess.ID, &sess.TmuxName, &sess.ToolID, &sess.Dir, &sess.Status, &created); err != nil {
+	if err := scan(&sess.ID, &sess.TmuxName, &sess.ToolID, &sess.Dir, &sess.Status, &created, &sess.Label); err != nil {
 		return Session{}, err
 	}
 	t, err := time.Parse(time.RFC3339, created)
@@ -65,7 +67,7 @@ func scanSession(scan func(...any) error) (Session, error) {
 	return sess, nil
 }
 
-const sessionCols = `id, tmux_name, tool_id, dir, status, created_at`
+const sessionCols = `id, tmux_name, tool_id, dir, status, created_at, label`
 
 func (s *Store) GetSession(id int64) (Session, error) {
 	row := s.db.QueryRow(`SELECT `+sessionCols+` FROM sessions WHERE id = ?`, id)
@@ -96,6 +98,23 @@ func (s *Store) ListSessions() ([]Session, error) {
 func (s *Store) SetSessionStatus(id int64, status string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET status = ? WHERE id = ?`, status, id)
 	return err
+}
+
+// SetSessionLabel sets a session's display label; "" clears it. The label is
+// cosmetic — tmux_name is untouched, so nothing that keys off it changes.
+func (s *Store) SetSessionLabel(id int64, label string) error {
+	res, err := s.db.Exec(`UPDATE sessions SET label = ? WHERE id = ?`, label, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) DeleteSession(id int64) error {

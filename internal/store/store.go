@@ -64,6 +64,10 @@ var migrations = []string{
 	ALTER TABLE dirs ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
 	UPDATE tools SET position = id;
 	UPDATE dirs SET position = id;`,
+	// Optional user-chosen display label for a session. Empty means "no
+	// label" — the UI falls back to the tool name. The tmux session name is
+	// unaffected; it stays mm-{id}.
+	`ALTER TABLE sessions ADD COLUMN label TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and
