@@ -134,7 +134,7 @@ func TestSeedDefaults(t *testing.T) {
 		t.Fatalf("darwin seed = %+v", tools)
 	}
 	dirs, _ := s.ListDirs()
-	if len(dirs) != 1 || dirs[0].Name != "Home" || dirs[0].Path != "/Users/someone" {
+	if len(dirs) != 1 || dirs[0].Name != "~" || dirs[0].Path != "/Users/someone" {
 		t.Fatalf("dir seed = %+v", dirs)
 	}
 	// Idempotent: second seed adds nothing.

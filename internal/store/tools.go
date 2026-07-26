@@ -207,7 +207,7 @@ func (s *Store) seedDir(home string) error {
 	if err != nil || !empty {
 		return err
 	}
-	_, err = s.CreateDir("Home", home)
+	_, err = s.CreateDir("~", home)
 	return err
 }
 
