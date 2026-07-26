@@ -689,6 +689,41 @@ test("Escape cancels a rename without writing", async () => {
   );
 });
 
+test("opening the rename input on a labelled session preselects its text", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 2 }] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  const title = await screen.findByText("#2 · api refactor");
+
+  await userEvent.dblClick(title);
+  const input = await screen.findByLabelText<HTMLInputElement>("rename session 2");
+
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(input.value.length);
+});
+
+test("clicking away from the rename input saves it, like Enter", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  const title = await screen.findByText("#1 · claude");
+
+  await userEvent.dblClick(title);
+  const input = await screen.findByLabelText<HTMLInputElement>("rename session 1");
+  await userEvent.type(input, "api refactor");
+  await userEvent.click(document.body);
+
+  await waitFor(() => {
+    const put = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/api/sessions/1/label") && init?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({ label: "api refactor" });
+  });
+});
+
 test("double-clicking the tile title does not maximize the tile", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
   mockFetch(layout);

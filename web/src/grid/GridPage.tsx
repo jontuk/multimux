@@ -135,10 +135,15 @@ function TileTitle({
       className="tile-title tile-title-input"
       aria-label={`rename session ${sessionId}`}
       autoFocus
+      // 64 UTF-16 code units, conservative against the server's 64-*rune* cap
+      // (astral-plane characters, e.g. emoji, are 2 code units here but 1
+      // rune server-side) — the UI can only be stricter, never send a label
+      // the server would reject for length.
       maxLength={64}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onDoubleClick={(e) => e.stopPropagation()}
+      onFocus={(e) => e.currentTarget.select()}
       onBlur={() => stop(draft)}
       onKeyDown={(e) => {
         if (e.key === "Enter") stop(draft);

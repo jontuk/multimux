@@ -534,6 +534,12 @@ a {
   background: var(--bg);
   border: 1px solid var(--muted);
   border-radius: 3px;
+  /* Override .tile-header's grab cursor and no-select so the input reads as
+     editable text, not a drag handle — WebKit also needs the prefixed form or
+     the ancestor's -webkit-user-select: none suppresses selection inside it. */
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .tile-dir {
