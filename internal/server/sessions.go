@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jontuk/multimux/internal/gitinfo"
 	"github.com/jontuk/multimux/internal/store"
@@ -232,6 +235,59 @@ func (s *Server) handleDismissSession(w http.ResponseWriter, r *http.Request) {
 	slog.Info("session dismissed", "session_id", sess.ID, "tmux_name", sess.TmuxName)
 	s.broadcast("session_dismissed", sess)
 	w.WriteHeader(204)
+}
+
+// maxSessionLabel caps a session's display label. Tile headers are narrow;
+// past this the label crowds out the directory and branch.
+const maxSessionLabel = 64
+
+// handleRenameSession sets a session's display label ("" clears it). The label
+// is cosmetic: tmux_name stays mm-{id}, so attach, Reconcile, and the
+// orphan-replace path in handleCreateSession are all unaffected. Dead sessions
+// are renameable too — their tiles stay on screen until dismissed.
+func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "bad id"})
+		return
+	}
+	var in struct{ Label string }
+	if err := readJSON(r, &in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "bad body"})
+		return
+	}
+	label := strings.TrimSpace(in.Label)
+	for _, c := range label {
+		if unicode.IsControl(c) {
+			writeJSON(w, 400, map[string]string{"error": "label must not contain control characters"})
+			return
+		}
+	}
+	if utf8.RuneCountInString(label) > maxSessionLabel {
+		writeJSON(w, 400, map[string]string{
+			"error": fmt.Sprintf("label must be %d characters or fewer", maxSessionLabel),
+		})
+		return
+	}
+	err = s.cfg.Store.SetSessionLabel(id, label)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, 404, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	sess, err := s.cfg.Store.GetSession(id)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	// The label is user text, like a directory path: log that it changed, not
+	// what it says.
+	slog.Info("session renamed", "session_id", sess.ID, "labelled", label != "")
+	s.broadcast("session_renamed", sess)
+	writeJSON(w, 200, sess)
 }
 
 func (s *Server) handleGetLayout(w http.ResponseWriter, r *http.Request) {

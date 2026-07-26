@@ -546,3 +546,126 @@ func TestCheckGitInfoBroadcastsOnChange(t *testing.T) {
 		t.Fatalf("changed tick broadcast %v, want [git_changed]", evs)
 	}
 }
+
+func TestSessionRename(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+	buf := captureLogs(t)
+
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	if w.Code != 201 {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+	var sess store.Session
+	json.Unmarshal(w.Body.Bytes(), &sess)
+	path := fmt.Sprintf("/api/sessions/%d/label", sess.ID)
+
+	// Rename → 200 with the updated session, and the list agrees.
+	w = do(t, s, "PUT", path, token, `{"label":"  api refactor  "}`)
+	if w.Code != 200 {
+		t.Fatalf("rename = %d: %s", w.Code, w.Body.String())
+	}
+	var got store.Session
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Label != "api refactor" {
+		t.Fatalf("label = %q, want trimmed %q", got.Label, "api refactor")
+	}
+	w = do(t, s, "GET", "/api/sessions", token)
+	if !strings.Contains(w.Body.String(), `"label":"api refactor"`) {
+		t.Fatalf("list missing label: %s", w.Body.String())
+	}
+
+	// Empty clears.
+	if w = do(t, s, "PUT", path, token, `{"label":""}`); w.Code != 200 {
+		t.Fatalf("clear = %d: %s", w.Code, w.Body.String())
+	}
+	if stored, _ := st.GetSession(sess.ID); stored.Label != "" {
+		t.Fatalf("label after clear = %q", stored.Label)
+	}
+
+	// The label is user text: it must not reach the logs.
+	if w = do(t, s, "PUT", path, token, `{"label":"secret-label-must-not-leak"}`); w.Code != 200 {
+		t.Fatalf("rename = %d", w.Code)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, `"msg":"session renamed"`) {
+		t.Fatalf("rename not logged: %s", logged)
+	}
+	if strings.Contains(logged, "secret-label-must-not-leak") {
+		t.Fatalf("rename log exposed the label: %s", logged)
+	}
+}
+
+func TestSessionRenameValidation(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	var sess store.Session
+	json.Unmarshal(w.Body.Bytes(), &sess)
+	path := fmt.Sprintf("/api/sessions/%d/label", sess.ID)
+
+	// 64 runes of a multi-byte character: the cap counts runes, not bytes.
+	ok := strings.Repeat("é", 64)
+	if w = do(t, s, "PUT", path, token, fmt.Sprintf(`{"label":%q}`, ok)); w.Code != 200 {
+		t.Fatalf("64 runes = %d: %s", w.Code, w.Body.String())
+	}
+	tooLong := strings.Repeat("é", 65)
+	if w = do(t, s, "PUT", path, token, fmt.Sprintf(`{"label":%q}`, tooLong)); w.Code != 400 {
+		t.Fatalf("65 runes = %d, want 400", w.Code)
+	}
+	//  is BEL: valid JSON, invalid label.
+	if w = do(t, s, "PUT", path, token, `{"label":"badbell"}`); w.Code != 400 {
+		t.Fatalf("control char = %d, want 400", w.Code)
+	}
+	if w = do(t, s, "PUT", path, token, `not json`); w.Code != 400 {
+		t.Fatalf("bad body = %d, want 400", w.Code)
+	}
+
+	// Unknown id → 404, and the earlier valid label is untouched.
+	if w = do(t, s, "PUT", "/api/sessions/9999/label", token, `{"label":"x"}`); w.Code != 404 {
+		t.Fatalf("unknown id = %d, want 404", w.Code)
+	}
+	if stored, _ := st.GetSession(sess.ID); stored.Label != ok {
+		t.Fatalf("label = %q, want the 64-rune value", stored.Label)
+	}
+
+	// A dead session can still be renamed — its tile stays on screen.
+	if w = do(t, s, "DELETE", fmt.Sprintf("/api/sessions/%d", sess.ID), token); w.Code != 204 {
+		t.Fatalf("kill = %d", w.Code)
+	}
+	if w = do(t, s, "PUT", path, token, `{"label":"post mortem"}`); w.Code != 200 {
+		t.Fatalf("rename dead = %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSessionRenameBroadcasts(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	var sess store.Session
+	json.Unmarshal(w.Body.Bytes(), &sess)
+
+	ch := s.hub.Subscribe()
+	defer s.hub.Unsubscribe(ch)
+	if w = do(t, s, "PUT", fmt.Sprintf("/api/sessions/%d/label", sess.ID), token, `{"label":"watched"}`); w.Code != 200 {
+		t.Fatalf("rename = %d", w.Code)
+	}
+	select {
+	case raw := <-ch:
+		var ev struct {
+			Type    string        `json:"type"`
+			Payload store.Session `json:"payload"`
+		}
+		if err := json.Unmarshal(raw, &ev); err != nil {
+			t.Fatalf("event %s: %v", raw, err)
+		}
+		if ev.Type != "session_renamed" || ev.Payload.Label != "watched" {
+			t.Fatalf("event = %s", raw)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no session_renamed event")
+	}
+}
