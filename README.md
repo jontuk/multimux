@@ -234,7 +234,9 @@ a server picker appears first.
 **The grid.** Tiles are laid out in a column count you set with the header
 stepper; rows follow. Each tile header shows the session id, tool name,
 directory, the git branch with a colour dot (clean / modified / untracked), and
-a GitHub link when the directory is a GitHub checkout.
+a GitHub link when the directory is a GitHub checkout. Double-click a tile's
+title to rename the session; the name is a display label only — the tmux
+session keeps its `mm-{id}` name — and clearing it restores the tool name.
 
 | Action | How |
 | --- | --- |
