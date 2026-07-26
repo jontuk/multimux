@@ -22,7 +22,7 @@ const sessions = [
     ahead: 2,
     behind: 1,
   },
-  { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/b", status: "running" },
+  { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/b", status: "running", label: "api refactor" },
   { id: 4, tmuxName: "mm-4", toolId: 1, dir: "/c", status: "dead" },
   {
     id: 5,
@@ -50,6 +50,8 @@ function mockFetch(layout: unknown) {
     const method = init?.method ?? "GET";
     if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
     if (url.includes("/api/layout") && method === "PUT") return new Response("{}");
+    if (url.includes("/label") && method === "PUT")
+      return new Response(JSON.stringify({ id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running" }));
     if (url.includes("/api/sessions") && method === "POST")
       return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
         status: 201,
@@ -76,7 +78,7 @@ test("attach dropdown hides sessions already placed in a tile", async () => {
   const boxes = screen.getAllByRole("combobox");
   const attach = boxes.find((b) => b.textContent?.includes("attach session on local"))!;
   const options = Array.from(attach.querySelectorAll("option")).map((o) => o.textContent);
-  expect(options).toContain("mm-2");
+  expect(options).toContain("api refactor");
   expect(options).not.toContain("mm-1");
 });
 
@@ -281,13 +283,13 @@ test("header offers quick-add buttons for sessions not in the grid", async () =>
   render(<GridPage />);
   await screen.findByTestId("term-1");
 
-  // Session 2 is running but unplaced; session 1 is already in the grid.
-  const quickAdd = await screen.findByText("+ #2 claude");
+  // Session 2 is running but unplaced (and labelled); session 1 is already in the grid.
+  const quickAdd = await screen.findByText("+ #2 api refactor");
   expect(screen.queryByText("+ #1 claude")).not.toBeInTheDocument();
 
   await userEvent.click(quickAdd);
   await screen.findByTestId("term-2");
-  expect(screen.queryByText("+ #2 claude")).not.toBeInTheDocument();
+  expect(screen.queryByText("+ #2 api refactor")).not.toBeInTheDocument();
 });
 
 test("dead sessions are not offered for re-adding (quick-add or attach dropdown)", async () => {
@@ -296,7 +298,7 @@ test("dead sessions are not offered for re-adding (quick-add or attach dropdown)
 
   render(<GridPage />);
   await screen.findByTestId("term-1");
-  await screen.findByText("+ #2 claude");
+  await screen.findByText("+ #2 api refactor");
 
   // Session 4 is dead: no quick-add button, not in the empty-tile dropdown.
   expect(screen.queryByText("+ #4 claude")).not.toBeInTheDocument();
@@ -619,4 +621,81 @@ test("stepper arrows change column count and persist it", async () => {
   await userEvent.click(screen.getByLabelText("fewer columns"));
   put = fetchMock.mock.calls.findLast(([, init]) => init?.method === "PUT");
   expect(JSON.parse(String(put?.[1]?.body)).shape).toEqual({ rows: 1, cols: 2 });
+});
+
+test("a labelled session shows its label in the tile title", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 2 }, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+
+  expect(await screen.findByText("#2 · api refactor")).toBeTruthy();
+});
+
+// A placed session never appears in the attach dropdown (existing invariant:
+// each session may only be open in one tile), so this exercises an *unplaced*
+// labelled session instead.
+test("a labelled session shows its label, not its tmux name, in the attach dropdown", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+
+  await screen.findAllByText("attach session on local…");
+  const attach = screen.getAllByRole("combobox").find((b) => b.textContent?.includes("attach session on local"))!;
+  const options = Array.from(attach.querySelectorAll("option")).map((o) => o.textContent);
+  expect(options).toContain("api refactor");
+  expect(options).not.toContain("mm-2");
+});
+
+test("double-clicking the tile title renames the session", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  const title = await screen.findByText("#1 · claude");
+
+  await userEvent.dblClick(title);
+  const input = await screen.findByLabelText<HTMLInputElement>("rename session 1");
+  expect(input.value).toBe("");
+
+  await userEvent.type(input, "api refactor");
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  await waitFor(() => {
+    const put = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/api/sessions/1/label") && init?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({ label: "api refactor" });
+  });
+});
+
+test("Escape cancels a rename without writing", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  const title = await screen.findByText("#1 · claude");
+
+  await userEvent.dblClick(title);
+  const input = await screen.findByLabelText<HTMLInputElement>("rename session 1");
+  await userEvent.type(input, "discard me");
+  fireEvent.keyDown(input, { key: "Escape" });
+
+  expect(await screen.findByText("#1 · claude")).toBeTruthy();
+  expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/label") && init?.method === "PUT")).toBe(
+    false,
+  );
+});
+
+test("double-clicking the tile title does not maximize the tile", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  mockFetch(layout);
+
+  const { container } = render(<GridPage />);
+  const title = await screen.findByText("#1 · claude");
+
+  await userEvent.dblClick(title);
+  expect(container.querySelector(".tile-maximized")).toBeNull();
 });

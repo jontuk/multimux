@@ -4,6 +4,8 @@ export type Session = {
   toolId: number;
   dir: string;
   status: string;
+  /** User-chosen display name; absent or empty means "use the tool name". */
+  label?: string;
   repoUrl?: string;
   branch?: string;
   gitState?: "untracked" | "modified" | "clean";

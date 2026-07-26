@@ -82,10 +82,70 @@ function tileKey(t: NonNullable<Tile>): string {
   return `${t.serverId}:${t.sessionId}`;
 }
 
-// Tool name for display; falls back to the tmux session name while tools load.
-function toolName(tools: Tool[] | undefined, session: Session | undefined): string {
+// Display name for a session: the user's label when set, else the tool name,
+// falling back to the tmux session name while tools load.
+function sessionTitle(tools: Tool[] | undefined, session: Session | undefined): string {
   if (!session) return "…";
+  if (session.label) return session.label;
   return tools?.find((t) => t.id === session.toolId)?.name ?? session.tmuxName;
+}
+
+// The tile title, double-click-to-rename. The tile header's own double-click
+// maximizes the tile, so the handlers here stop propagation; the input also
+// tells the page to drop `draggable` on the tile, or the browser's drag
+// intercepts text selection inside it.
+function TileTitle({
+  sessionId,
+  text,
+  label,
+  onEditingChange,
+  onRename,
+}: {
+  sessionId: number;
+  text: string;
+  label: string;
+  onEditingChange: (editing: boolean) => void;
+  onRename: (label: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const stop = (draftValue: string | null) => {
+    setDraft(null);
+    onEditingChange(false);
+    if (draftValue !== null && draftValue.trim() !== label) onRename(draftValue.trim());
+  };
+
+  if (draft === null) {
+    return (
+      <span
+        className="tile-title"
+        title="double-click to rename"
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          setDraft(label);
+          onEditingChange(true);
+        }}
+      >
+        #{sessionId} · {text}
+      </span>
+    );
+  }
+  return (
+    <input
+      className="tile-title tile-title-input"
+      aria-label={`rename session ${sessionId}`}
+      autoFocus
+      maxLength={64}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onBlur={() => stop(draft)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") stop(draft);
+        else if (e.key === "Escape") stop(null);
+      }}
+    />
+  );
 }
 
 export default function GridPage({
@@ -109,6 +169,9 @@ export default function GridPage({
   // header ⇅ button arms a move from this tile index, then every other cell
   // shows a tap target that completes the swap.
   const [moveFrom, setMoveFrom] = useState<number | null>(null);
+  // Tile key whose title is being renamed; the tile drops `draggable` while it
+  // is, so the drag doesn't eat text selection in the input.
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   // State (not a per-render listServers() call) so the array identity is
   // stable across re-renders and the events sockets don't churn; refreshed
   // explicitly after reconnect/remove changes the stored list.
@@ -161,6 +224,15 @@ export default function GridPage({
         .catch(() => setSessionsByServer((prev) => ({ ...prev, [server.id]: [] })));
     }
   }, [servers]);
+
+  const renameSession = useCallback(
+    (server: Server, sessionId: number, label: string) => {
+      // The response and the session_renamed broadcast both land as a refresh;
+      // a failure just leaves the old title in place.
+      putJSON(server, `/api/sessions/${sessionId}/label`, { label }).then(refreshSessions, refreshSessions);
+    },
+    [refreshSessions],
+  );
 
   const refreshLayout = useCallback(() => {
     getJSON<unknown>(localServer(), "/api/layout").then((v) => {
@@ -254,7 +326,7 @@ export default function GridPage({
               title={`add to grid — ${sess.dir}${servers.length > 1 ? ` on ${server.name}` : ""}`}
               onClick={() => attachSession(server, sess.id)}
             >
-              + #{sess.id} {toolName(toolsByServer[server.id], sess)}
+              + #{sess.id} {sessionTitle(toolsByServer[server.id], sess)}
             </button>
           ))}
         </div>
@@ -324,7 +396,7 @@ export default function GridPage({
             // rebuild xterm and reconnect the WebSocket for both tiles.
             key={tile ? tileKey(tile) : `empty-${i}`}
             className={`tile${tile && tileKey(tile) === maximizedKey ? " tile-maximized" : ""}`}
-            draggable={tile !== null}
+            draggable={tile !== null && tileKey(tile) !== editingKey}
             onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
             onDragOver={(e) => {
               if (e.dataTransfer.types.includes("text/tile-index")) e.preventDefault();
@@ -387,9 +459,13 @@ export default function GridPage({
                       className="tile-header"
                       onDoubleClick={() => setMaximizedKey((k) => (k === tileKey(tile) ? null : tileKey(tile)))}
                     >
-                      <span className="tile-title">
-                        #{tile.sessionId} · {toolName(toolsByServer[tile.serverId], session)}
-                      </span>
+                      <TileTitle
+                        sessionId={tile.sessionId}
+                        text={sessionTitle(toolsByServer[tile.serverId], session)}
+                        label={session?.label ?? ""}
+                        onEditingChange={(editing) => setEditingKey(editing ? tileKey(tile) : null)}
+                        onRename={(label) => renameSession(server, tile.sessionId, label)}
+                      />
                       {session && (
                         <span className="tile-dir" title={session.dir}>
                           {session.dir}
@@ -518,7 +594,7 @@ function EmptyTile({
           </option>
           {sessions.map((sess) => (
             <option key={sess.id} value={sess.id}>
-              {sess.tmuxName}
+              {sess.label || sess.tmuxName}
             </option>
           ))}
         </select>

@@ -525,6 +525,17 @@ a {
   white-space: nowrap;
 }
 
+.tile-title-input {
+  min-width: 8rem;
+  max-width: 16rem;
+  padding: 0 2px;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--muted);
+  border-radius: 3px;
+}
+
 .tile-dir {
   flex: 1;
   color: var(--muted);
