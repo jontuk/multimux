@@ -518,6 +518,21 @@ a {
   white-space: nowrap;
 }
 
+/* The full working directory, subdir included. Capped and front-ellipsized so
+   a deep path cannot push the other header controls off-screen. */
+.unplaced-session-dir {
+  display: inline-block;
+  max-width: 14ch;
+  margin-left: 0.4rem;
+  vertical-align: bottom;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
 .unplaced-sessions button:hover {
   color: var(--ink);
   border-color: #3a414d;

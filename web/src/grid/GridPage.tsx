@@ -318,6 +318,7 @@ export default function GridPage({
               onClick={() => attachSession(server, sess.id)}
             >
               + #{sess.id} {sessionTitle(toolsByServer[server.id], sess)}
+              <span className="unplaced-session-dir">{sess.dir}</span>
             </button>
           ))}
         </div>
