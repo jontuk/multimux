@@ -206,6 +206,32 @@ test("exposes the selected session as a named keyboard-operable slider", () => {
   expect(slider).toHaveAttribute("aria-valuenow", "1");
 });
 
+test("supports the complete slider keyboard navigation pattern", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2), session(3)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const slider = screen.getByRole("slider", { name: "Active session" });
+
+  fireEvent.keyDown(slider, { key: "ArrowUp" });
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+  fireEvent.keyDown(slider, { key: "End" });
+  fireEvent.keyDown(slider, { key: "ArrowUp" });
+  expect(screen.getByTestId("term-3")).toBeInTheDocument();
+  expect(slider).toHaveAttribute("aria-valuenow", "3");
+
+  fireEvent.keyDown(slider, { key: "ArrowDown" });
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+  fireEvent.keyDown(slider, { key: "Home" });
+  fireEvent.keyDown(slider, { key: "ArrowDown" });
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(slider).toHaveAttribute("aria-valuenow", "1");
+});
+
 test("keeps the announced ordinal synchronized during a session reorder", () => {
   const commits: { sessionId: string | undefined; valueNow: string | null }[] = [];
   const containerRef: { current?: HTMLElement } = {};
@@ -285,6 +311,30 @@ test("does not replace an active capture with another primary pointer type", () 
 
   expect(capture.setPointerCapture).toHaveBeenCalledTimes(1);
   expect(capture.setPointerCapture).toHaveBeenCalledWith(7);
+
+  fireEvent.pointerUp(header, { pointerId: 7, isPrimary: true, clientX: 52, clientY: 10 });
+  expect(capture.releasePointerCapture).toHaveBeenCalledWith(7);
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+});
+
+test("ignores pointer-up and cancellation from a different pointer while a capture is active", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  const capture = mockPointerCapture(header);
+
+  fireEvent.pointerDown(header, { pointerId: 7, isPrimary: true, clientX: 100, clientY: 10 });
+  fireEvent.pointerUp(header, { pointerId: 8, isPrimary: false, clientX: 0, clientY: 10 });
+  fireEvent.pointerCancel(header, { pointerId: 8, isPrimary: false });
+
+  expect(capture.releasePointerCapture).not.toHaveBeenCalled();
+  expect(capture.captured).toContain(7);
 
   fireEvent.pointerUp(header, { pointerId: 7, isPrimary: true, clientX: 52, clientY: 10 });
   expect(capture.releasePointerCapture).toHaveBeenCalledWith(7);

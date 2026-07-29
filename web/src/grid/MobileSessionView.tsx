@@ -34,12 +34,12 @@ export default function MobileSessionView({
 
   function clearPointer(e: PointerEvent, releaseCapture: boolean) {
     const start = pointerStart.current;
+    if (!start || start.id !== e.pointerId) return null;
     pointerStart.current = null;
-    if (!start) return null;
     if (releaseCapture && e.currentTarget.hasPointerCapture?.(start.id)) {
       e.currentTarget.releasePointerCapture?.(start.id);
     }
-    return start.id === e.pointerId ? start : null;
+    return start;
   }
 
   function moveSelection(offset: number) {
@@ -60,9 +60,18 @@ export default function MobileSessionView({
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const offsets: Record<string, number> = {
+      ArrowDown: -1,
+      ArrowLeft: -1,
+      ArrowRight: 1,
+      ArrowUp: 1,
+      End: sessions.length,
+      Home: -sessions.length,
+    };
+    const offset = offsets[e.key];
+    if (offset === undefined) return;
     e.preventDefault();
-    moveSelection(e.key === "ArrowRight" ? 1 : -1);
+    moveSelection(offset);
   }
 
   if (initialLoading) {
