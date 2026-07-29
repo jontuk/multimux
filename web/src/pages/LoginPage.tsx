@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { login } from "../webauthn";
 import { localServer } from "../servers";
+import TrustPrompt from "./TrustPrompt";
 
 export default function LoginPage() {
   const [error, setError] = useState("");
@@ -20,10 +21,14 @@ export default function LoginPage() {
         multimux
         <span className="cursor" aria-hidden="true" />
       </div>
-      <div className="auth-card">
-        <button onClick={onLogin}>Sign in with passkey</button>
-        {error && <p className="error">{error}</p>}
-      </div>
+      {window.isSecureContext === false ? (
+        <TrustPrompt />
+      ) : (
+        <div className="auth-card">
+          <button onClick={onLogin}>Sign in with passkey</button>
+          {error && <p className="error">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }
