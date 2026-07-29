@@ -143,7 +143,7 @@ export default function App() {
 
   // Settings (Task 23), Connect (Task 24) routed here.
   return (
-    <div className="app">
+    <div className={`app${route === "#/" ? " grid-route" : ""}`}>
       <header
         className={health?.accentColor ? "host-accented" : undefined}
         style={health?.accentColor ? ({ "--host-accent": health.accentColor } as React.CSSProperties) : undefined}
@@ -158,8 +158,11 @@ export default function App() {
           <a href="#/" className={route === "#/" ? "active" : ""}>
             Grid
           </a>
-          <a href="#/settings" className={route === "#/settings" ? "active" : ""}>
-            Settings
+          <a href="#/settings" aria-label="Settings" className={route === "#/settings" ? "active" : ""}>
+            <span className="settings-icon" aria-hidden="true">
+              ⚙
+            </span>
+            <span className="nav-text">Settings</span>
           </a>
         </nav>
       </header>

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
 import App from "../App";
@@ -73,6 +73,25 @@ test("Retry re-runs the startup check and lets the app through once the daemon a
   up = true;
   await userEvent.click(screen.getByText("Retry"));
   expect(await screen.findByRole("link", { name: "Grid" })).toBeInTheDocument();
+});
+
+test("the ready shell marks only the grid route and keeps Settings accessible when its text collapses", async () => {
+  stubFetch(ok, () => Promise.resolve(new Response(JSON.stringify({ name: "jon" }))));
+  render(<App />);
+
+  const gridLink = await screen.findByRole("link", { name: "Grid" });
+  const settingsLink = within(screen.getByRole("navigation")).getByRole("link", { name: "Settings" });
+  const app = gridLink.closest(".app");
+
+  expect(app).toHaveClass("grid-route");
+  expect(settingsLink).toHaveAttribute("aria-label", "Settings");
+  expect(settingsLink.querySelector(".settings-icon")).toHaveAttribute("aria-hidden", "true");
+  expect(settingsLink.querySelector(".nav-text")).toHaveTextContent("Settings");
+
+  window.location.hash = "#/settings";
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+  await waitFor(() => expect(app).not.toHaveClass("grid-route"));
 });
 
 test("insecure setup keeps the wordmark but hides registration controls behind the trust prompt", async () => {
