@@ -133,7 +133,8 @@ a {
 }
 
 .auth-card input:focus-visible,
-.auth-card button:focus-visible {
+.auth-card button:focus-visible,
+.trust-page .auth-card a.primary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -172,6 +173,26 @@ a {
   color: var(--error);
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.trust-page .trust-fingerprint {
+  overflow-wrap: anywhere;
+}
+
+.trust-page .auth-card a.primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.7rem;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  text-align: center;
+  text-decoration: none;
 }
 
 .server-status-banner {

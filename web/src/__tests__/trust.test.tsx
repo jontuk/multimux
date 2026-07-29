@@ -1,3 +1,6 @@
+/// <reference types="node" />
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -10,6 +13,8 @@ const caInfo = {
   expires: "2036-07-28T11:34:56Z",
   sha256Fingerprint: "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
 };
+
+const styles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
 
 function setSecureContext(value: boolean) {
   Object.defineProperty(window, "isSecureContext", { configurable: true, value });
@@ -53,7 +58,10 @@ test("shows CA details, Android installation steps, and bootstrap security guida
   expect(screen.getByText("mux.local")).toBeInTheDocument();
   expect(screen.getByText("mux.example.ts.net")).toBeInTheDocument();
   expect(screen.getByText("28 July 2036 at 11:34 UTC")).toBeInTheDocument();
-  expect(screen.getByText(caInfo.sha256Fingerprint)).toBeInTheDocument();
+  expect(screen.getByText(caInfo.sha256Fingerprint)).toHaveClass("trust-fingerprint");
+  expect(screen.getByRole("link", { name: "Download CA certificate" })).toMatchObject({
+    className: "primary",
+  });
   expect(screen.getByRole("link", { name: "Download CA certificate" })).toHaveAttribute("href", "/ca.crt");
   expect(screen.getByRole("link", { name: "Download CA certificate" })).toHaveAttribute("download", "multimux-ca.crt");
 
@@ -69,6 +77,13 @@ test("shows CA details, Android installation steps, and bootstrap security guida
   expect(screen.getByText(/managed device.*user-added CAs/i)).toBeInTheDocument();
   expect(screen.getByText(/SSH.*USB or Quick Share/i)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Reload and check trust" })).toBeInTheDocument();
+});
+
+test("keeps trust metadata within the card and makes the certificate download a primary tap target", () => {
+  expect(styles).toMatch(/\.trust-page \.trust-fingerprint\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
+  expect(styles).toMatch(
+    /\.trust-page \.auth-card a\.primary\s*\{[^}]*(?:display:\s*flex;[^}]*width:\s*100%;|width:\s*100%;[^}]*display:\s*flex;)[^}]*min-height:\s*44px;/s,
+  );
 });
 
 test("retries loading CA information after an error", async () => {

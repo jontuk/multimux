@@ -69,9 +69,9 @@ export default function TrustPage() {
               <dt>Expires</dt>
               <dd>{formatExpiry(info.expires)}</dd>
               <dt>SHA-256 fingerprint</dt>
-              <dd>{info.sha256Fingerprint}</dd>
+              <dd className="trust-fingerprint">{info.sha256Fingerprint}</dd>
             </dl>
-            <a href="/ca.crt" download="multimux-ca.crt">
+            <a className="primary" href="/ca.crt" download="multimux-ca.crt">
               Download CA certificate
             </a>
           </section>

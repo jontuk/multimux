@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import TerminalTile from "../term/TerminalTile";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
@@ -27,21 +27,42 @@ export default function MobileSessionView({
   }, [sessions]);
 
   function onPointerDown(e: PointerEvent) {
-    if (!e.isPrimary) return;
+    if (!e.isPrimary || pointerStart.current) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
     pointerStart.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
   }
 
-  function onPointerUp(e: PointerEvent) {
+  function clearPointer(e: PointerEvent, releaseCapture: boolean) {
     const start = pointerStart.current;
     pointerStart.current = null;
-    if (!start || start.id !== e.pointerId) return;
+    if (!start) return null;
+    if (releaseCapture && e.currentTarget.hasPointerCapture?.(start.id)) {
+      e.currentTarget.releasePointerCapture?.(start.id);
+    }
+    return start.id === e.pointerId ? start : null;
+  }
+
+  function moveSelection(offset: number) {
+    setSelection((current) => {
+      const resolved = reconcileMobileSelection(current, sessions);
+      const index = Math.max(0, Math.min(sessions.length - 1, resolved.index + offset));
+      return { key: sessions[index]?.key ?? null, index };
+    });
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    const start = clearPointer(e, true);
+    if (!start) return;
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
     if (Math.abs(dx) < 48 || Math.abs(dx) <= Math.abs(dy)) return;
-    setSelection((current) => {
-      const index = Math.max(0, Math.min(sessions.length - 1, current.index + (dx < 0 ? 1 : -1)));
-      return { key: sessions[index]?.key ?? null, index };
-    });
+    moveSelection(dx < 0 ? 1 : -1);
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    moveSelection(e.key === "ArrowRight" ? 1 : -1);
   }
 
   if (initialLoading) {
@@ -56,24 +77,34 @@ export default function MobileSessionView({
     );
   }
 
-  const selected =
-    sessions.find((entry) => entry.key === selection.key) ??
-    sessions[Math.max(0, Math.min(sessions.length - 1, selection.index))];
+  const resolvedSelection = reconcileMobileSelection(selection, sessions);
+  const selected = sessions[resolvedSelection.index];
+  const selectedTitle = `#${selected.session.id} · ${sessionTitle(
+    toolsByServer[selected.server.id],
+    selected.session,
+  )}`;
 
   return (
     <div className="mobile-session-view">
       <div
         className="mobile-session-header"
+        role="slider"
+        tabIndex={0}
+        aria-label="Active session"
+        aria-valuemin={1}
+        aria-valuemax={sessions.length}
+        aria-valuenow={resolvedSelection.index + 1}
+        aria-valuetext={`Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}`}
         style={{ touchAction: "pan-y" }}
+        onKeyDown={onKeyDown}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => {
-          pointerStart.current = null;
+        onPointerCancel={(e) => clearPointer(e, true)}
+        onLostPointerCapture={(e) => {
+          if (pointerStart.current?.id === e.pointerId) pointerStart.current = null;
         }}
       >
-        <span className="mobile-session-title">
-          #{selected.session.id} · {sessionTitle(toolsByServer[selected.server.id], selected.session)}
-        </span>
+        <span className="mobile-session-title">{selectedTitle}</span>
         <span className="mobile-session-context">
           {selected.session.gitState && (
             <span className="mobile-session-branch">
@@ -90,7 +121,7 @@ export default function MobileSessionView({
           </span>
         </span>
         <span className="mobile-session-position">
-          {selection.index + 1}/{sessions.length}
+          {resolvedSelection.index + 1}/{sessions.length}
         </span>
       </div>
       <div className="mobile-terminal">

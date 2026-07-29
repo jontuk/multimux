@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { useEffect } from "react";
+import { Profiler, useEffect } from "react";
 import { vi } from "vitest";
 import MobileSessionView from "../grid/MobileSessionView";
 import type { MobileSession } from "../grid/mobileModel";
@@ -61,6 +61,18 @@ function swipe(
 ) {
   fireEvent.pointerDown(header, { pointerId, isPrimary, clientX: fromX, clientY: fromY });
   fireEvent.pointerUp(header, { pointerId, isPrimary, clientX: toX, clientY: toY });
+}
+
+function mockPointerCapture(header: HTMLElement) {
+  const captured = new Set<number>();
+  const setPointerCapture = vi.fn((pointerId: number) => captured.add(pointerId));
+  const releasePointerCapture = vi.fn((pointerId: number) => captured.delete(pointerId));
+  Object.assign(header, {
+    hasPointerCapture: (pointerId: number) => captured.has(pointerId),
+    releasePointerCapture,
+    setPointerCapture,
+  });
+  return { captured, releasePointerCapture, setPointerCapture };
 }
 
 beforeEach(() => {
@@ -161,6 +173,146 @@ test("moves next on a left swipe, previous on a right swipe, and clamps at each 
   swipe(header, { fromX: 52, toX: 100 });
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
   swipe(header, { fromX: 52, toX: 100 });
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+});
+
+test("exposes the selected session as a named keyboard-operable slider", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  const slider = screen.getByRole("slider", { name: "Active session" });
+  expect(slider).toHaveAttribute("tabindex", "0");
+  expect(slider).toHaveAttribute("aria-valuemin", "1");
+  expect(slider).toHaveAttribute("aria-valuemax", "2");
+  expect(slider).toHaveAttribute("aria-valuenow", "1");
+  expect(slider).toHaveAttribute("aria-valuetext", "Session 1 of 2: #1 · claude");
+
+  fireEvent.keyDown(slider, { key: "ArrowRight" });
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+  expect(slider).toHaveAttribute("aria-valuenow", "2");
+  expect(slider).toHaveAttribute("aria-valuetext", "Session 2 of 2: #2 · claude");
+
+  fireEvent.keyDown(slider, { key: "ArrowRight" });
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+  fireEvent.keyDown(slider, { key: "ArrowLeft" });
+  fireEvent.keyDown(slider, { key: "ArrowLeft" });
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(slider).toHaveAttribute("aria-valuenow", "1");
+});
+
+test("keeps the announced ordinal synchronized during a session reorder", () => {
+  const commits: { sessionId: string | undefined; valueNow: string | null }[] = [];
+  const containerRef: { current?: HTMLElement } = {};
+  const onRender = () => {
+    if (!containerRef.current) return;
+    commits.push({
+      sessionId: containerRef.current.querySelector<HTMLElement>("[data-testid^='term-']")?.dataset.testid,
+      valueNow:
+        containerRef.current.querySelector<HTMLElement>("[role='slider']")?.getAttribute("aria-valuenow") ?? null,
+    });
+  };
+  const { container: rendered, rerender } = render(
+    <Profiler id="mobile-session" onRender={onRender}>
+      <MobileSessionView
+        sessions={[session(1), session(2)]}
+        toolsByServer={{ local: tools }}
+        initialLoading={false}
+        onRefresh={vi.fn()}
+      />
+    </Profiler>,
+  );
+  containerRef.current = rendered;
+  fireEvent.keyDown(screen.getByRole("slider"), { key: "ArrowRight" });
+  commits.length = 0;
+
+  rerender(
+    <Profiler id="mobile-session" onRender={onRender}>
+      <MobileSessionView
+        sessions={[session(2), session(1)]}
+        toolsByServer={{ local: tools }}
+        initialLoading={false}
+        onRefresh={vi.fn()}
+      />
+    </Profiler>,
+  );
+
+  expect(commits).not.toContainEqual({ sessionId: "term-2", valueNow: "2" });
+  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuenow", "1");
+  expect(screen.getByText("1/2")).toBeInTheDocument();
+});
+
+test("captures a primary swipe pointer and releases it when the gesture ends", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  const capture = mockPointerCapture(header);
+
+  fireEvent.pointerDown(header, { pointerId: 7, isPrimary: true, clientX: 100, clientY: 10 });
+  expect(capture.setPointerCapture).toHaveBeenCalledWith(7);
+  fireEvent.pointerUp(header, { pointerId: 7, isPrimary: true, clientX: 52, clientY: 10 });
+
+  expect(capture.releasePointerCapture).toHaveBeenCalledWith(7);
+  expect(capture.captured).not.toContain(7);
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+});
+
+test("does not replace an active capture with another primary pointer type", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  const capture = mockPointerCapture(header);
+
+  fireEvent.pointerDown(header, { pointerId: 7, isPrimary: true, clientX: 100, clientY: 10 });
+  fireEvent.pointerDown(header, { pointerId: 8, isPrimary: true, clientX: 40, clientY: 10 });
+
+  expect(capture.setPointerCapture).toHaveBeenCalledTimes(1);
+  expect(capture.setPointerCapture).toHaveBeenCalledWith(7);
+
+  fireEvent.pointerUp(header, { pointerId: 7, isPrimary: true, clientX: 52, clientY: 10 });
+  expect(capture.releasePointerCapture).toHaveBeenCalledWith(7);
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+});
+
+test("releases cancelled capture and clears a gesture when capture is lost", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  const capture = mockPointerCapture(header);
+
+  fireEvent.pointerDown(header, { pointerId: 7, isPrimary: true, clientX: 100, clientY: 10 });
+  fireEvent.pointerCancel(header, { pointerId: 7, isPrimary: true });
+  expect(capture.releasePointerCapture).toHaveBeenCalledWith(7);
+  fireEvent.pointerUp(header, { pointerId: 7, isPrimary: true, clientX: 0, clientY: 10 });
+
+  fireEvent.pointerDown(header, { pointerId: 8, isPrimary: true, clientX: 100, clientY: 10 });
+  capture.captured.delete(8);
+  fireEvent.lostPointerCapture(header, { pointerId: 8, isPrimary: true });
+  fireEvent.pointerUp(header, { pointerId: 8, isPrimary: true, clientX: 0, clientY: 10 });
+
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
 });
 
