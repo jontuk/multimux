@@ -2,6 +2,10 @@
   --bg: #0b0d10;
   --panel: #12151a;
   --border: #232830;
+  /* Tiles need a harder edge than panels do: the grid is read at a glance,
+     across a whole screen, and --border disappears against the terminal. */
+  --tile-border: #3c4553;
+  --tile-gap: 8px;
   --ink: #e8ebef;
   --muted: #8a919d;
   --accent: #ffb454;
@@ -525,13 +529,19 @@ a {
 
 /* ---- grid tiles ---- */
 
+/* Outer padding stays 4px: the grid's height is a fixed calc() off the
+   viewport, so growing it top and bottom would overflow the page. */
 .grid-page {
   padding: 4px;
 }
 
+.grid {
+  gap: var(--tile-gap);
+}
+
 .tile {
   position: relative; /* anchors .tile-move-target */
-  border: 1px solid var(--border);
+  border: 1px solid var(--tile-border);
   border-radius: 6px;
   overflow: hidden;
   min-height: 0;
@@ -576,8 +586,8 @@ a {
   align-items: center;
   gap: 0.6rem;
   padding: 0.25rem 0.5rem;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  background: #1b202a;
+  border-bottom: 1px solid var(--tile-border);
   font-family: var(--mono);
   font-size: 0.75rem;
   cursor: grab;

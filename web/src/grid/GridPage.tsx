@@ -391,7 +391,7 @@ export default function GridPage({
               display: "grid",
               gridTemplateRows: `repeat(${rows}, 1fr)`,
               gridTemplateColumns: `repeat(${cols}, 1fr)`,
-              gap: 4,
+              // gap lives in .grid (var(--tile-gap)) — inline would win over it.
               height: "calc(100vh - 60px)",
             }}
           >
