@@ -267,6 +267,45 @@ a {
   display: none;
 }
 
+/* ---- stale-build notice ---- */
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.update-banner .primary {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.update-banner-dismiss {
+  margin-left: auto;
+  padding: 0 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.update-banner-dismiss:hover {
+  color: var(--ink);
+}
+
+.update-banner-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ---- per-host identity (Appearance settings) ---- */
 
 .app > header .host-label {

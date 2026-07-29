@@ -10,15 +10,25 @@ import type { Server } from "./servers";
 // unreachable (daemon down).
 export type EventsStatus = "open" | "auth-expired" | "forbidden" | "ws-blocked" | "unreachable";
 
-export function useEvents(server: Server, onEvent: (type: string) => void, onStatus?: (s: EventsStatus) => void) {
+export function useEvents(
+  server: Server,
+  onEvent: (type: string) => void,
+  onStatus?: (s: EventsStatus) => void,
+  // Fired with the daemon's frontend build id on every connect ("" when the
+  // daemon ships no assets). Lets a caller notice, after a reconnect, that the
+  // daemon now serves a different build than the one this tab is running.
+  onHello?: (build: string) => void,
+) {
   // Hold the latest handler in a ref so the effect doesn't depend on its
   // identity; the WebSocket then survives re-renders that pass a new callback.
   const onEventRef = useRef(onEvent);
   const onStatusRef = useRef(onStatus);
+  const onHelloRef = useRef(onHello);
   const serverRef = useRef(server);
   useEffect(() => {
     onEventRef.current = onEvent;
     onStatusRef.current = onStatus;
+    onHelloRef.current = onHello;
     serverRef.current = server;
   });
 
@@ -54,7 +64,8 @@ export function useEvents(server: Server, onEvent: (type: string) => void, onSta
       };
       ws.onmessage = (ev) => {
         try {
-          const { type } = JSON.parse(ev.data);
+          const { type, build } = JSON.parse(ev.data);
+          if (type === "hello") onHelloRef.current?.(typeof build === "string" ? build : "");
           if (type) onEventRef.current(type);
         } catch {
           /* ignore */

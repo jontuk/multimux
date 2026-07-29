@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import SetupPage from "./pages/SetupPage";
 import TrustPage from "./pages/TrustPage";
@@ -6,6 +6,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ConnectPage from "./pages/ConnectPage";
 import { errorText, getJSON, isUnauthorized, isUnreachable } from "./api";
 import { localServer } from "./servers";
+import { useEvents } from "./useEvents";
 import GridPage from "./grid/GridPage";
 import { APPEARANCE_EVENT, type AppearanceDetail } from "./settings/AppearancePanel";
 import { PREFERENCES_EVENT, type Preferences, type PreferencesDetail } from "./settings/PreferencesPanel";
@@ -52,6 +53,63 @@ function StartupProblem({ state, onRetry }: { state: Startup; onRetry: () => voi
       </p>
       <button className="primary" onClick={onRetry}>
         Retry
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Watches the local daemon's frontend build id, announced in the hello frame of
+ * every events connection. A restarted daemon drops the socket; if the build it
+ * announces on reconnect differs from the one this tab loaded, the tab is
+ * running assets the daemon no longer serves and should reload.
+ *
+ * Only the local daemon matters — remote daemons in a multi-host grid serve API
+ * and WebSocket traffic, never the assets running in this tab. A daemon built
+ * without web assets announces no build and never prompts.
+ */
+function useStaleBuild(): { stale: boolean; dismiss: () => void } {
+  const seen = useRef<string | null>(null);
+  const [staleBuild, setStaleBuild] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+
+  // Memoized so the events socket isn't torn down and rebuilt every render.
+  const server = useMemo(() => localServer(), []);
+  const onHello = useCallback((build: string) => {
+    if (!build) return;
+    if (seen.current === null || seen.current === build) {
+      seen.current = build;
+      return;
+    }
+    seen.current = build;
+    setStaleBuild(build);
+  }, []);
+  useEvents(server, noop, undefined, onHello);
+
+  return {
+    stale: staleBuild !== null && staleBuild !== dismissed,
+    dismiss: () => setDismissed(staleBuild),
+  };
+}
+
+function noop() {}
+
+/**
+ * Its own component so the watching socket only exists on the authenticated
+ * shell — mounted from App itself it would also open (and endlessly retry) on
+ * the login and setup screens, where a reload prompt means nothing.
+ */
+function UpdateBanner() {
+  const { stale, dismiss } = useStaleBuild();
+  if (!stale) return null;
+  return (
+    <div className="update-banner" role="status">
+      <span>multimux was updated on this host.</span>
+      <button className="primary" onClick={() => window.location.reload()}>
+        Reload
+      </button>
+      <button className="update-banner-dismiss" aria-label="Dismiss update notice" onClick={dismiss}>
+        ×
       </button>
     </div>
   );
@@ -166,6 +224,7 @@ export default function App() {
           </a>
         </nav>
       </header>
+      <UpdateBanner />
       <main id="page-root">
         {route === "#/" && <GridPage headerSlot={headerSlot} confirmTerminate={confirmTerminate} />}
         {route === "#/settings" && <SettingsPage />}

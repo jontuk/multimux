@@ -63,7 +63,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	ch := s.hub.Subscribe()
 	defer s.hub.Unsubscribe(ch)
-	conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello"}`))
+	// The hello carries the frontend build ID so a tab that reconnects after a
+	// daemon restart can tell it is running assets the daemon no longer serves.
+	hello := map[string]string{"type": "hello"}
+	if build := s.buildID(); build != "" {
+		hello["build"] = build
+	}
+	if raw, err := json.Marshal(hello); err == nil {
+		conn.WriteMessage(websocket.TextMessage, raw)
+	}
 
 	// Reader goroutine detects client close.
 	closed := make(chan struct{})

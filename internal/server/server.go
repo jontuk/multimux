@@ -3,6 +3,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jontuk/multimux/internal/auth"
@@ -42,6 +45,9 @@ type Server struct {
 	// Touched only by the maintenance ticker goroutine; nil until the baseline
 	// check runs.
 	gitSeen map[string]dirGitInfo
+
+	buildIDOnce  sync.Once
+	buildIDValue string
 }
 
 func New(cfg Config) *Server {
@@ -244,6 +250,26 @@ func (s *Server) staticHandler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(index)
 	})
+}
+
+// buildID identifies the embedded frontend build: the first 12 hex digits of
+// the SHA-256 of index.html. Vite content-hashes its asset filenames, so
+// index.html changes exactly when the frontend build changes — unlike
+// cfg.Version, which is "dev" for every local `go build`. A bare checkout
+// embeds only web/dist/.gitkeep; with no index.html there is no build to
+// identify, so the ID is empty and clients skip the staleness check.
+//
+// The FS is embedded, so the answer cannot change within a process.
+func (s *Server) buildID() string {
+	s.buildIDOnce.Do(func() {
+		index, err := fs.ReadFile(s.cfg.WebFS, "index.html")
+		if err != nil {
+			return
+		}
+		sum := sha256.Sum256(index)
+		s.buildIDValue = hex.EncodeToString(sum[:])[:12]
+	})
+	return s.buildIDValue
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

@@ -71,6 +71,24 @@ test("probe failure classifies as unreachable", async () => {
   vi.useRealTimers();
 });
 
+test("onHello receives the build id from the hello frame", () => {
+  const onHello = vi.fn();
+  renderHook(() => useEvents(server, () => {}, undefined, onHello));
+
+  FakeWebSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: "hello", build: "abc123def456" }) });
+
+  expect(onHello).toHaveBeenCalledWith("abc123def456");
+});
+
+test("onHello receives an empty build when the daemon ships no assets", () => {
+  const onHello = vi.fn();
+  renderHook(() => useEvents(server, () => {}, undefined, onHello));
+
+  FakeWebSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: "hello" }) });
+
+  expect(onHello).toHaveBeenCalledWith("");
+});
+
 test("socket survives onEvent identity changes across re-renders", () => {
   const { rerender } = renderHook(({ onEvent }) => useEvents(server, onEvent), {
     initialProps: { onEvent: () => {} },
