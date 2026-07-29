@@ -5,6 +5,7 @@
   /* Tiles need a harder edge than panels do: the grid is read at a glance,
      across a whole screen, and --border disappears against the terminal. */
   --tile-border: #3c4553;
+  --tile-header-bg: #1b202a;
   --tile-gap: 8px;
   --ink: #e8ebef;
   --muted: #8a919d;
@@ -548,6 +549,22 @@ a {
   min-width: 0;
 }
 
+/* The tile holding keyboard focus. xterm's input is a real textarea inside the
+   tile, so :focus-within needs no JS — it also lights up for a tile's header
+   buttons and an empty tile's picker, which is still where typing lands. */
+.tile:focus-within {
+  border-color: var(--accent);
+}
+
+.tile:focus-within .tile-header {
+  background: color-mix(in srgb, var(--accent) 16%, var(--tile-header-bg));
+  border-bottom-color: var(--accent);
+}
+
+.tile:focus-within .tile-title {
+  color: var(--accent);
+}
+
 /* Tap-to-move (touch): while a move is armed, every other cell is covered by
    a full-size tap target that completes the swap. */
 .tile-move-target {
@@ -586,7 +603,7 @@ a {
   align-items: center;
   gap: 0.6rem;
   padding: 0.25rem 0.5rem;
-  background: #1b202a;
+  background: var(--tile-header-bg);
   border-bottom: 1px solid var(--tile-border);
   font-family: var(--mono);
   font-size: 0.75rem;
