@@ -14,6 +14,7 @@ daemon minting its own name-constrained local certificate authority so you get
 
 **Contents** — [Install](#install) · [Quick start](#quick-start) ·
 [Choosing a hostname](#choosing-a-hostname) · [Trusting the CA](#trusting-the-ca) ·
+[Android/mobile](#android-phones-ca-trust) ·
 [Another machine](#connecting-from-another-machine) · [Using it](#using-it) ·
 [Install as an app](#install-as-an-app-pwa) · [Commands](#commands) ·
 [Service](#running-as-a-service) · [Upgrading](#upgrading) ·
@@ -62,6 +63,8 @@ Privacy & Security → **Open Anyway**. (Binaries fetched by the install script 
    ```
    === multimux setup ===
    Open: https://your-machine.example.com:8686/setup?code=ABC123
+   Android trust: https://your-machine.example.com:8686/trust?return=%2Fsetup%3Fcode%3DABC123
+   CA SHA-256: AA:BB:CC:…
    (code expires in 15 minutes; restart to regenerate)
    ```
 
@@ -75,7 +78,12 @@ Privacy & Security → **Open Anyway**. (Binaries fetched by the install script 
 
    Trusting the CA matters **before** you open the setup URL: browsers refuse
    WebAuthn (passkey creation) on pages served with an untrusted certificate, so
-   registration fails if you skip it.
+   registration fails if you skip it. Android is the bootstrap exception: on a
+   LAN, VPN, or tailnet you control, bypass Chrome's certificate warning once,
+   then open the **Android trust** `/trust` URL printed by the daemon and install
+   and verify the CA before registering a passkey. Do not bypass the warning on
+   a public or otherwise untrusted network; see
+   [Android phones: CA trust](#android-phones-ca-trust).
 
 2. **Open the setup URL** in a browser on the same machine or network. Your
    browser prompts you to create a passkey (Touch ID, Windows Hello, a security
@@ -180,6 +188,58 @@ certutil -A -n multimux -t "C,," -i ~/.local/share/multimux/pki/ca.pem -d sql:$H
 on macOS, and Chrome on Linux with non-NSS profiles, use the OS store and need
 no extra step.
 
+### Android phones: CA trust
+
+Android needs the daemon's CA in its user trust store before Chrome can create
+or use passkeys, or install the multimux PWA. On first run, the daemon prints an
+**Android trust** URL and the CA's full SHA-256 fingerprint. Use the guided web
+download only on a LAN, VPN, or tailnet you control:
+
+1. Bypass Chrome's certificate warning once and open the printed `/trust` URL.
+2. Tap **Download CA certificate**. The public certificate downloads as
+   `multimux-ca.crt`.
+3. On a Pixel or stock Android device, open **Settings → Security & privacy →
+   More security settings → Encryption & credentials → Install a certificate →
+   CA certificate**. Select `multimux-ca.crt` and approve Android's warning.
+   On Samsung, use **Settings → Security and privacy → More security settings →
+   Credential storage → Install from device storage → CA certificate** instead.
+4. In Android's installed-certificate details, compare the SHA-256 fingerprint
+   with the value printed in the daemon's own console or service log. The
+   initially untrusted web page is not an authenticated reference. **Stop and
+   remove the certificate if the fingerprints do not match.**
+5. Return to Chrome and tap **Reload and check trust**. Once the page reports
+   that Android trusts the daemon, continue to the original setup or login URL.
+
+The `/ca.crt` and `/ca/info` routes are intentionally public so a phone can
+bootstrap trust. They expose only the public certificate; the private
+`pki/ca.key` is never exported.
+
+If Chrome will not open the untrusted page, or you do not fully control the
+network, copy `pki/ca.pem` from the daemon through an already trusted SSH
+connection to a computer, rename it `multimux-ca.crt`, then transfer it to the
+phone over USB or Quick Share. For the default data directory:
+
+```sh
+scp user@daemon-host:~/.local/share/multimux/pki/ca.pem multimux-ca.crt
+```
+
+Use the corresponding path if the daemon has a custom `MULTIMUX_DATA_DIR`.
+Managed-device policy may forbid user-added CAs entirely; multimux cannot bypass
+that policy or weaken certificate validation, so browser access from such a
+device is not supported.
+
+To remove the CA on Pixel or stock Android, open **Settings → Security &
+privacy → More security settings → Encryption & credentials → User
+credentials**, select the multimux CA, and remove it. On Samsung, open
+**Settings → Security and privacy → More security settings → Credential storage
+→ User certificates**, select the multimux CA, and remove it. OEM labels can
+vary; use Settings search for “user certificates” or “user credentials” if the
+path is different.
+
+Whenever the daemon regenerates its CA — for example after its hostname set
+changes or near CA expiry — repeat the download, fingerprint comparison, and
+installation on every phone. Remove the old CA after the new one is trusted.
+
 **Managed devices.** Many MDM-managed machines forbid custom root CAs, or flag
 them for review. Name constraints make multimux's CA far less objectionable: it
 is cryptographically unable to sign a certificate for any host outside its own
@@ -248,6 +308,20 @@ session keeps its `mm-{id}` name — and clearing it restores the tool name.
 
 A session can only occupy one tile at a time. Removing a tile leaves the session
 running; it reappears in the header's unplaced list.
+
+**Mobile session view.** At a viewport width of **560 CSS pixels or less**,
+multimux switches to a portrait-first, read-only session switcher. It shows all
+running sessions already placed in the desktop grid first, in grid order, then
+appends other running sessions in stable server/session order. Swipe
+horizontally on the compact session header to move between them; terminal touch
+input does not switch sessions, and swiping at the first or last session does
+not wrap.
+
+Only the selected terminal is mounted. The mobile view has no launcher and no
+rename, move, remove, or terminate controls; use a wider viewport for those
+actions. Selection is temporary, and neither switching sessions nor entering
+or leaving mobile view changes the saved desktop grid layout. Viewports wider
+than 560 pixels — including most tablets — keep the full grid.
 
 **In the terminal.** Sessions run with tmux mouse mode on, so the wheel/trackpad
 scrolls tmux's copy-mode with 50 000 lines of scrollback. Because tmux owns
@@ -444,8 +518,9 @@ multimux is a **local, single-user tool** and its security posture reflects that
 - **No Windows.** macOS and Linux only.
 - **No daemon-to-daemon communication.** Coordination happens entirely in your
   browser.
-- **No dedicated phone/native app in v1.** The PWA works in a mobile browser, but
-  a first-class phone experience is not a goal for this release.
+- **No dedicated native phone app.** Android Chrome and the installed PWA have a
+  focused one-session mobile view, but sustained phone-first terminal work and
+  a comprehensive mobile redesign of every Settings panel remain out of scope.
 - **Contributions are not accepted.** This is a personal project shared as-is.
   Issues and PRs may go unanswered; fork freely.
 
