@@ -551,18 +551,18 @@ a {
 
 /* The tile holding keyboard focus. xterm's input is a real textarea inside the
    tile, so :focus-within needs no JS — it also lights up for a tile's header
-   buttons and an empty tile's picker, which is still where typing lands. */
+   buttons and an empty tile's picker, which is still where typing lands.
+
+   Kept quiet on purpose: full accent read as an alert with several panes up.
+   The edge carries it — a muted accent border, and the header a shade warmer,
+   with the title left alone. */
 .tile:focus-within {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--tile-border));
 }
 
 .tile:focus-within .tile-header {
-  background: color-mix(in srgb, var(--accent) 16%, var(--tile-header-bg));
-  border-bottom-color: var(--accent);
-}
-
-.tile:focus-within .tile-title {
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--tile-header-bg));
+  border-bottom-color: color-mix(in srgb, var(--accent) 45%, var(--tile-border));
 }
 
 /* Tap-to-move (touch): while a move is armed, every other cell is covered by
