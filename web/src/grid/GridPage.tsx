@@ -7,7 +7,7 @@ import ColumnStepper from "./ColumnStepper";
 import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
-import { useMediaQuery } from "../useMediaQuery";
+import { MOBILE_VIEW_QUERY, useMediaQuery } from "../useMediaQuery";
 import MobileSessionView from "./MobileSessionView";
 import { orderMobileSessions } from "./mobileModel";
 import type { Session, Tool } from "./types";
@@ -331,7 +331,7 @@ export default function GridPage({
     </div>
   );
 
-  const narrow = useMediaQuery("(max-width: 560px)");
+  const narrow = useMediaQuery(MOBILE_VIEW_QUERY);
   const mobileSessions = useMemo(
     () => orderMobileSessions(layout, servers, sessionsByServer),
     [layout, servers, sessionsByServer],

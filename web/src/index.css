@@ -1162,7 +1162,8 @@ a {
   border-bottom-color: var(--accent);
 }
 
-@media (max-width: 560px) {
+/* Keep in sync with MOBILE_VIEW_QUERY in src/useMediaQuery.ts. */
+@media (max-width: 560px), (pointer: coarse) and (hover: none) {
   body {
     overflow-x: hidden;
   }

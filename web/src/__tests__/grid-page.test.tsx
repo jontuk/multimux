@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import GridPage from "../grid/GridPage";
 import { useEvents } from "../useEvents";
+import { MOBILE_VIEW_QUERY } from "../useMediaQuery";
 
 vi.mock("../useEvents", () => ({ useEvents: vi.fn() }));
 vi.mock("../term/TerminalTile", () => ({
@@ -76,7 +77,7 @@ function stubMatchMedia(initialMatches: boolean) {
     get matches() {
       return matches;
     },
-    media: "(max-width: 560px)",
+    media: MOBILE_VIEW_QUERY,
     onchange: null,
     addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
     removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
