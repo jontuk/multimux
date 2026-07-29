@@ -92,9 +92,12 @@ func TestBranchStatusUpstream(t *testing.T) {
 
 	run := func(dir string, args ...string) {
 		t.Helper()
-		// Identity is set per-command so the test does not depend on the
-		// machine's global git config.
-		full := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=test"}
+		// Identity and default branch are set per-command so the test does not
+		// depend on the machine's global git config. The default branch matters:
+		// the bare remote's HEAD symref is created from it, and if it points at a
+		// branch that is never pushed, the later clone checks out that unborn
+		// branch instead of main and pushes its commit to the wrong ref.
+		full := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=test", "-c", "init.defaultBranch=main"}
 		cmd := exec.Command("git", append(full, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
