@@ -7,6 +7,9 @@ import ColumnStepper from "./ColumnStepper";
 import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
+import { useMediaQuery } from "../useMediaQuery";
+import MobileSessionView from "./MobileSessionView";
+import { orderMobileSessions } from "./mobileModel";
 import type { Session, Tool } from "./types";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 
@@ -123,6 +126,8 @@ export default function GridPage({
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
   const [toolsByServer, setToolsByServer] = useState<Record<string, Tool[]>>({});
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
+  const [layoutSettled, setLayoutSettled] = useState(false);
+  const [settledSessionServers, setSettledSessionServers] = useState<Set<string>>(() => new Set());
   // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
   const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
   // Ephemeral: a just-launched tile whose terminal should grab keyboard focus
@@ -180,29 +185,52 @@ export default function GridPage({
     [adoptLayout, flushLayout],
   );
 
-  const refreshSessions = useCallback(() => {
-    for (const server of servers) {
-      getJSON<Session[]>(server, "/api/sessions")
-        .then((s) => setSessionsByServer((prev) => ({ ...prev, [server.id]: s })))
-        .catch(() => setSessionsByServer((prev) => ({ ...prev, [server.id]: [] })));
-    }
-  }, [servers]);
+  const refreshSessions = useCallback(
+    (settleInitial = false) => {
+      for (const server of servers) {
+        getJSON<Session[]>(server, "/api/sessions")
+          .then((s) => setSessionsByServer((prev) => ({ ...prev, [server.id]: s })))
+          .catch(() => setSessionsByServer((prev) => ({ ...prev, [server.id]: [] })))
+          .finally(() => {
+            if (settleInitial) {
+              setSettledSessionServers((prev) => {
+                const next = new Set(prev);
+                next.add(server.id);
+                return next;
+              });
+            }
+          });
+      }
+    },
+    [servers],
+  );
 
   const renameSession = useCallback(
     (server: Server, sessionId: number, label: string) => {
       // The response and the session_renamed broadcast both land as a refresh;
       // a failure just leaves the old title in place.
-      putJSON(server, `/api/sessions/${sessionId}/label`, { label }).then(refreshSessions, refreshSessions);
+      putJSON(server, `/api/sessions/${sessionId}/label`, { label }).then(
+        () => refreshSessions(),
+        () => refreshSessions(),
+      );
     },
     [refreshSessions],
   );
 
-  const refreshLayout = useCallback(() => {
-    getJSON<unknown>(localServer(), "/api/layout").then((v) => {
-      // Normalize so layouts persisted before rows were derived still load cleanly.
-      if (isLayout(v)) adoptLayout(normalize(v.tiles, v.shape.cols));
-    });
-  }, [adoptLayout]);
+  const refreshLayout = useCallback(
+    (settleInitial = false) => {
+      getJSON<unknown>(localServer(), "/api/layout")
+        .then((v) => {
+          // Normalize so layouts persisted before rows were derived still load cleanly.
+          if (isLayout(v)) adoptLayout(normalize(v.tiles, v.shape.cols));
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (settleInitial) setLayoutSettled(true);
+        });
+    },
+    [adoptLayout],
+  );
 
   const onServerEvent = useCallback(
     (type: string) => {
@@ -215,14 +243,14 @@ export default function GridPage({
   );
 
   useEffect(() => {
-    refreshLayout();
+    refreshLayout(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Refetch per-server data whenever the server list changes (mount, and after
   // a reconnect replaces a token or a dead server is removed).
   useEffect(() => {
-    refreshSessions();
+    refreshSessions(true);
     for (const server of servers) {
       getJSON<Tool[]>(server, "/api/tools")
         .then((t) => setToolsByServer((prev) => ({ ...prev, [server.id]: t })))
@@ -302,10 +330,15 @@ export default function GridPage({
     </div>
   );
 
+  const narrow = useMediaQuery("(max-width: 560px)");
+  const mobileSessions = useMemo(
+    () => orderMobileSessions(layout, servers, sessionsByServer),
+    [layout, servers, sessionsByServer],
+  );
+  const initialLoading = !layoutSettled || servers.some((server) => !settledSessionServers.has(server.id));
   const { rows, cols } = layout.shape;
   return (
     <div className="grid-page">
-      {headerSlot ? createPortal(headerControls, headerSlot) : headerControls}
       {servers.map((s) => (
         <EventsBridge
           key={s.id}
@@ -342,176 +375,188 @@ export default function GridPage({
               ))}
           </div>
         ))}
-      <div
-        className="grid"
-        style={{
-          display: "grid",
-          gridTemplateRows: `repeat(${rows}, 1fr)`,
-          gridTemplateColumns: `repeat(${cols}, 1fr)`,
-          gap: 4,
-          height: "calc(100vh - 60px)",
-        }}
-      >
-        {layout.tiles.map((tile: Tile, i: number) => (
+      {narrow ? (
+        <MobileSessionView
+          sessions={mobileSessions}
+          toolsByServer={toolsByServer}
+          initialLoading={initialLoading}
+          onRefresh={refreshSessions}
+        />
+      ) : (
+        <>
+          {headerSlot ? createPortal(headerControls, headerSlot) : headerControls}
           <div
-            // Identity keys: swapping tiles moves the DOM nodes instead of
-            // re-rendering each position with a different session, which would
-            // rebuild xterm and reconnect the WebSocket for both tiles.
-            key={tile ? tileKey(tile) : `empty-${i}`}
-            className={`tile${tile && tileKey(tile) === maximizedKey ? " tile-maximized" : ""}`}
-            draggable={tile !== null && tileKey(tile) !== editingKey}
-            onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
-            onDragOver={(e) => {
-              if (e.dataTransfer.types.includes("text/tile-index")) e.preventDefault();
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              // Only our own drags: foreign drops yield "" and Number("")
-              // is 0, which would silently swap with tile zero.
-              const raw = e.dataTransfer.getData("text/tile-index");
-              if (!/^\d+$/.test(raw)) return;
-              const from = Number(raw);
-              if (from === i || from >= layout.tiles.length) return;
-              setMoveFrom(null);
-              persist((l) => swapTiles(l, from, i));
+            className="grid"
+            style={{
+              display: "grid",
+              gridTemplateRows: `repeat(${rows}, 1fr)`,
+              gridTemplateColumns: `repeat(${cols}, 1fr)`,
+              gap: 4,
+              height: "calc(100vh - 60px)",
             }}
           >
-            {moveFrom !== null && moveFrom !== i && (
-              <button
-                className="tile-move-target"
-                aria-label="move here"
-                onClick={() => {
-                  const from = moveFrom;
+            {layout.tiles.map((tile: Tile, i: number) => (
+              <div
+                // Identity keys: swapping tiles moves the DOM nodes instead of
+                // re-rendering each position with a different session, which would
+                // rebuild xterm and reconnect the WebSocket for both tiles.
+                key={tile ? tileKey(tile) : `empty-${i}`}
+                className={`tile${tile && tileKey(tile) === maximizedKey ? " tile-maximized" : ""}`}
+                draggable={tile !== null && tileKey(tile) !== editingKey}
+                onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes("text/tile-index")) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  // Only our own drags: foreign drops yield "" and Number("")
+                  // is 0, which would silently swap with tile zero.
+                  const raw = e.dataTransfer.getData("text/tile-index");
+                  if (!/^\d+$/.test(raw)) return;
+                  const from = Number(raw);
+                  if (from === i || from >= layout.tiles.length) return;
                   setMoveFrom(null);
-                  persist((l) => (from < l.tiles.length ? swapTiles(l, from, i) : l));
+                  persist((l) => swapTiles(l, from, i));
                 }}
               >
-                ⇅ move here
-              </button>
-            )}
-            {tile ? (
-              (() => {
-                const server = servers.find((s) => s.id === tile.serverId);
-                // Never fall back to another server: attaching or terminating
-                // would target that server's session with the same id.
-                if (!server) {
-                  return (
-                    <div className="tile-cell">
-                      <div className="tile-header">
-                        <span className="tile-title">#{tile.sessionId} · server removed</span>
-                        <span className="tile-actions">
-                          <button
-                            aria-label={`remove session ${tile.sessionId} from grid`}
-                            title="remove from grid"
-                            onClick={() => persist((l) => setTile(l, i, null))}
-                          >
-                            −
-                          </button>
-                        </span>
-                      </div>
-                      <div className="tile-body empty-tile-hint">
-                        This session's server was removed. Re-add the server in Settings or remove this tile.
-                      </div>
-                    </div>
-                  );
-                }
-                const session = (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId);
-                return (
-                  <div className="tile-cell">
-                    <div
-                      className="tile-header"
-                      onDoubleClick={() => setMaximizedKey((k) => (k === tileKey(tile) ? null : tileKey(tile)))}
-                    >
-                      <TileTitle
-                        sessionId={tile.sessionId}
-                        text={sessionTitle(toolsByServer[tile.serverId], session)}
-                        label={session?.label ?? ""}
-                        onEditingChange={(editing) => setEditingKey(editing ? tileKey(tile) : null)}
-                        onRename={(label) => renameSession(server, tile.sessionId, label)}
-                      />
-                      {session && (
-                        <span className="tile-dir" title={session.dir}>
-                          {session.dir}
-                        </span>
-                      )}
-                      {session?.gitState && (
-                        <span className="tile-branch">
-                          <span
-                            className={`git-dot git-dot-${session.gitState}`}
-                            title={gitStateTitles[session.gitState]}
+                {moveFrom !== null && moveFrom !== i && (
+                  <button
+                    className="tile-move-target"
+                    aria-label="move here"
+                    onClick={() => {
+                      const from = moveFrom;
+                      setMoveFrom(null);
+                      persist((l) => (from < l.tiles.length ? swapTiles(l, from, i) : l));
+                    }}
+                  >
+                    ⇅ move here
+                  </button>
+                )}
+                {tile ? (
+                  (() => {
+                    const server = servers.find((s) => s.id === tile.serverId);
+                    // Never fall back to another server: attaching or terminating
+                    // would target that server's session with the same id.
+                    if (!server) {
+                      return (
+                        <div className="tile-cell">
+                          <div className="tile-header">
+                            <span className="tile-title">#{tile.sessionId} · server removed</span>
+                            <span className="tile-actions">
+                              <button
+                                aria-label={`remove session ${tile.sessionId} from grid`}
+                                title="remove from grid"
+                                onClick={() => persist((l) => setTile(l, i, null))}
+                              >
+                                −
+                              </button>
+                            </span>
+                          </div>
+                          <div className="tile-body empty-tile-hint">
+                            This session's server was removed. Re-add the server in Settings or remove this tile.
+                          </div>
+                        </div>
+                      );
+                    }
+                    const session = (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId);
+                    return (
+                      <div className="tile-cell">
+                        <div
+                          className="tile-header"
+                          onDoubleClick={() => setMaximizedKey((k) => (k === tileKey(tile) ? null : tileKey(tile)))}
+                        >
+                          <TileTitle
+                            sessionId={tile.sessionId}
+                            text={sessionTitle(toolsByServer[tile.serverId], session)}
+                            label={session?.label ?? ""}
+                            onEditingChange={(editing) => setEditingKey(editing ? tileKey(tile) : null)}
+                            onRename={(label) => renameSession(server, tile.sessionId, label)}
                           />
-                          <span className="tile-branch-name">{session.branch}</span>
-                          <TrackingMarks session={session} />
-                        </span>
-                      )}
-                      {session?.repoUrl && (
-                        <a
-                          className="tile-repo-link"
-                          href={session.repoUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label="open repository on GitHub"
-                          title={session.repoUrl}
-                        >
-                          <GitHubIcon />
-                        </a>
-                      )}
-                      <span className="tile-actions">
-                        <button
-                          aria-label={`move session ${tile.sessionId}`}
-                          title="move tile (tap another cell to swap)"
-                          aria-pressed={moveFrom === i}
-                          onClick={() => setMoveFrom((f) => (f === i ? null : i))}
-                        >
-                          ⇅
-                        </button>
-                        <button
-                          aria-label={`remove session ${tile.sessionId} from grid`}
-                          title="remove from grid"
-                          onClick={() => persist((l) => setTile(l, i, null))}
-                        >
-                          −
-                        </button>
-                        <button
-                          className="danger"
-                          aria-label={`terminate session ${tile.sessionId}`}
-                          title="terminate session"
-                          onClick={() => terminateSession(server, tile.sessionId, i)}
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    </div>
-                    {session && session.status !== "running" ? (
-                      // Dead sessions must not mount a terminal: the daemon
-                      // rejects the attach and the tile would retry forever.
-                      <div className="tile-body empty-tile-hint">
-                        session ended <button onClick={() => persist((l) => setTile(l, i, null))}>dismiss</button>
+                          {session && (
+                            <span className="tile-dir" title={session.dir}>
+                              {session.dir}
+                            </span>
+                          )}
+                          {session?.gitState && (
+                            <span className="tile-branch">
+                              <span
+                                className={`git-dot git-dot-${session.gitState}`}
+                                title={gitStateTitles[session.gitState]}
+                              />
+                              <span className="tile-branch-name">{session.branch}</span>
+                              <TrackingMarks session={session} />
+                            </span>
+                          )}
+                          {session?.repoUrl && (
+                            <a
+                              className="tile-repo-link"
+                              href={session.repoUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="open repository on GitHub"
+                              title={session.repoUrl}
+                            >
+                              <GitHubIcon />
+                            </a>
+                          )}
+                          <span className="tile-actions">
+                            <button
+                              aria-label={`move session ${tile.sessionId}`}
+                              title="move tile (tap another cell to swap)"
+                              aria-pressed={moveFrom === i}
+                              onClick={() => setMoveFrom((f) => (f === i ? null : i))}
+                            >
+                              ⇅
+                            </button>
+                            <button
+                              aria-label={`remove session ${tile.sessionId} from grid`}
+                              title="remove from grid"
+                              onClick={() => persist((l) => setTile(l, i, null))}
+                            >
+                              −
+                            </button>
+                            <button
+                              className="danger"
+                              aria-label={`terminate session ${tile.sessionId}`}
+                              title="terminate session"
+                              onClick={() => terminateSession(server, tile.sessionId, i)}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        </div>
+                        {session && session.status !== "running" ? (
+                          // Dead sessions must not mount a terminal: the daemon
+                          // rejects the attach and the tile would retry forever.
+                          <div className="tile-body empty-tile-hint">
+                            session ended <button onClick={() => persist((l) => setTile(l, i, null))}>dismiss</button>
+                          </div>
+                        ) : (
+                          <div className="tile-body">
+                            <TerminalTile
+                              server={server}
+                              sessionId={tile.sessionId}
+                              autoFocus={tileKey(tile) === focusKey}
+                              onClose={() => persist((l) => setTile(l, i, null))}
+                            />
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="tile-body">
-                        <TerminalTile
-                          server={server}
-                          sessionId={tile.sessionId}
-                          autoFocus={tileKey(tile) === focusKey}
-                          onClose={() => persist((l) => setTile(l, i, null))}
-                        />
-                      </div>
-                    )}
-                  </div>
-                );
-              })()
-            ) : (
-              <EmptyTile
-                servers={servers}
-                sessionsByServer={sessionsByServer}
-                placed={placed}
-                onAttach={attachSession}
-              />
-            )}
+                    );
+                  })()
+                ) : (
+                  <EmptyTile
+                    servers={servers}
+                    sessionsByServer={sessionsByServer}
+                    placed={placed}
+                    onAttach={attachSession}
+                  />
+                )}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
     </div>
   );
 }

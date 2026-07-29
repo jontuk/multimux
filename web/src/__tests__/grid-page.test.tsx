@@ -65,7 +65,146 @@ function mockFetch(layout: unknown) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  localStorage.removeItem("multimux.servers");
 });
+
+function stubMatchMedia(initialMatches: boolean) {
+  let matches = initialMatches;
+  const listeners = new Set<() => void>();
+  const media = {
+    get matches() {
+      return matches;
+    },
+    media: "(max-width: 560px)",
+    onchange: null,
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => true,
+  };
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => media),
+  );
+  return {
+    setMatches(next: boolean) {
+      matches = next;
+      act(() => listeners.forEach((listener) => listener()));
+    },
+  };
+}
+
+test("wide mode keeps the launcher, grid, empty cells, and tile actions", async () => {
+  stubMatchMedia(false);
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+
+  await screen.findByText("+ New");
+  expect(document.querySelector(".grid")).not.toBeNull();
+  expect(document.querySelector(".empty-tile")).not.toBeNull();
+  expect(screen.getByLabelText("move session 1")).toBeInTheDocument();
+  expect(screen.getByLabelText("remove session 1 from grid")).toBeInTheDocument();
+  expect(screen.getByLabelText("terminate session 1")).toBeInTheDocument();
+});
+
+test("narrow mode renders the mobile session view without desktop controls", async () => {
+  stubMatchMedia(true);
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+
+  await screen.findByText("1/3");
+  expect(document.querySelector(".mobile-session-view")).not.toBeNull();
+  expect(document.querySelector(".grid")).toBeNull();
+  expect(document.querySelector(".empty-tile")).toBeNull();
+  expect(screen.queryByText("+ New")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("more columns")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("move session 1")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("remove session 1 from grid")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("terminate session 1")).not.toBeInTheDocument();
+});
+
+test("crossing the mobile breakpoint switches branches without persisting layout", async () => {
+  const media = stubMatchMedia(false);
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByText("+ New");
+
+  media.setMatches(true);
+  await screen.findByText("1/3");
+  expect(screen.queryByText("+ New")).not.toBeInTheDocument();
+
+  media.setMatches(false);
+  await screen.findByText("+ New");
+  expect(
+    fetchMock.mock.calls.some(([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT"),
+  ).toBe(false);
+});
+
+test("narrow empty state waits for layout and every configured server session request to settle", async () => {
+  stubMatchMedia(true);
+  stubRemoteServer();
+  const pending = new Map<string, (response: Response) => void>();
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = String(input);
+    if (url.includes("/api/layout") || url.includes("/api/sessions")) {
+      return new Promise<Response>((resolve) => pending.set(url, resolve));
+    }
+    return Promise.resolve(new Response("[]"));
+  });
+
+  render(<GridPage />);
+  expect(screen.getByText("Loading sessions…")).toBeInTheDocument();
+  expect(screen.queryByText("No sessions are running.")).not.toBeInTheDocument();
+
+  await act(async () => {
+    pending.get(`${window.location.origin}/api/layout`)!(new Response(JSON.stringify(emptyLayoutFixture)));
+  });
+  await waitFor(() => expect(screen.getByText("Loading sessions…")).toBeInTheDocument());
+
+  await act(async () => {
+    pending.get(`${window.location.origin}/api/sessions`)!(new Response("[]"));
+  });
+  await waitFor(() => expect(screen.getByText("Loading sessions…")).toBeInTheDocument());
+
+  await act(async () => {
+    pending.get("https://box-a:8686/api/sessions")!(new Response("[]"));
+  });
+  expect(await screen.findByText("No sessions are running.")).toBeInTheDocument();
+});
+
+test("a rejected server request settles while its banner coexists with a reachable mobile terminal", async () => {
+  stubMatchMedia(true);
+  stubRemoteServer();
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("https://box-a:8686") && url.includes("/api/sessions")) throw new Error("offline");
+    if (url.includes("/api/layout")) return new Response(JSON.stringify(layout));
+    if (url.includes("/api/sessions")) return new Response(JSON.stringify([sessions[0]]));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(dirs));
+    return new Response("[]");
+  });
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  expect(document.querySelector(".mobile-session-view")).not.toBeNull();
+  expect(screen.queryByText("Loading sessions…")).not.toBeInTheDocument();
+
+  act(() => remoteOnStatus()("unreachable"));
+  expect(await screen.findByText(/daemon unreachable/)).toBeInTheDocument();
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+});
+
+const emptyLayoutFixture = { shape: { rows: 1, cols: 1 }, tiles: [null] };
 
 test("attach dropdown hides sessions already placed in a tile", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
