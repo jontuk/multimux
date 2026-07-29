@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import SetupPage from "./pages/SetupPage";
+import TrustPage from "./pages/TrustPage";
 import SettingsPage from "./pages/SettingsPage";
 import ConnectPage from "./pages/ConnectPage";
 import { errorText, getJSON, isUnauthorized, isUnreachable } from "./api";
@@ -133,6 +134,7 @@ export default function App() {
     void check();
   }, [check]);
 
+  if (window.location.pathname === "/trust") return <TrustPage />;
   if (window.location.pathname === "/setup" || health?.setupPending) return <SetupPage />;
   if (startup.kind === "unauthed") return <LoginPage />;
   if (startup.kind === "unreachable" || startup.kind === "error")
