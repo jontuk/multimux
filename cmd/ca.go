@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"crypto/x509"
-	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
@@ -145,22 +143,9 @@ func describeCA(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	block, _ := pem.Decode(raw)
-	if block == nil {
-		return "", fmt.Errorf("ca trust: %s is not a PEM certificate", path)
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	info, err := pki.InspectCA(raw)
 	if err != nil {
-		return "", fmt.Errorf("ca trust: parsing %s: %w", path, err)
+		return "", fmt.Errorf("ca trust: %s: %w", path, err)
 	}
-	if !cert.IsCA {
-		return "", fmt.Errorf("ca trust: %s is not a CA certificate", path)
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "CA: %s\n", cert.Subject.CommonName)
-	if len(cert.PermittedDNSDomains) > 0 {
-		fmt.Fprintf(&b, "  constrained to: %s\n", strings.Join(cert.PermittedDNSDomains, ", "))
-	}
-	fmt.Fprintf(&b, "  expires: %s\n", cert.NotAfter.Format("2006-01-02"))
-	return b.String(), nil
+	return pki.FormatCAInfo(info), nil
 }

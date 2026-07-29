@@ -51,7 +51,7 @@ func TestCATrustMissingLocalCA(t *testing.T) {
 	}
 }
 
-func TestDescribeCA(t *testing.T) {
+func TestDescribeCAUsesSharedInspection(t *testing.T) {
 	dir := t.TempDir()
 
 	caPath := filepath.Join(dir, "ca.pem")
@@ -63,11 +63,39 @@ func TestDescribeCA(t *testing.T) {
 	if !strings.Contains(desc, "oci1.example.ts.net") {
 		t.Fatalf("describeCA output missing name constraint: %q", desc)
 	}
+	if !strings.Contains(desc, "SHA-256: ") || strings.Contains(desc, "SHA-256: \n") {
+		t.Fatalf("describeCA output missing fingerprint: %q", desc)
+	}
+	fingerprint := strings.TrimSpace(strings.Split(desc, "SHA-256: ")[1])
+	for _, r := range fingerprint {
+		if !strings.ContainsRune("0123456789ABCDEF:", r) {
+			t.Fatalf("fingerprint %q is not uppercase colon-separated hex", fingerprint)
+		}
+	}
 
 	leafPath := filepath.Join(dir, "leaf.pem")
 	writeTestCA(t, leafPath, false, nil) // not a CA
 	if _, err := describeCA(leafPath); err == nil {
 		t.Fatal("describeCA accepted a non-CA certificate")
+	}
+
+	raw, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, invalid := range map[string][]byte{
+		"trailing data":      append(append([]byte{}, raw...), []byte("secret")...),
+		"second certificate": append(append([]byte{}, raw...), raw...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".pem")
+			if err := os.WriteFile(path, invalid, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := describeCA(path); err == nil {
+				t.Fatalf("describeCA accepted %s", name)
+			}
+		})
 	}
 
 	if _, err := describeCA(filepath.Join(dir, "nope.pem")); err == nil {

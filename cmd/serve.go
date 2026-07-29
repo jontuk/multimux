@@ -159,7 +159,7 @@ func tmuxSocket(dev bool, dataDir string) string {
 // setupBanner renders the first-run banner: one setup URL per origin
 // (most-resolvable first — pass origins through displayOrigins) and a pointer
 // at --hostname for when none of the names resolve from the user's browser.
-func setupBanner(display []string, code string) string {
+func setupBanner(display []string, code string, info pki.CAInfo) string {
 	var b strings.Builder
 	b.WriteString("\n=== multimux setup ===\n")
 	label := "Open:"
@@ -167,6 +167,9 @@ func setupBanner(display []string, code string) string {
 		fmt.Fprintf(&b, "%s %s/setup?code=%s\n", label, o, code)
 		label = "  or:"
 	}
+	returnTarget := url.QueryEscape("/setup?code=" + code)
+	fmt.Fprintf(&b, "Android trust: %s/trust?return=%s\n", display[0], returnTarget)
+	fmt.Fprintf(&b, "CA SHA-256: %s\n", info.SHA256Fingerprint)
 	hint := "If none of these resolve"
 	if len(display) == 1 {
 		hint = "If this doesn't resolve"
@@ -178,9 +181,11 @@ func setupBanner(display []string, code string) string {
 // caRegenBanner renders the re-trust warning shown whenever the local CA is
 // replaced. It names the cause, because "hostname set changed" and "the old CA
 // expired" call for the same fix but mean very different things.
-func caRegenBanner(reason pki.CARegen) string {
+func caRegenBanner(reason pki.CARegen, primaryOrigin string, info pki.CAInfo) string {
 	return fmt.Sprintf("\n!! WARNING: local CA regenerated (%s)\n"+
-		"!! Browsers will refuse this daemon until you re-run `multimux ca trust`\n\n", reason)
+		"!! Browsers will refuse this daemon until you re-run `multimux ca trust`\n"+
+		"!! Android trust: %s/trust\n"+
+		"!! CA SHA-256: %s\n\n", reason, primaryOrigin, info.SHA256Fingerprint)
 }
 
 // serveUsage documents `multimux serve` for `multimux help serve`.
@@ -296,6 +301,24 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		return 1
 	}
 
+	p := pki.New(filepath.Join(dir, "pki"))
+	regen, err := p.Ensure(names)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	readCA := func() ([]byte, error) { return os.ReadFile(p.CACertPath()) }
+	caRaw, err := readCA()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	caInfo, err := pki.InspectCA(caRaw)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
 	tm := tmuxmgr.New("mm", tmuxSocket(*dev, dir))
 	if err := tm.Available(); err != nil {
 		fmt.Fprintf(stderr, "startup check failed: %v\ninstall tmux and retry\n", err)
@@ -304,7 +327,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 
 	srv := server.New(server.Config{
 		Store: st, Auth: am, Tmux: tm, Arbiter: tmuxmgr.NewArbiter(),
-		WebFS: webFS, Origins: origins, Version: version,
+		WebFS: webFS, Origins: origins, Version: version, ReadCA: readCA,
 	})
 	srv.StartBackground() // reconcile + tickers, Task 17
 
@@ -318,17 +341,11 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprint(stdout, setupBanner(display, code))
+		fmt.Fprint(stdout, setupBanner(display, code, caInfo))
 	}
 
-	p := pki.New(filepath.Join(dir, "pki"))
-	regen, err := p.Ensure(names)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	if regen != pki.CARegenNone {
-		fmt.Fprint(stdout, caRegenBanner(regen))
+		fmt.Fprint(stdout, caRegenBanner(regen, display[0], caInfo))
 	}
 	if *trustCAFlag {
 		if err := trustCA(p.CACertPath(), stdout, stderr); err != nil {
@@ -346,9 +363,19 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 				continue
 			}
 			if regen != pki.CARegenNone {
+				caRaw, err := readCA()
+				if err != nil {
+					slog.Error("read regenerated CA", "err", err)
+					continue
+				}
+				caInfo, err := pki.InspectCA(caRaw)
+				if err != nil {
+					slog.Error("inspect regenerated CA", "err", err)
+					continue
+				}
 				slog.Warn("local CA regenerated — re-run `multimux ca trust` to restore browser trust",
 					"reason", regen.String())
-				fmt.Fprint(stdout, caRegenBanner(regen))
+				fmt.Fprint(stdout, caRegenBanner(regen, display[0], caInfo))
 			}
 		}
 	}()

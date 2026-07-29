@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jontuk/multimux/internal/pki"
 	"github.com/jontuk/multimux/internal/store"
 )
 
@@ -76,10 +77,13 @@ func TestDisplayOrigins(t *testing.T) {
 }
 
 func TestSetupBanner(t *testing.T) {
+	info := pki.CAInfo{SHA256Fingerprint: "AA:BB:CC"}
 	t.Run("one line per origin, singular hint", func(t *testing.T) {
-		got := setupBanner([]string{"https://mux.example.com:8686"}, "ABC123")
+		got := setupBanner([]string{"https://mux.example.com:8686"}, "ABC123", info)
 		want := "\n=== multimux setup ===\n" +
 			"Open: https://mux.example.com:8686/setup?code=ABC123\n" +
+			"Android trust: https://mux.example.com:8686/trust?return=%2Fsetup%3Fcode%3DABC123\n" +
+			"CA SHA-256: AA:BB:CC\n" +
 			"(code expires in 15 minutes; restart to regenerate)\n" +
 			"If this doesn't resolve from your browser, restart with: multimux serve --hostname <name-your-browser-can-reach>\n\n"
 		if got != want {
@@ -87,16 +91,35 @@ func TestSetupBanner(t *testing.T) {
 		}
 	})
 	t.Run("multiple origins, plural hint", func(t *testing.T) {
-		got := setupBanner([]string{"https://mybox.local:8686", "https://mybox:8686"}, "ABC123")
+		got := setupBanner([]string{"https://mybox.local:8686", "https://mybox:8686"}, "ABC123", info)
 		want := "\n=== multimux setup ===\n" +
 			"Open: https://mybox.local:8686/setup?code=ABC123\n" +
 			"  or: https://mybox:8686/setup?code=ABC123\n" +
+			"Android trust: https://mybox.local:8686/trust?return=%2Fsetup%3Fcode%3DABC123\n" +
+			"CA SHA-256: AA:BB:CC\n" +
 			"(code expires in 15 minutes; restart to regenerate)\n" +
 			"If none of these resolve from your browser, restart with: multimux serve --hostname <name-your-browser-can-reach>\n\n"
 		if got != want {
 			t.Fatalf("got:\n%q\nwant:\n%q", got, want)
 		}
 	})
+}
+
+func TestCARegenBanner(t *testing.T) {
+	got := caRegenBanner(
+		pki.CARegenHostnames,
+		"https://mux.example.com:8686",
+		pki.CAInfo{SHA256Fingerprint: "11:22:AA"},
+	)
+	for _, want := range []string{
+		"local CA regenerated (hostname set changed)",
+		"https://mux.example.com:8686/trust",
+		"CA SHA-256: 11:22:AA",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("caRegenBanner output missing %q: %q", want, got)
+		}
+	}
 }
 
 func TestDevOrigins(t *testing.T) {
