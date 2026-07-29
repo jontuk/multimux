@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jontuk/multimux/internal/auth"
+	"github.com/jontuk/multimux/internal/pki"
 	"github.com/jontuk/multimux/internal/store"
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
@@ -38,10 +40,19 @@ func newTestServer(t *testing.T, registered bool) (*Server, *store.Store, *auth.
 		"index.html":    {Data: []byte("<html>multimux</html>")},
 		"assets/app.js": {Data: []byte("//js")},
 	}
+	testPKI := pki.New(t.TempDir())
+	if _, err := testPKI.Ensure([]string{"localhost"}); err != nil {
+		t.Fatal(err)
+	}
+	caPEM, err := os.ReadFile(testPKI.CACertPath())
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := New(Config{
 		Store: st, Auth: am, Tmux: tmuxmgr.New("mm", "test-none"),
 		Arbiter: tmuxmgr.NewArbiter(), WebFS: webFS,
 		Origins: []string{"https://localhost:8686"}, Version: "test",
+		ReadCA: func() ([]byte, error) { return append([]byte(nil), caPEM...), nil },
 	})
 	return s, st, am
 }

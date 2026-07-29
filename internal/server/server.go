@@ -25,6 +25,7 @@ type Config struct {
 	WebFS   fs.FS
 	Origins []string // this daemon's own origins (cookie-auth WS origin check)
 	Version string
+	ReadCA  func() ([]byte, error) // reads the current public CA; never a key
 }
 
 type Server struct {
@@ -53,6 +54,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /manifest.webmanifest", s.handleManifest)
 	s.mux.HandleFunc("GET /icon.svg", s.handleIconSVG)
+	s.mux.HandleFunc("GET /ca.crt", s.handleCADownload)
+	s.mux.HandleFunc("GET /ca/info", s.handleCAInfo)
 	// Auth ceremonies (open — they ARE the login): Task 15.
 	s.mux.HandleFunc("POST /api/auth/setup/begin", s.handleSetupBegin)
 	s.mux.HandleFunc("POST /api/auth/setup/finish", s.handleSetupFinish)
