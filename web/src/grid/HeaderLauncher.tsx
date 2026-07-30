@@ -73,7 +73,7 @@ export default function HeaderLauncher({
   // Empty lists only mean "nothing configured" once the fetch has resolved;
   // mid-load they are just the cleared state.
   const unconfigured = !loading && !error && (tools.length === 0 || dirs.length === 0);
-  const canLaunch = !loading && !busy && !error && toolId > 0 && dirId > 0;
+  const canLaunch = !loading && !busy && toolId > 0 && dirId > 0;
 
   async function launch() {
     if (!server || !canLaunch) return;
@@ -108,14 +108,28 @@ export default function HeaderLauncher({
         </span>
       ) : (
         <>
-          <select aria-label="tool" value={toolId} onChange={(e) => setToolId(Number(e.target.value))}>
+          <select
+            aria-label="tool"
+            value={toolId}
+            onChange={(e) => {
+              setToolId(Number(e.target.value));
+              setError("");
+            }}
+          >
             {tools.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
           </select>
-          <select aria-label="dir" value={dirId} onChange={(e) => setDirId(Number(e.target.value))}>
+          <select
+            aria-label="dir"
+            value={dirId}
+            onChange={(e) => {
+              setDirId(Number(e.target.value));
+              setError("");
+            }}
+          >
             {dirs.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
@@ -130,7 +144,10 @@ export default function HeaderLauncher({
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
-            onChange={(e) => setSubdir(e.target.value)}
+            onChange={(e) => {
+              setSubdir(e.target.value);
+              setError("");
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") launch();
             }}

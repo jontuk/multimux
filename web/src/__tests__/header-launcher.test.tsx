@@ -110,3 +110,45 @@ test("switching servers clears the previous daemon's tools and dirs until the ne
   await waitFor(() => expect(screen.getByText(/add tools/)).toBeInTheDocument());
   expect(button).toBeDisabled();
 });
+
+test("failed launch displays error and leaves + New enabled so user can edit inputs and retry", async () => {
+  let postCount = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
+    if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST") {
+      postCount++;
+      if (postCount === 1) {
+        return new Response(JSON.stringify({ error: "directory invalid/path does not exist" }), { status: 400 });
+      }
+      return new Response(
+        JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/repos/multimux/web", status: "running" }),
+        { status: 201 },
+      );
+    }
+    return new Response("[]");
+  });
+
+  const onLaunched = vi.fn();
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={onLaunched} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.change(subdir, { target: { value: "invalid/path" } });
+  const button = screen.getByText<HTMLButtonElement>("+ New");
+  fireEvent.click(button);
+
+  // Error is displayed and button remains enabled
+  await screen.findByText(/launch failed/);
+  expect(button).toBeEnabled();
+
+  // Editing the subdir clears the error message
+  fireEvent.change(subdir, { target: { value: "web" } });
+  expect(screen.queryByText(/launch failed/)).not.toBeInTheDocument();
+  expect(button).toBeEnabled();
+
+  // Retrying launch succeeds
+  fireEvent.click(button);
+  await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(1));
+});
+
