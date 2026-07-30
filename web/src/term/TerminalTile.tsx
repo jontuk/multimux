@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { apiFetch, wsURL } from "../api";
 import type { Server } from "../servers";
@@ -67,6 +68,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new ClipboardAddon()); // OSC 52: tmux copy-mode yank → system clipboard
+    term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current!);
     if (autoFocusRef.current && !didAutoFocus.current) {
       didAutoFocus.current = true;

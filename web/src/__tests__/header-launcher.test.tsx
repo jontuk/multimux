@@ -151,4 +151,3 @@ test("failed launch displays error and leaves + New enabled so user can edit inp
   fireEvent.click(button);
   await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(1));
 });
-

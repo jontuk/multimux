@@ -3,12 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import TerminalTile from "../term/TerminalTile";
 
+const loadedAddons: unknown[] = [];
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
     open() {}
-    loadAddon() {}
+    loadAddon(addon: unknown) {
+      loadedAddons.push(addon);
+    }
     onData() {
       return { dispose() {} };
     }
@@ -22,6 +26,7 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 vi.mock("@xterm/addon-clipboard", () => ({ ClipboardAddon: class {} }));
+vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class WebLinksAddon {} }));
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -145,4 +150,9 @@ test("running session that closes keeps retrying", async () => {
 
   await screen.findByText(/daemon unreachable/);
   await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(1), { timeout: 2000 });
+});
+
+test("loads WebLinksAddon on terminal mount", () => {
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  expect(loadedAddons.some((addon) => addon?.constructor?.name === "WebLinksAddon")).toBe(true);
 });
