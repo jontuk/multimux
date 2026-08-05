@@ -1,4 +1,4 @@
-import { addTile, emptyLayout, normalize, setCols, setTile, swapTiles, MAX_COLS, MIN_COLS } from "../grid/model";
+import { addTile, removeTile, emptyLayout, normalize, setCols, swapTiles, MAX_COLS, MIN_COLS } from "../grid/model";
 
 const sess = (id: number) => ({ serverId: "local", sessionId: id });
 
@@ -45,12 +45,39 @@ test("addTile appends a new row when the grid is full", () => {
   expect(l.tiles).toEqual([sess(1), sess(2), sess(3), null]);
 });
 
-test("setTile null removes a session and shrinks rows", () => {
+test("removeTile drops a session and shrinks rows", () => {
   let l = normalize([sess(1), sess(2), sess(3)], 2);
   expect(l.shape.rows).toBe(2);
-  l = setTile(l, 1, null);
+  l = removeTile(l, 1);
   expect(l.shape).toEqual({ rows: 1, cols: 2 });
   expect(l.tiles).toEqual([sess(1), sess(3)]);
+});
+
+test("removeTile narrows the grid when a column would be left empty", () => {
+  let l = normalize([sess(1), sess(2), sess(3)], 3);
+  l = removeTile(l, 2);
+  expect(l.shape).toEqual({ rows: 1, cols: 2 });
+  expect(l.tiles).toEqual([sess(1), sess(2)]);
+
+  l = removeTile(l, 0);
+  expect(l.shape).toEqual({ rows: 1, cols: 1 });
+  expect(l.tiles).toEqual([sess(2)]);
+});
+
+test("removeTile keeps the column count while every column is still used", () => {
+  let l = normalize([sess(1), sess(2), sess(3), sess(4), sess(5)], 3);
+  expect(l.shape).toEqual({ rows: 2, cols: 3 });
+  l = removeTile(l, 0);
+  // 4 tiles over 3 columns: no column is empty, so the width stays.
+  expect(l.shape).toEqual({ rows: 2, cols: 3 });
+  expect(l.tiles).toEqual([sess(2), sess(3), sess(4), sess(5), null, null]);
+});
+
+test("removing the last session collapses to a single column", () => {
+  let l = normalize([sess(1)], 3);
+  l = removeTile(l, 0);
+  expect(l.shape).toEqual({ rows: 1, cols: 1 });
+  expect(l.tiles).toEqual([null]);
 });
 
 test("swapTiles reorders occupied tiles", () => {

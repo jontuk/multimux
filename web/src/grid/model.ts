@@ -29,10 +29,16 @@ export function setCols(layout: Layout, cols: number): Layout {
   return normalize(layout.tiles, cols);
 }
 
-export function setTile(layout: Layout, index: number, tile: Tile): Layout {
+// Removing a tile can leave a whole column empty: tiles pack row-major, so
+// every column holds something unless the occupied tiles fit in a single row
+// (rows === 1, count < cols). Narrow the grid to what is left so the survivors
+// grow into the space instead of a dead column sitting there. Only shrinks —
+// the column count the user picked is kept whenever it is still in use.
+export function removeTile(layout: Layout, index: number): Layout {
   const tiles = layout.tiles.slice();
-  tiles[index] = tile;
-  return normalize(tiles, layout.shape.cols);
+  tiles[index] = null;
+  const count = tiles.filter((t) => t !== null).length;
+  return normalize(tiles, Math.min(layout.shape.cols, Math.max(1, count)));
 }
 
 export function addTile(layout: Layout, tile: NonNullable<Tile>): Layout {

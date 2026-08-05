@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { del, getJSON, putJSON } from "../api";
 import { connectServer, listServers, localServer, removeServer, type Server } from "../servers";
-import { addTile, emptyLayout, normalize, setCols, setTile, swapTiles, type Layout, type Tile } from "./model";
+import { addTile, emptyLayout, normalize, removeTile, setCols, swapTiles, type Layout, type Tile } from "./model";
 import ColumnStepper from "./ColumnStepper";
 import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
@@ -288,7 +288,7 @@ export default function GridPage({
     } catch {
       // Session may already be gone; drop the tile either way.
     }
-    persist((l) => setTile(l, tileIndex, null));
+    persist((l) => removeTile(l, tileIndex));
     refreshSessions();
   }
 
@@ -429,7 +429,7 @@ export default function GridPage({
                               <button
                                 aria-label={`remove session ${tile.sessionId} from grid`}
                                 title="remove from grid"
-                                onClick={() => persist((l) => setTile(l, i, null))}
+                                onClick={() => persist((l) => removeTile(l, i))}
                               >
                                 −
                               </button>
@@ -486,7 +486,7 @@ export default function GridPage({
                             <button
                               aria-label={`remove session ${tile.sessionId} from grid`}
                               title="remove from grid"
-                              onClick={() => persist((l) => setTile(l, i, null))}
+                              onClick={() => persist((l) => removeTile(l, i))}
                             >
                               −
                             </button>
@@ -504,7 +504,7 @@ export default function GridPage({
                           // Dead sessions must not mount a terminal: the daemon
                           // rejects the attach and the tile would retry forever.
                           <div className="tile-body empty-tile-hint">
-                            session ended <button onClick={() => persist((l) => setTile(l, i, null))}>dismiss</button>
+                            session ended <button onClick={() => persist((l) => removeTile(l, i))}>dismiss</button>
                           </div>
                         ) : (
                           <div className="tile-body">
@@ -512,7 +512,7 @@ export default function GridPage({
                               server={server}
                               sessionId={tile.sessionId}
                               autoFocus={tileKey(tile) === focusKey}
-                              onClose={() => persist((l) => setTile(l, i, null))}
+                              onClose={() => persist((l) => removeTile(l, i))}
                             />
                           </div>
                         )}
