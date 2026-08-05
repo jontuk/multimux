@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // Tool is a launchable command template (e.g. zsh, claude, codex).
@@ -218,4 +220,73 @@ func (s *Store) isEmpty(table string) (bool, error) {
 		return false, err
 	}
 	return n == 0, nil
+}
+
+// subdirHistoryLimit caps the remembered subdirs per directory. Ten covers the
+// handful a person actually cycles through and keeps the dropdown short enough
+// that it never needs its own scrollbar.
+const subdirHistoryLimit = 10
+
+// Recency ordering is a plain lexicographic ORDER BY on used_at, so the format
+// must be fixed width: two launches inside the same second are ordinary, and
+// time.RFC3339's second precision would tie them. This is RFC3339 with a
+// constant nine-digit fraction, so time.Parse(time.RFC3339, …) still reads it.
+const subdirTimeFormat = "2006-01-02T15:04:05.000000000Z07:00"
+
+// ListSubdirs returns the subdirs last launched into under dirID, newest
+// first, at most subdirHistoryLimit of them. The result is never nil: it is
+// written straight to JSON, where nil would marshal as null.
+func (s *Store) ListSubdirs(dirID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT subdir FROM dir_subdirs WHERE dir_id = ? ORDER BY used_at DESC LIMIT ?`,
+		dirID, subdirHistoryLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var sub string
+		if err := rows.Scan(&sub); err != nil {
+			return nil, err
+		}
+		out = append(out, sub)
+	}
+	return out, rows.Err()
+}
+
+// RecordSubdir remembers subdir under dirID, or bumps it to the front if it is
+// already remembered. A blank subdir is not history, so it is dropped.
+func (s *Store) RecordSubdir(dirID int64, subdir string) error {
+	subdir = strings.TrimSpace(subdir)
+	if subdir == "" {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
+		`INSERT INTO dir_subdirs (dir_id, subdir, used_at) VALUES (?, ?, ?)
+		 ON CONFLICT(dir_id, subdir) DO UPDATE SET used_at = excluded.used_at`,
+		dirID, subdir, time.Now().UTC().Format(subdirTimeFormat)); err != nil {
+		return err
+	}
+	// Trimming inside the insert's transaction is what bounds the table: two
+	// tabs launching at once cannot interleave into a list above the limit.
+	if _, err := tx.Exec(
+		`DELETE FROM dir_subdirs WHERE dir_id = ? AND subdir NOT IN (
+			SELECT subdir FROM dir_subdirs WHERE dir_id = ? ORDER BY used_at DESC LIMIT ?)`,
+		dirID, dirID, subdirHistoryLimit); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteSubdir forgets one remembered subdir. Deleting an entry that is
+// already gone succeeds — the caller is repeating itself, not misbehaving.
+func (s *Store) DeleteSubdir(dirID int64, subdir string) error {
+	_, err := s.db.Exec(`DELETE FROM dir_subdirs WHERE dir_id = ? AND subdir = ?`, dirID, subdir)
+	return err
 }

@@ -68,6 +68,15 @@ var migrations = []string{
 	// label" — the UI falls back to the tool name. The tmux session name is
 	// unaffected; it stays mm-{id}.
 	`ALTER TABLE sessions ADD COLUMN label TEXT NOT NULL DEFAULT '';`,
+	// Per-directory memory of subdirs that were actually launched into. It
+	// cascades off dirs: a deleted directory's history is meaningless, and
+	// store.Open sets foreign_keys(1), so SQLite does the cleanup.
+	`CREATE TABLE dir_subdirs (
+		dir_id  INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
+		subdir  TEXT NOT NULL,
+		used_at TEXT NOT NULL,
+		PRIMARY KEY (dir_id, subdir)
+	);`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and

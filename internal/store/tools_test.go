@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -198,5 +199,115 @@ func TestSeedDefaultsWithoutHome(t *testing.T) {
 	}
 	if dirs, _ := s.ListDirs(); len(dirs) != 0 {
 		t.Fatalf("dirs = %+v", dirs)
+	}
+}
+
+func TestSubdirHistoryRecordsMostRecentFirst(t *testing.T) {
+	s := openTestStore(t)
+	d, _ := s.CreateDir("repos", "/repos")
+
+	for _, sub := range []string{"web", "cmd", "internal/server"} {
+		if err := s.RecordSubdir(d.ID, sub); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.ListSubdirs(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "internal/server,cmd,web" {
+		t.Fatalf("history = %v, want newest first", got)
+	}
+
+	// Re-using an entry bumps it to the front instead of duplicating it.
+	if err := s.RecordSubdir(d.ID, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.ListSubdirs(d.ID); strings.Join(got, ",") != "web,internal/server,cmd" {
+		t.Fatalf("history after re-use = %v", got)
+	}
+}
+
+func TestSubdirHistoryIgnoresBlank(t *testing.T) {
+	s := openTestStore(t)
+	d, _ := s.CreateDir("repos", "/repos")
+	if err := s.RecordSubdir(d.ID, "   "); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListSubdirs(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("history = %v, want empty", got)
+	}
+	// A directory with no history must still list as an empty slice, not nil:
+	// the handler writes it straight to JSON, and nil marshals as null.
+	if got == nil {
+		t.Fatal("ListSubdirs returned nil, want empty slice")
+	}
+}
+
+func TestSubdirHistoryIsCappedAtTen(t *testing.T) {
+	s := openTestStore(t)
+	d, _ := s.CreateDir("repos", "/repos")
+	for i := 0; i < 11; i++ {
+		if err := s.RecordSubdir(d.ID, fmt.Sprintf("dir%02d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := s.ListSubdirs(d.ID)
+	if len(got) != 10 {
+		t.Fatalf("history length = %d, want 10", len(got))
+	}
+	if got[0] != "dir10" || got[9] != "dir01" {
+		t.Fatalf("history = %v, want dir10..dir01 (dir00 evicted)", got)
+	}
+}
+
+func TestSubdirHistoryIsPerDirectory(t *testing.T) {
+	s := openTestStore(t)
+	a, _ := s.CreateDir("repos", "/repos")
+	b, _ := s.CreateDir("home", "/home")
+	if err := s.RecordSubdir(a.ID, "web/src"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListSubdirs(b.ID); len(got) != 0 {
+		t.Fatalf("other directory's history = %v, want empty", got)
+	}
+}
+
+func TestDeleteSubdir(t *testing.T) {
+	s := openTestStore(t)
+	d, _ := s.CreateDir("repos", "/repos")
+	_ = s.RecordSubdir(d.ID, "web")
+	_ = s.RecordSubdir(d.ID, "cmd")
+
+	if err := s.DeleteSubdir(d.ID, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListSubdirs(d.ID); strings.Join(got, ",") != "cmd" {
+		t.Fatalf("history after delete = %v", got)
+	}
+	// Deleting something that is already gone is the client repeating itself,
+	// not an error.
+	if err := s.DeleteSubdir(d.ID, "web"); err != nil {
+		t.Fatalf("repeat delete: %v", err)
+	}
+}
+
+// The history hangs off the directory row; removing the directory must not
+// leave rows nothing can reach.
+func TestSubdirHistoryDiesWithItsDirectory(t *testing.T) {
+	s := openTestStore(t)
+	d, _ := s.CreateDir("repos", "/repos")
+	if err := s.RecordSubdir(d.ID, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDir(d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListSubdirs(d.ID); len(got) != 0 {
+		t.Fatalf("history survived its directory: %v", got)
 	}
 }
