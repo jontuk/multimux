@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { del, getJSON, postJSON } from "../api";
 import type { Server } from "../servers";
 import type { Dir, Session, Tool } from "./types";
@@ -25,6 +25,16 @@ export default function HeaderLauncher({
   const [busy, setBusy] = useState(false);
 
   const server = servers.find((s) => s.id === serverId);
+
+  // Lets an in-flight forget() know, once its DELETE settles, whether the
+  // user has since switched directories — mirrors the `stale` guard the
+  // fetch effects use, but as a ref since forget() is an event handler, not
+  // an effect. Updated in an effect rather than during render, per the rules
+  // of hooks.
+  const dirIdRef = useRef(dirId);
+  useEffect(() => {
+    dirIdRef.current = dirId;
+  }, [dirId]);
 
   // Switching servers must drop the previous daemon's options in the same
   // render as the switch: tool/dir ids are per-daemon autoincrements, so a
@@ -136,11 +146,17 @@ export default function HeaderLauncher({
   // rather than leaving the UI claiming something was forgotten.
   async function forget(value: string) {
     if (!server) return;
+    const forDirId = dirId;
     const previous = history;
     setHistory((h) => h.filter((x) => x !== value));
     try {
-      await del(server, `/api/dirs/${dirId}/subdirs?subdir=${encodeURIComponent(value)}`);
+      await del(server, `/api/dirs/${forDirId}/subdirs?subdir=${encodeURIComponent(value)}`);
     } catch (e) {
+      // If the user has since switched directories, this directory's history
+      // is no longer on screen: restoring it would clobber the new
+      // directory's freshly loaded list, and the error would refer to
+      // nothing the user can see.
+      if (dirIdRef.current !== forDirId) return;
       setHistory(previous);
       setError(`couldn't forget ${value}: ${e instanceof Error ? e.message : e}`);
     }

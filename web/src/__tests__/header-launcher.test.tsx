@@ -295,3 +295,51 @@ test("a successful launch adds its subdir to the history", async () => {
   const rows = await screen.findAllByRole("button", { name: /^(web\/src|cmd)$/ });
   expect(rows.map((r) => r.textContent)).toEqual(["web/src", "cmd"]);
 });
+
+// A directory switch while a forget's DELETE is still in flight must not let
+// the eventual failure clobber the new directory's history or show an error
+// about a subdir that is no longer on screen.
+test("switching directories before a failed forget lands leaves the new directory's history alone", async () => {
+  let releaseDelete: (() => void) | undefined;
+  const deletePending = new Promise<void>((resolve) => {
+    releaseDelete = resolve;
+  });
+  let deleteSettled = false;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const hist = url.match(/\/api\/dirs\/(\d+)\/subdirs/);
+    if (hist) {
+      if ((init?.method ?? "GET") === "DELETE") {
+        await deletePending;
+        deleteSettled = true;
+        return new Response("nope", { status: 500 });
+      }
+      const byDir: Record<number, string[]> = { 7: ["web/src"], 8: ["Downloads"] };
+      return new Response(JSON.stringify(byDir[Number(hist[1])] ?? []));
+    }
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(twoDirs));
+    return new Response("[]");
+  });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/dirs/7/subdirs"))).toBe(true));
+  fireEvent.focus(subdir);
+  await screen.findByText("web/src");
+  fireEvent.click(screen.getByLabelText("forget web/src"));
+
+  // Switch directories while the DELETE for dir 7 is still in flight.
+  fireEvent.change(screen.getByLabelText("dir"), { target: { value: "8" } });
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/dirs/8/subdirs"))).toBe(true));
+  fireEvent.focus(subdir);
+  expect(await screen.findByText("Downloads")).toBeInTheDocument();
+
+  // Let the stale DELETE fail now that the user has moved on.
+  releaseDelete?.();
+  await waitFor(() => expect(deleteSettled).toBe(true));
+
+  expect(screen.queryByText(/couldn't forget/i)).toBeNull();
+  expect(screen.getByText("Downloads")).toBeInTheDocument();
+  expect(screen.queryByText("web/src")).toBeNull();
+});
