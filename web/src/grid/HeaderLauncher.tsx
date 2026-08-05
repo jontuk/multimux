@@ -27,20 +27,21 @@ export default function HeaderLauncher({
 
   const server = servers.find((s) => s.id === serverId);
 
-  // Lets an in-flight forget() know, once its DELETE settles, whether the
-  // user has since switched directories — mirrors the `stale` guard the
-  // fetch effects use, but as a ref since forget() is an event handler, not
-  // an effect. Updated in an effect rather than during render, per the rules
-  // of hooks.
-  const dirIdRef = useRef(dirId);
-  useEffect(() => {
-    dirIdRef.current = dirId;
-  }, [dirId]);
+  // Lets in-flight async work (forget's DELETE, launch's history bump) know,
+  // once it settles, whether the user has since moved on to a different
+  // directory or server — dir ids are per-daemon autoincrements, so a bare
+  // dirId match is not enough; a server switch can hand back the same
+  // number on a different daemon. Assigned synchronously wherever the
+  // selection changes (selectServer, selectDir, and the tools/dirs effect's
+  // auto-select), never via an effect, so a microtask that resumes before
+  // the next render still sees the true current selection.
+  const selectionRef = useRef({ serverId, dirId });
 
   // Switching servers must drop the previous daemon's options in the same
   // render as the switch: tool/dir ids are per-daemon autoincrements, so a
   // leftover id would launch a different tool on the new daemon.
   function selectServer(id: string) {
+    selectionRef.current = { serverId: id, dirId: 0 };
     setServerId(id);
     setTools([]);
     setDirs([]);
@@ -59,6 +60,7 @@ export default function HeaderLauncher({
   // A subdir names a path under the selected directory. Changing the directory
   // makes it meaningless, so it is dropped rather than silently re-pointed.
   function selectDir(id: number) {
+    selectionRef.current = { serverId, dirId: id };
     setDirId(id);
     setSubdir("");
     setHistory([]);
@@ -78,7 +80,9 @@ export default function HeaderLauncher({
         setTools(t);
         setDirs(d);
         setToolId(t[0]?.id ?? 0);
-        setDirId(d[0]?.id ?? 0);
+        const autoDirId = d[0]?.id ?? 0;
+        setDirId(autoDirId);
+        selectionRef.current = { serverId, dirId: autoDirId };
         setError("");
         setLoading(false);
       })
@@ -129,15 +133,22 @@ export default function HeaderLauncher({
 
   async function launch() {
     if (!server || !canLaunch) return;
+    const issuedFor = selectionRef.current;
     setBusy(true);
     setError("");
     try {
       const sess = await postJSON<Session>(server, "/api/sessions", { toolId, dirId, subdir });
       onLaunched(server, sess);
       // The daemon has recorded this too; updating locally keeps the dropdown
-      // right without a second round trip.
+      // right without a second round trip. But if the user has since picked
+      // a different directory or server, that dropdown belongs to someone
+      // else's history now — bumping it here would prepend a subdir the
+      // daemon never recorded for the directory on screen.
       const used = subdir.trim();
-      if (used) setHistory((h) => [used, ...h.filter((x) => x !== used)]);
+      const current = selectionRef.current;
+      if (used && current.serverId === issuedFor.serverId && current.dirId === issuedFor.dirId) {
+        setHistory((h) => [used, ...h.filter((x) => x !== used)]);
+      }
     } catch (e) {
       setError(`launch failed: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -149,17 +160,21 @@ export default function HeaderLauncher({
   // rather than leaving the UI claiming something was forgotten.
   async function forget(value: string) {
     if (!server) return;
-    const forDirId = dirId;
+    const issuedFor = selectionRef.current;
     const previous = history;
     setHistory((h) => h.filter((x) => x !== value));
+    setHighlight(-1);
     try {
-      await del(server, `/api/dirs/${forDirId}/subdirs?subdir=${encodeURIComponent(value)}`);
+      await del(server, `/api/dirs/${issuedFor.dirId}/subdirs?subdir=${encodeURIComponent(value)}`);
     } catch (e) {
-      // If the user has since switched directories, this directory's history
-      // is no longer on screen: restoring it would clobber the new
-      // directory's freshly loaded list, and the error would refer to
+      // If the user has since switched directories or servers, this
+      // directory's history is no longer on screen: restoring it would
+      // clobber the new selection's freshly loaded list (dir ids are
+      // per-daemon autoincrements, so a bare dirId match could otherwise
+      // match a different daemon's directory), and the error would refer to
       // nothing the user can see.
-      if (dirIdRef.current !== forDirId) return;
+      const current = selectionRef.current;
+      if (current.serverId !== issuedFor.serverId || current.dirId !== issuedFor.dirId) return;
       setHistory(previous);
       setError(`couldn't forget ${value}: ${e instanceof Error ? e.message : e}`);
     }
@@ -218,6 +233,7 @@ export default function HeaderLauncher({
               onBlur={() => setOpen(false)}
               onChange={(e) => {
                 setSubdir(e.target.value);
+                setOpen(true);
                 setHighlight(-1);
                 setError("");
               }}

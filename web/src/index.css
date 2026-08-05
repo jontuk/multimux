@@ -432,7 +432,7 @@ a {
   top: calc(100% + 0.3rem);
   z-index: 20;
   width: min(20rem, calc(100vw - 3rem));
-  max-height: 14rem;
+  max-height: 17rem;
   overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);

@@ -221,10 +221,6 @@ test("the history appears on focus, filters as you type, and hides when nothing 
 
   fireEvent.change(subdir, { target: { value: "zzz" } });
   expect(screen.queryByText("internal/server")).toBeNull();
-
-  fireEvent.blur(subdir);
-  fireEvent.change(subdir, { target: { value: "" } });
-  expect(screen.queryByText("web/src")).toBeNull();
 });
 
 test("clicking a remembered subdir fills the field and launches with it", async () => {
@@ -336,6 +332,69 @@ test("switching directories before a failed forget lands leaves the new director
   expect(await screen.findByText("Downloads")).toBeInTheDocument();
 
   // Let the stale DELETE fail now that the user has moved on.
+  releaseDelete?.();
+  await waitFor(() => expect(deleteSettled).toBe(true));
+
+  expect(screen.queryByText(/couldn't forget/i)).toBeNull();
+  expect(screen.getByText("Downloads")).toBeInTheDocument();
+  expect(screen.queryByText("web/src")).toBeNull();
+});
+
+// A dir id is a per-daemon autoincrement, so a server switch can hand back
+// the very same id (both daemons' first configured dir is id 7 here). A
+// forget whose DELETE fails after that switch must not mistake the new
+// server's dir-7 history for the one it started on.
+test("switching servers before a failed forget lands leaves the other server's history alone", async () => {
+  let releaseDelete: (() => void) | undefined;
+  const deletePending = new Promise<void>((resolve) => {
+    releaseDelete = resolve;
+  });
+  let deleteSettled = false;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("http://remote.test")) {
+      if (url.includes("/subdirs")) return new Response(JSON.stringify(["Downloads"]));
+      if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+      if (url.includes("/api/dirs"))
+        return new Response(JSON.stringify([{ id: 7, name: "box-a-dir", path: "/remote" }]));
+      return new Response("[]");
+    }
+    if (url.includes("/subdirs")) {
+      if ((init?.method ?? "GET") === "DELETE") {
+        await deletePending;
+        deleteSettled = true;
+        return new Response("nope", { status: 500 });
+      }
+      return new Response(JSON.stringify(["web/src"]));
+    }
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
+    return new Response("[]");
+  });
+
+  render(<HeaderLauncher servers={servers} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("local.test/api/dirs/7/subdirs"))).toBe(true),
+  );
+  fireEvent.focus(subdir);
+  await screen.findByText("web/src");
+  fireEvent.click(screen.getByLabelText("forget web/src"));
+
+  // Switch to the other server while dir 7's DELETE is still in flight on
+  // the first one.
+  fireEvent.change(screen.getByLabelText("server"), { target: { value: "r1" } });
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("remote.test/api/dirs/7/subdirs"))).toBe(true),
+  );
+  // The server switch unmounts the loading placeholder's input, so the new
+  // one must be re-queried rather than reusing the pre-switch reference.
+  const newSubdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.focus(newSubdir);
+  expect(await screen.findByText("Downloads")).toBeInTheDocument();
+
+  // Let the stale DELETE fail now that the user has moved to another daemon.
   releaseDelete?.();
   await waitFor(() => expect(deleteSettled).toBe(true));
 
