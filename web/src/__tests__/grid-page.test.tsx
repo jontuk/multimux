@@ -107,7 +107,6 @@ test("wide mode keeps the launcher, grid, empty cells, and tile actions", async 
   await screen.findByText("+ New");
   expect(document.querySelector(".grid")).not.toBeNull();
   expect(document.querySelector(".empty-tile")).not.toBeNull();
-  expect(screen.getByLabelText("move session 1")).toBeInTheDocument();
   expect(screen.getByLabelText("remove session 1 from grid")).toBeInTheDocument();
   expect(screen.getByLabelText("terminate session 1")).toBeInTheDocument();
 });
@@ -125,7 +124,6 @@ test("narrow mode renders the mobile session view without desktop controls", asy
   expect(document.querySelector(".empty-tile")).toBeNull();
   expect(screen.queryByText("+ New")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("more columns")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("move session 1")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("remove session 1 from grid")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("terminate session 1")).not.toBeInTheDocument();
 });
@@ -711,40 +709,6 @@ test("drops with an out-of-range tile index are ignored", async () => {
   fireEvent.drop(tiles[1], { dataTransfer: makeDataTransfer({ "text/tile-index": "99" }) });
 
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
-});
-
-test("move button offers tap targets that reorder tiles without drag", async () => {
-  const fetchMock = mockFetch(twoTileLayout);
-
-  render(<GridPage />);
-  await screen.findByTestId("term-1");
-  await screen.findByTestId("term-2");
-
-  // Tap "move" on tile #2, then tap the target that appears on the other cell.
-  await userEvent.click(screen.getByLabelText("move session 2"));
-  await userEvent.click(screen.getByLabelText("move here"));
-
-  expect(document.querySelectorAll(".tile")[0].querySelector("[data-testid=term-2]")).not.toBeNull();
-  const put = fetchMock.mock.calls.findLast(([, init]) => init?.method === "PUT");
-  expect(JSON.parse(String(put?.[1]?.body)).tiles).toEqual([
-    { serverId: "local", sessionId: 2 },
-    { serverId: "local", sessionId: 1 },
-  ]);
-  // Move mode ends once the move completes.
-  expect(screen.queryByLabelText("move here")).toBeNull();
-});
-
-test("tapping move again cancels move mode", async () => {
-  mockFetch(twoTileLayout);
-
-  render(<GridPage />);
-  await screen.findByTestId("term-1");
-
-  await userEvent.click(screen.getByLabelText("move session 1"));
-  expect(screen.getByLabelText("move here")).toBeInTheDocument();
-
-  await userEvent.click(screen.getByLabelText("move session 1"));
-  expect(screen.queryByLabelText("move here")).toBeNull();
 });
 
 test("stepper arrows change column count and persist it", async () => {

@@ -133,10 +133,6 @@ export default function GridPage({
   // Ephemeral: a just-launched tile whose terminal should grab keyboard focus
   // so the user can type immediately. Only the freshly-mounted tile reads it.
   const [focusKey, setFocusKey] = useState<string | null>(null);
-  // Tap-to-move for touch devices (native HTML drag has no touch path): the
-  // header ⇅ button arms a move from this tile index, then every other cell
-  // shows a tap target that completes the swap.
-  const [moveFrom, setMoveFrom] = useState<number | null>(null);
   // Tile key whose title is being renamed; the tile drops `draggable` while it
   // is, so the drag doesn't eat text selection in the input.
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -416,23 +412,9 @@ export default function GridPage({
                   if (!/^\d+$/.test(raw)) return;
                   const from = Number(raw);
                   if (from === i || from >= layout.tiles.length) return;
-                  setMoveFrom(null);
                   persist((l) => swapTiles(l, from, i));
                 }}
               >
-                {moveFrom !== null && moveFrom !== i && (
-                  <button
-                    className="tile-move-target"
-                    aria-label="move here"
-                    onClick={() => {
-                      const from = moveFrom;
-                      setMoveFrom(null);
-                      persist((l) => (from < l.tiles.length ? swapTiles(l, from, i) : l));
-                    }}
-                  >
-                    ⇅ move here
-                  </button>
-                )}
                 {tile ? (
                   (() => {
                     const server = servers.find((s) => s.id === tile.serverId);
@@ -501,14 +483,6 @@ export default function GridPage({
                             </a>
                           )}
                           <span className="tile-actions">
-                            <button
-                              aria-label={`move session ${tile.sessionId}`}
-                              title="move tile (tap another cell to swap)"
-                              aria-pressed={moveFrom === i}
-                              onClick={() => setMoveFrom((f) => (f === i ? null : i))}
-                            >
-                              ⇅
-                            </button>
                             <button
                               aria-label={`remove session ${tile.sessionId} from grid`}
                               title="remove from grid"

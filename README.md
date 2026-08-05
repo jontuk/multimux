@@ -301,7 +301,7 @@ session keeps its `mm-{id}` name — and clearing it restores the tool name.
 | Action | How |
 | --- | --- |
 | Maximize / restore a tile | double-click its header, or `Escape` to restore |
-| Move a tile | drag it onto another cell, or press ⇅ then tap the target cell (touch) |
+| Move a tile | drag it onto another cell |
 | Remove a tile from the grid | − (the tmux session keeps running) |
 | Terminate the session | ✕ (kills the tmux session) |
 | Re-attach a running session | pick it from the `+ #id` buttons in the header, or from an empty tile |
