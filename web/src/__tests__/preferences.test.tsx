@@ -67,6 +67,7 @@ test("app applies the fetched preference and follows the update event", async ()
   };
   vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = String(input);
+    if (url.includes("/subdirs")) return Promise.resolve(new Response("[]"));
     if (url.includes("/api/sessions/") && init?.method === "DELETE") return Promise.resolve(new Response("{}"));
     if (url.includes("/api/layout") && init?.method === "PUT") return Promise.resolve(new Response("{}"));
     for (const [path, make] of Object.entries(routes)) {

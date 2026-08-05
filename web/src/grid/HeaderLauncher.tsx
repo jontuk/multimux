@@ -16,9 +16,8 @@ export default function HeaderLauncher({
   const [toolId, setToolId] = useState(0);
   const [dirId, setDirId] = useState(0);
   const [subdir, setSubdir] = useState("");
-  // Read by the history dropdown added in a later task; only written here.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [history, setHistory] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   // `loading` means "this server's tools/dirs are still being fetched";
   // `busy` means "a launch is in flight".
@@ -40,6 +39,7 @@ export default function HeaderLauncher({
     // the same thing on another machine, so it does not survive the switch.
     setSubdir("");
     setHistory([]);
+    setOpen(false);
     setError("");
     setLoading(true);
   }
@@ -50,6 +50,7 @@ export default function HeaderLauncher({
     setDirId(id);
     setSubdir("");
     setHistory([]);
+    setOpen(false);
     setError("");
   }
 
@@ -107,6 +108,12 @@ export default function HeaderLauncher({
   const unconfigured = !loading && !error && (tools.length === 0 || dirs.length === 0);
   const canLaunch = !loading && !busy && toolId > 0 && dirId > 0;
 
+  // Substring, case-insensitive: a remembered "internal/server" should be
+  // reachable by typing "serv", not only by typing its prefix.
+  const needle = subdir.trim().toLowerCase();
+  const filtered = history.filter((h) => h.toLowerCase().includes(needle));
+  const showHistory = open && filtered.length > 0;
+
   async function launch() {
     if (!server || !canLaunch) return;
     setBusy(true);
@@ -161,22 +168,46 @@ export default function HeaderLauncher({
               </option>
             ))}
           </select>
-          <input
-            className="subdir"
-            aria-label="subdirectory"
-            placeholder="subdir"
-            value={subdir}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            onChange={(e) => {
-              setSubdir(e.target.value);
-              setError("");
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") launch();
-            }}
-          />
+          <div className="subdir-wrap">
+            <input
+              className="subdir"
+              aria-label="subdirectory"
+              placeholder="subdir"
+              value={subdir}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              onFocus={() => setOpen(true)}
+              onBlur={() => setOpen(false)}
+              onChange={(e) => {
+                setSubdir(e.target.value);
+                setError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") launch();
+              }}
+            />
+            {showHistory && (
+              // preventDefault on mousedown keeps the input's blur from firing
+              // first: without it the panel unmounts before any click lands.
+              <div className="subdir-history" onMouseDown={(e) => e.preventDefault()}>
+                {filtered.map((h) => (
+                  <div key={h} className="subdir-history-row">
+                    <button
+                      type="button"
+                      className="subdir-pick"
+                      onClick={() => {
+                        setSubdir(h);
+                        setOpen(false);
+                      }}
+                    >
+                      {h}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </>
       )}
       <button className="launch" disabled={!canLaunch} title="launch a new session" onClick={launch}>

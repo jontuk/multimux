@@ -17,6 +17,9 @@ afterEach(() => {
 function mockLocalDaemon() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    // The subdirs check must come before the /api/dirs one — the history path
+    // contains it.
+    if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
     if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
@@ -70,6 +73,7 @@ test("switching servers clears the previous daemon's tools and dirs until the ne
       await new Promise<void>((resolve) => pending.push(resolve));
       return new Response("[]");
     }
+    if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
     if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
@@ -115,6 +119,7 @@ test("failed launch displays error and leaves + New enabled so user can edit inp
   let postCount = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
     if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST") {
@@ -191,4 +196,49 @@ test("changing the directory clears the subdir and loads that directory's histor
 
   expect(subdir.value).toBe("");
   await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/dirs/8/subdirs"))).toBe(true));
+
+  fireEvent.focus(subdir);
+  expect(await screen.findByText("Downloads")).toBeInTheDocument();
+  expect(screen.queryByText("web/src")).toBeNull();
+});
+
+test("the history appears on focus, filters as you type, and hides when nothing matches", async () => {
+  mockDaemonWithHistory({ 7: ["web/src", "cmd", "internal/server"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  // Nothing is shown until the field is focused: the header stays quiet.
+  await waitFor(() => expect(screen.queryByText("web/src")).toBeNull());
+
+  fireEvent.focus(subdir);
+  expect(await screen.findByText("web/src")).toBeInTheDocument();
+  expect(screen.getByText("cmd")).toBeInTheDocument();
+
+  // Substring match, so a deep path is reachable without typing its prefix.
+  fireEvent.change(subdir, { target: { value: "serv" } });
+  expect(screen.getByText("internal/server")).toBeInTheDocument();
+  expect(screen.queryByText("cmd")).toBeNull();
+
+  fireEvent.change(subdir, { target: { value: "zzz" } });
+  expect(screen.queryByText("internal/server")).toBeNull();
+
+  fireEvent.blur(subdir);
+  fireEvent.change(subdir, { target: { value: "" } });
+  expect(screen.queryByText("web/src")).toBeNull();
+});
+
+test("clicking a remembered subdir fills the field and launches with it", async () => {
+  const fetchMock = mockDaemonWithHistory({ 7: ["web/src"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.focus(subdir);
+  fireEvent.click(await screen.findByText("web/src"));
+
+  expect(subdir.value).toBe("web/src");
+  fireEvent.click(screen.getByText("+ New"));
+  await waitFor(() => {
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post && JSON.parse(String(post[1]?.body)).subdir).toBe("web/src");
+  });
 });

@@ -49,6 +49,7 @@ function mockFetch(layout: unknown) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
     if (url.includes("/api/layout") && method === "PUT") return new Response("{}");
     if (url.includes("/label") && method === "PUT")
@@ -186,6 +187,7 @@ test("a rejected server request settles while its banner coexists with a reachab
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.startsWith("https://box-a:8686") && url.includes("/api/sessions")) throw new Error("offline");
+    if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/layout")) return new Response(JSON.stringify(layout));
     if (url.includes("/api/sessions")) return new Response(JSON.stringify([sessions[0]]));
     if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
@@ -605,6 +607,7 @@ test("layout persistence keeps one PUT in flight and coalesces to the newest sta
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/layout") && method === "PUT") {
       putBodies.push(JSON.parse(String(init?.body)));
       putsInFlight++;
