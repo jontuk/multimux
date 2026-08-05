@@ -151,3 +151,44 @@ test("failed launch displays error and leaves + New enabled so user can edit inp
   fireEvent.click(button);
   await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(1));
 });
+
+const twoDirs = [
+  { id: 7, name: "multimux", path: "/repos/multimux" },
+  { id: 8, name: "home", path: "/home/jon" },
+];
+
+// Mocks a daemon with two dirs and a per-dir history. The subdirs check must
+// come before the /api/dirs one — the history path contains it.
+function mockDaemonWithHistory(history: Record<number, string[]>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const hist = url.match(/\/api\/dirs\/(\d+)\/subdirs/);
+    if (hist) {
+      if ((init?.method ?? "GET") === "DELETE") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify(history[Number(hist[1])] ?? []));
+    }
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(twoDirs));
+    if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
+      return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
+        status: 201,
+      });
+    return new Response("[]");
+  });
+}
+
+// A subdir is relative to the selected directory, so it means nothing once the
+// directory changes.
+test("changing the directory clears the subdir and loads that directory's history", async () => {
+  const fetchMock = mockDaemonWithHistory({ 7: ["web/src"], 8: ["Downloads"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/dirs/7/subdirs"))).toBe(true));
+  fireEvent.change(subdir, { target: { value: "web" } });
+
+  fireEvent.change(screen.getByLabelText("dir"), { target: { value: "8" } });
+
+  expect(subdir.value).toBe("");
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/dirs/8/subdirs"))).toBe(true));
+});

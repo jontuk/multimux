@@ -16,6 +16,9 @@ export default function HeaderLauncher({
   const [toolId, setToolId] = useState(0);
   const [dirId, setDirId] = useState(0);
   const [subdir, setSubdir] = useState("");
+  // Read by the history dropdown added in a later task; only written here.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [history, setHistory] = useState<string[]>([]);
   const [error, setError] = useState("");
   // `loading` means "this server's tools/dirs are still being fetched";
   // `busy` means "a launch is in flight".
@@ -36,8 +39,18 @@ export default function HeaderLauncher({
     // A subdir is relative to the previous daemon's directory; it rarely means
     // the same thing on another machine, so it does not survive the switch.
     setSubdir("");
+    setHistory([]);
     setError("");
     setLoading(true);
+  }
+
+  // A subdir names a path under the selected directory. Changing the directory
+  // makes it meaningless, so it is dropped rather than silently re-pointed.
+  function selectDir(id: number) {
+    setDirId(id);
+    setSubdir("");
+    setHistory([]);
+    setError("");
   }
 
   useEffect(() => {
@@ -67,6 +80,25 @@ export default function HeaderLauncher({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
+
+  // Same `stale` guard as the tools/dirs fetch: a slow answer for a directory
+  // the user has already moved on from must not land over the current one.
+  useEffect(() => {
+    if (!server || dirId <= 0) return;
+    let stale = false;
+    getJSON<string[]>(server, `/api/dirs/${dirId}/subdirs`)
+      .then((h) => {
+        if (!stale) setHistory(h);
+      })
+      .catch(() => {
+        // History is a convenience; failing to load it must not break launching.
+        if (!stale) setHistory([]);
+      });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverId, dirId]);
 
   if (!server) return null;
 
@@ -122,14 +154,7 @@ export default function HeaderLauncher({
               </option>
             ))}
           </select>
-          <select
-            aria-label="dir"
-            value={dirId}
-            onChange={(e) => {
-              setDirId(Number(e.target.value));
-              setError("");
-            }}
-          >
+          <select aria-label="dir" value={dirId} onChange={(e) => selectDir(Number(e.target.value))}>
             {dirs.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
