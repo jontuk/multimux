@@ -669,3 +669,48 @@ func TestSessionRenameBroadcasts(t *testing.T) {
 		t.Fatal("no session_renamed event")
 	}
 }
+
+func TestCreateSessionRecordsSubdirHistory(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "web", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := st.CreateDir("tmp", base)
+
+	body := fmt.Sprintf(`{"toolId":%d,"dirId":%d,"subdir":"web/src"}`, tool.ID, dir.ID)
+	if w := do(t, s, "POST", "/api/sessions", token, body); w.Code != 201 {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+	got, err := st.ListSubdirs(dir.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "web/src" {
+		t.Fatalf("history = %v, want [web/src]", got)
+	}
+}
+
+// History is a list of subdirs that worked. A rejected subdir is a typo, and
+// offering a typo back as a suggestion is worse than forgetting it.
+func TestRejectedAndEmptySubdirsAreNotRecorded(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	base := t.TempDir()
+	dir, _ := st.CreateDir("tmp", base)
+
+	for _, subdir := range []string{"..", "missing", "/etc"} {
+		body := fmt.Sprintf(`{"toolId":%d,"dirId":%d,"subdir":%q}`, tool.ID, dir.ID, subdir)
+		if w := do(t, s, "POST", "/api/sessions", token, body); w.Code != 400 {
+			t.Fatalf("subdir %q = %d, want 400", subdir, w.Code)
+		}
+	}
+	body := fmt.Sprintf(`{"toolId":%d,"dirId":%d,"subdir":""}`, tool.ID, dir.ID)
+	if w := do(t, s, "POST", "/api/sessions", token, body); w.Code != 201 {
+		t.Fatalf("create with no subdir = %d: %s", w.Code, w.Body.String())
+	}
+	if got, _ := st.ListSubdirs(dir.ID); len(got) != 0 {
+		t.Fatalf("history = %v, want empty", got)
+	}
+}

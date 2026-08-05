@@ -134,6 +134,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	// Recorded only here, once tmux has really started: resolveSubdir rejects
+	// bad subdirs above and a tmux failure rolls the row back, so anything that
+	// reaches this line is a subdir worth suggesting again. A failed history
+	// write is logged and dropped — the session exists and the response is
+	// already a success.
+	if err := s.cfg.Store.RecordSubdir(dir.ID, in.Subdir); err != nil {
+		slog.Warn("subdir history not recorded", "directory_id", dir.ID, "error", err)
+	}
 	if replacedOrphan {
 		slog.Info("orphan tmux session replaced", "tmux_name", sess.TmuxName)
 	}
