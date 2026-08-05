@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -378,5 +379,69 @@ func TestPreferencesRequireAuth(t *testing.T) {
 	}
 	if w := do(t, s, "PUT", "/api/settings/preferences", "", `{"confirmTerminate":true}`); w.Code != 401 {
 		t.Fatalf("unauthenticated PUT = %d, want 401", w.Code)
+	}
+}
+
+func TestSubdirHistoryRoutes(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	dir, _ := st.CreateDir("repos", t.TempDir())
+	_ = st.RecordSubdir(dir.ID, "web")
+	_ = st.RecordSubdir(dir.ID, "internal/server")
+
+	w := do(t, s, "GET", fmt.Sprintf("/api/dirs/%d/subdirs", dir.ID), token)
+	if w.Code != 200 {
+		t.Fatalf("list = %d: %s", w.Code, w.Body.String())
+	}
+	var got []string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "internal/server,web" {
+		t.Fatalf("list = %v, want newest first", got)
+	}
+
+	// The subdir travels as a query parameter: it contains slashes, which a
+	// {wildcard} path segment does not match.
+	path := fmt.Sprintf("/api/dirs/%d/subdirs?subdir=%s", dir.ID, url.QueryEscape("internal/server"))
+	if w := do(t, s, "DELETE", path, token); w.Code != 204 {
+		t.Fatalf("delete = %d: %s", w.Code, w.Body.String())
+	}
+	if got, _ := st.ListSubdirs(dir.ID); strings.Join(got, ",") != "web" {
+		t.Fatalf("history after delete = %v", got)
+	}
+	// Idempotent: repeating the delete is still a 204.
+	if w := do(t, s, "DELETE", path, token); w.Code != 204 {
+		t.Fatalf("repeat delete = %d", w.Code)
+	}
+}
+
+// A tab's directory list can race a directory deletion, so an unknown id is an
+// empty history, not a 404. A non-numeric id is a malformed request.
+func TestSubdirHistoryBadRequests(t *testing.T) {
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	w := do(t, s, "GET", "/api/dirs/9999/subdirs", token)
+	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatalf("unknown dir = %d %q, want 200 []", w.Code, w.Body.String())
+	}
+	if w := do(t, s, "GET", "/api/dirs/abc/subdirs", token); w.Code != 400 {
+		t.Fatalf("non-numeric id = %d, want 400", w.Code)
+	}
+	if w := do(t, s, "DELETE", "/api/dirs/1/subdirs", token); w.Code != 400 {
+		t.Fatalf("delete without subdir = %d, want 400", w.Code)
+	}
+}
+
+func TestSubdirHistoryRequiresAuth(t *testing.T) {
+	s, st, _ := newTestServer(t, true)
+	dir, _ := st.CreateDir("repos", t.TempDir())
+
+	if w := do(t, s, "GET", fmt.Sprintf("/api/dirs/%d/subdirs", dir.ID), ""); w.Code != 401 && w.Code != 403 {
+		t.Fatalf("unauthenticated list = %d, want 401/403", w.Code)
+	}
+	if w := do(t, s, "DELETE", fmt.Sprintf("/api/dirs/%d/subdirs?subdir=web", dir.ID), ""); w.Code != 401 && w.Code != 403 {
+		t.Fatalf("unauthenticated delete = %d, want 401/403", w.Code)
 	}
 }

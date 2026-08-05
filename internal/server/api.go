@@ -160,6 +160,43 @@ func (s *Server) handleDeleteDir(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+// A directory's remembered subdirs. An unknown id answers with an empty list
+// rather than 404: a tab's directory list can legitimately race a deletion, and
+// "no history" is the right answer either way.
+func (s *Server) handleListSubdirs(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "bad id"})
+		return
+	}
+	subdirs, err := s.cfg.Store.ListSubdirs(id)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, subdirs)
+}
+
+// The subdir is a query parameter, not a path segment: subdirs contain
+// slashes, which ServeMux's {id} wildcard does not match.
+func (s *Server) handleDeleteSubdir(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "bad id"})
+		return
+	}
+	subdir := r.URL.Query().Get("subdir")
+	if subdir == "" {
+		writeJSON(w, 400, map[string]string{"error": "subdir required"})
+		return
+	}
+	if err := s.cfg.Store.DeleteSubdir(id, subdir); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(204)
+}
+
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	host, _ := s.cfg.Store.GetSetting("hostname")
 	sans, _ := s.cfg.Store.GetSetting("extra_sans")
