@@ -343,3 +343,52 @@ test("switching directories before a failed forget lands leaves the new director
   expect(screen.getByText("Downloads")).toBeInTheDocument();
   expect(screen.queryByText("web/src")).toBeNull();
 });
+
+test("arrow keys pick a remembered subdir and Enter fills it", async () => {
+  const fetchMock = mockDaemonWithHistory({ 7: ["web/src", "cmd"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.focus(subdir);
+  await screen.findByText("web/src");
+
+  fireEvent.keyDown(subdir, { key: "ArrowDown" });
+  fireEvent.keyDown(subdir, { key: "ArrowDown" });
+  fireEvent.keyDown(subdir, { key: "Enter" });
+
+  expect(subdir.value).toBe("cmd");
+  // Enter selected rather than launched.
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+});
+
+// Typing must not arm a suggestion: type-and-Enter has always launched what was
+// typed, and it still does.
+test("Enter after typing launches instead of selecting", async () => {
+  const fetchMock = mockDaemonWithHistory({ 7: ["web/src"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.focus(subdir);
+  fireEvent.keyDown(subdir, { key: "ArrowDown" });
+  fireEvent.change(subdir, { target: { value: "web" } });
+  fireEvent.keyDown(subdir, { key: "Enter" });
+
+  await waitFor(() => {
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post && JSON.parse(String(post[1]?.body)).subdir).toBe("web");
+  });
+});
+
+test("Escape closes the history without clearing the field", async () => {
+  mockDaemonWithHistory({ 7: ["web/src"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.change(subdir, { target: { value: "web" } });
+  fireEvent.focus(subdir);
+  await screen.findByText("web/src");
+
+  fireEvent.keyDown(subdir, { key: "Escape" });
+  expect(screen.queryByText("web/src")).toBeNull();
+  expect(subdir.value).toBe("web");
+});

@@ -18,6 +18,7 @@ export default function HeaderLauncher({
   const [subdir, setSubdir] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
   const [error, setError] = useState("");
   // `loading` means "this server's tools/dirs are still being fetched";
   // `busy` means "a launch is in flight".
@@ -50,6 +51,7 @@ export default function HeaderLauncher({
     setSubdir("");
     setHistory([]);
     setOpen(false);
+    setHighlight(-1);
     setError("");
     setLoading(true);
   }
@@ -61,6 +63,7 @@ export default function HeaderLauncher({
     setSubdir("");
     setHistory([]);
     setOpen(false);
+    setHighlight(-1);
     setError("");
   }
 
@@ -215,18 +218,47 @@ export default function HeaderLauncher({
               onBlur={() => setOpen(false)}
               onChange={(e) => {
                 setSubdir(e.target.value);
+                setHighlight(-1);
                 setError("");
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") launch();
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  if (filtered.length === 0) return;
+                  e.preventDefault();
+                  setOpen(true);
+                  const step = e.key === "ArrowDown" ? 1 : -1;
+                  setHighlight((h) =>
+                    h < 0 ? (step > 0 ? 0 : filtered.length - 1) : (h + step + filtered.length) % filtered.length,
+                  );
+                } else if (e.key === "Enter") {
+                  if (showHistory && highlight >= 0 && highlight < filtered.length) {
+                    e.preventDefault();
+                    setSubdir(filtered[highlight]);
+                    setHighlight(-1);
+                    setOpen(false);
+                  } else {
+                    launch();
+                  }
+                } else if (e.key === "Escape") {
+                  if (open) {
+                    setOpen(false);
+                    setHighlight(-1);
+                  } else {
+                    e.currentTarget.blur();
+                  }
+                }
               }}
             />
             {showHistory && (
               // preventDefault on mousedown keeps the input's blur from firing
               // first: without it the panel unmounts before any click lands.
               <div className="subdir-history" onMouseDown={(e) => e.preventDefault()}>
-                {filtered.map((h) => (
-                  <div key={h} className="subdir-history-row">
+                {filtered.map((h, i) => (
+                  <div
+                    key={h}
+                    className={`subdir-history-row${i === highlight ? " on" : ""}`}
+                    onMouseEnter={() => setHighlight(-1)}
+                  >
                     <button
                       type="button"
                       className="subdir-pick"
