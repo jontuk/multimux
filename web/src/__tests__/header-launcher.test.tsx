@@ -242,3 +242,56 @@ test("clicking a remembered subdir fills the field and launches with it", async 
     expect(post && JSON.parse(String(post[1]?.body)).subdir).toBe("web/src");
   });
 });
+
+test("the x forgets a remembered subdir", async () => {
+  const fetchMock = mockDaemonWithHistory({ 7: ["web/src", "cmd"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  fireEvent.focus(await screen.findByLabelText("subdirectory"));
+  await screen.findByText("web/src");
+  fireEvent.click(screen.getByLabelText("forget web/src"));
+
+  await waitFor(() => expect(screen.queryByText("web/src")).toBeNull());
+  expect(screen.getByText("cmd")).toBeInTheDocument();
+  const sent = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
+  expect(String(sent?.[0])).toContain(`/api/dirs/7/subdirs?subdir=${encodeURIComponent("web/src")}`);
+});
+
+// A failed delete must put the entry back rather than lie about forgetting it.
+test("a failed forget restores the entry and reports the error", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (/\/api\/dirs\/\d+\/subdirs/.test(url)) {
+      if ((init?.method ?? "GET") === "DELETE") return new Response("nope", { status: 500 });
+      return new Response(JSON.stringify(["web/src"]));
+    }
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
+    return new Response("[]");
+  });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  fireEvent.focus(await screen.findByLabelText("subdirectory"));
+  fireEvent.click(await screen.findByLabelText("forget web/src"));
+
+  expect(await screen.findByText(/couldn't forget/i)).toBeInTheDocument();
+  expect(screen.getByText("web/src")).toBeInTheDocument();
+});
+
+// The just-launched subdir is the most likely next one, so it goes to the
+// front without waiting for a refetch.
+test("a successful launch adds its subdir to the history", async () => {
+  mockDaemonWithHistory({ 7: ["cmd"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.change(subdir, { target: { value: "web/src" } });
+  fireEvent.click(screen.getByText("+ New"));
+
+  await waitFor(() => expect(subdir.value).toBe("web/src"));
+  fireEvent.focus(subdir);
+  fireEvent.change(subdir, { target: { value: "" } });
+  fireEvent.focus(subdir);
+  const rows = await screen.findAllByRole("button", { name: /^(web\/src|cmd)$/ });
+  expect(rows.map((r) => r.textContent)).toEqual(["web/src", "cmd"]);
+});

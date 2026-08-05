@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getJSON, postJSON } from "../api";
+import { del, getJSON, postJSON } from "../api";
 import type { Server } from "../servers";
 import type { Dir, Session, Tool } from "./types";
 
@@ -121,10 +121,28 @@ export default function HeaderLauncher({
     try {
       const sess = await postJSON<Session>(server, "/api/sessions", { toolId, dirId, subdir });
       onLaunched(server, sess);
+      // The daemon has recorded this too; updating locally keeps the dropdown
+      // right without a second round trip.
+      const used = subdir.trim();
+      if (used) setHistory((h) => [used, ...h.filter((x) => x !== used)]);
     } catch (e) {
       setError(`launch failed: ${e instanceof Error ? e.message : e}`);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Optimistic: the row disappears at once, and a failed DELETE puts it back
+  // rather than leaving the UI claiming something was forgotten.
+  async function forget(value: string) {
+    if (!server) return;
+    const previous = history;
+    setHistory((h) => h.filter((x) => x !== value));
+    try {
+      await del(server, `/api/dirs/${dirId}/subdirs?subdir=${encodeURIComponent(value)}`);
+    } catch (e) {
+      setHistory(previous);
+      setError(`couldn't forget ${value}: ${e instanceof Error ? e.message : e}`);
     }
   }
 
@@ -202,6 +220,14 @@ export default function HeaderLauncher({
                       }}
                     >
                       {h}
+                    </button>
+                    <button
+                      type="button"
+                      className="subdir-forget"
+                      aria-label={`forget ${h}`}
+                      onClick={() => forget(h)}
+                    >
+                      ×
                     </button>
                   </div>
                 ))}

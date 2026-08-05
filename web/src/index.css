@@ -467,6 +467,16 @@ a {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.subdir-forget {
+  flex: 0 0 auto;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.subdir-forget:hover {
+  color: var(--ink);
+}
+
 /* Anchored right on a narrow viewport, so the overlay grows towards the middle
    of the header instead of off the edge. */
 @media (max-width: 40rem) {
