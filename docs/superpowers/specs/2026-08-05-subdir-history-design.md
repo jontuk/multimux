@@ -46,7 +46,11 @@ CREATE TABLE dir_subdirs (
 `store.Open` already sets `_pragma=foreign_keys(1)`, so deleting a directory
 drops its history with it — no cleanup code, no orphan rows.
 
-`used_at` is RFC3339 UTC text, matching every other timestamp in the store.
+`used_at` is RFC3339 UTC text, matching every other timestamp in the store, but
+with a constant nine-digit fraction. Recency ordering is a plain lexicographic
+`ORDER BY`, and two launches inside the same second are ordinary — second
+precision would tie them. A fixed-width fraction sorts correctly and still
+parses as RFC3339.
 
 The composite primary key makes re-launching a remembered subdir an upsert that
 bumps `used_at` rather than a duplicate row.
