@@ -77,6 +77,14 @@ var migrations = []string{
 		used_at TEXT NOT NULL,
 		PRIMARY KEY (dir_id, subdir)
 	);`,
+	// Installs seeded before the home dir got its shell-friendly label still
+	// show "Home". Only rename rows that look like that seed: the literal
+	// label pointing at a top-level user directory (/Users/x, /home/x), so a
+	// hand-made "Home" entry for some other path is left alone.
+	`UPDATE dirs SET name = '~'
+	 WHERE name = 'Home'
+	   AND (path GLOB '/Users/*' OR path GLOB '/home/*')
+	   AND instr(substr(path, instr(substr(path, 2), '/') + 2), '/') = 0;`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and

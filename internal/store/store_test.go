@@ -147,6 +147,55 @@ func TestPositionBackfillPreservesExistingOrder(t *testing.T) {
 	}
 }
 
+// The seeded home directory used to be labelled "Home"; upgrading relabels it
+// to "~", but only where it really is the seeded home row.
+func TestHomeDirRelabel(t *testing.T) {
+	const preRelabel = 7 // migrations up to and including dir_subdirs
+
+	path := filepath.Join(t.TempDir(), "test.db")
+	db := rawOpen(t, path)
+	for i := range preRelabel {
+		if err := applyMigration(db, i); err != nil {
+			t.Fatalf("apply migration %d: %v", i+1, err)
+		}
+	}
+	rows := []struct{ name, path string }{
+		{"Home", "/Users/jon"},
+		{"Home", "/home/jon"},
+		{"Home", "/Users/jon/projects"}, // hand-made, deeper: leave alone
+		{"Home", "/srv/shared"},         // hand-made, elsewhere: leave alone
+		{"repos", "/Users/jon"},         // already renamed by its owner
+	}
+	for _, r := range rows {
+		if _, err := db.Exec(`INSERT INTO dirs (name, path) VALUES (?, ?)`, r.name, r.path); err != nil {
+			t.Fatalf("seed dir %s: %v", r.path, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after upgrade: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	dirs, err := s.ListDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"~", "~", "Home", "Home", "repos"}
+	if len(dirs) != len(want) {
+		t.Fatalf("got %d dirs, want %d", len(dirs), len(want))
+	}
+	for i, d := range dirs {
+		if d.Name != want[i] {
+			t.Errorf("dir %s named %q, want %q", d.Path, d.Name, want[i])
+		}
+	}
+}
+
 // A migration that fails partway must leave neither its tables nor its version
 // bump behind.
 func TestMigrationIsAtomic(t *testing.T) {
