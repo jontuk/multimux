@@ -489,6 +489,15 @@ a {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/* Marks a row that came from the filesystem rather than history, and holds the
+   column the × occupies on remembered rows so the two kinds line up. */
+.subdir-tag {
+  flex: 0 0 auto;
+  font-size: 0.65rem;
+  color: var(--muted);
+  padding: 0.35rem 0.5rem;
+}
+
 .subdir-forget {
   flex: 0 0 auto;
   color: var(--muted);

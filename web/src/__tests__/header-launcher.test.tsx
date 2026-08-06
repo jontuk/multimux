@@ -17,6 +17,7 @@ afterEach(() => {
 function mockLocalDaemon() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
     // The subdirs check must come before the /api/dirs one — the history path
     // contains it.
     if (url.includes("/subdirs")) return new Response("[]");
@@ -69,6 +70,7 @@ test("switching servers clears the previous daemon's tools and dirs until the ne
   const pending: Array<() => void> = [];
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
     if (url.startsWith("http://remote.test")) {
       await new Promise<void>((resolve) => pending.push(resolve));
       return new Response("[]");
@@ -119,6 +121,7 @@ test("failed launch displays error and leaves + New enabled so user can edit inp
   let postCount = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
     if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
@@ -167,6 +170,7 @@ const twoDirs = [
 function mockDaemonWithHistory(history: Record<number, string[]>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
     const hist = url.match(/\/api\/dirs\/(\d+)\/subdirs/);
     if (hist) {
       if ((init?.method ?? "GET") === "DELETE") return new Response(null, { status: 204 });
@@ -181,6 +185,68 @@ function mockDaemonWithHistory(history: Record<number, string[]>) {
     return new Response("[]");
   });
 }
+
+// Mocks a daemon whose filesystem answers /children, keyed by the parent path
+// the launcher asks about.
+function mockDaemonWithChildren(children: Record<string, string[]>, history: string[] = []) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const kids = url.match(/\/api\/dirs\/\d+\/children\?path=([^&]*)/);
+    if (kids) return new Response(JSON.stringify(children[decodeURIComponent(kids[1])] ?? []));
+    if (url.includes("/subdirs")) return new Response(JSON.stringify(history));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
+    if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
+      return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
+        status: 201,
+      });
+    return new Response("[]");
+  });
+}
+
+test("directories that exist are suggested, prefix-filtered, and picked into the field", async () => {
+  mockDaemonWithChildren({ "": ["cmd", "internal", "web", ".git"], "web/": ["src", "dist"] });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  const subdir = await screen.findByLabelText<HTMLInputElement>("subdirectory");
+  fireEvent.focus(subdir);
+  expect(await screen.findByText("web")).toBeInTheDocument();
+  expect(screen.getByText("cmd")).toBeInTheDocument();
+  // Hidden directories stay out of the way until the user types the dot.
+  expect(screen.queryByText(".git")).toBeNull();
+
+  fireEvent.change(subdir, { target: { value: "." } });
+  expect(await screen.findByText(".git")).toBeInTheDocument();
+
+  // Completion is prefix-matched, and only the last segment is filtered here —
+  // the parent is pinned and listed by the daemon.
+  fireEvent.change(subdir, { target: { value: "we" } });
+  expect(await screen.findByText("web")).toBeInTheDocument();
+  expect(screen.queryByText("cmd")).toBeNull();
+
+  fireEvent.change(subdir, { target: { value: "web/" } });
+  expect(await screen.findByText("web/src")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("web/dist"));
+  expect(subdir.value).toBe("web/dist");
+});
+
+// Only history is the launcher's to forget; a real directory is not.
+test("suggested directories have no forget button and sit below remembered ones", async () => {
+  mockDaemonWithChildren({ "": ["cmd", "web"] }, ["web"]);
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  fireEvent.focus(await screen.findByLabelText("subdirectory"));
+  await screen.findByText("cmd");
+
+  // "web" is remembered, so it appears once — as the history row, not again as
+  // a filesystem suggestion.
+  expect(screen.getAllByText("web")).toHaveLength(1);
+  expect(screen.getByLabelText("forget web")).toBeInTheDocument();
+  expect(screen.queryByLabelText("forget cmd")).toBeNull();
+
+  const rows = screen.getAllByRole("button", { name: /^(web|cmd)$/ });
+  expect(rows.map((r) => r.textContent)).toEqual(["web", "cmd"]);
+});
 
 // A subdir is relative to the selected directory, so it means nothing once the
 // directory changes.
@@ -257,6 +323,7 @@ test("the x forgets a remembered subdir", async () => {
 test("a failed forget restores the entry and reports the error", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
     if (/\/api\/dirs\/\d+\/subdirs/.test(url)) {
       if ((init?.method ?? "GET") === "DELETE") return new Response("nope", { status: 500 });
       return new Response(JSON.stringify(["web/src"]));
@@ -303,6 +370,7 @@ test("switching directories before a failed forget lands leaves the new director
   let deleteSettled = false;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
     const hist = url.match(/\/api\/dirs\/(\d+)\/subdirs/);
     if (hist) {
       if ((init?.method ?? "GET") === "DELETE") {
@@ -352,6 +420,7 @@ test("switching servers before a failed forget lands leaves the other server's h
   let deleteSettled = false;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
     if (url.startsWith("http://remote.test")) {
       if (url.includes("/subdirs")) return new Response(JSON.stringify(["Downloads"]));
       if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));

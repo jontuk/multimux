@@ -3,6 +3,10 @@ import { del, getJSON, postJSON } from "../api";
 import type { Server } from "../servers";
 import type { Dir, Session, Tool } from "./types";
 
+// A dropdown longer than this stops being a shortcut: past a dozen entries the
+// user is faster typing another character than reading the list.
+const suggestionLimit = 12;
+
 export default function HeaderLauncher({
   servers,
   onLaunched,
@@ -17,6 +21,11 @@ export default function HeaderLauncher({
   const [dirId, setDirId] = useState(0);
   const [subdir, setSubdir] = useState("");
   const [history, setHistory] = useState<string[]>([]);
+  // Real child directories of whatever parent segment is typed, newest fetch
+  // wins. `childrenOf` records which parent they describe so a list from the
+  // previous segment is never filtered as if it belonged to this one.
+  const [children, setChildren] = useState<string[]>([]);
+  const [childrenOf, setChildrenOf] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(-1);
   const [error, setError] = useState("");
@@ -51,6 +60,8 @@ export default function HeaderLauncher({
     // the same thing on another machine, so it does not survive the switch.
     setSubdir("");
     setHistory([]);
+    setChildren([]);
+    setChildrenOf(null);
     setOpen(false);
     setHighlight(-1);
     setError("");
@@ -64,10 +75,19 @@ export default function HeaderLauncher({
     setDirId(id);
     setSubdir("");
     setHistory([]);
+    setChildren([]);
+    setChildrenOf(null);
     setOpen(false);
     setHighlight(-1);
     setError("");
   }
+
+  // "web/src/comp" is a settled path ("web/src/") plus a fragment still being
+  // typed ("comp"). The daemon lists one directory's children; the fragment is
+  // filtered here, so a fetch happens once per segment, not once per keystroke.
+  const cut = subdir.lastIndexOf("/");
+  const typedParent = cut < 0 ? "" : subdir.slice(0, cut + 1);
+  const typedLeaf = cut < 0 ? subdir : subdir.slice(cut + 1);
 
   useEffect(() => {
     if (!server) return;
@@ -118,6 +138,31 @@ export default function HeaderLauncher({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, dirId]);
 
+  // Only while the dropdown is open: an unfocused launcher has nothing to
+  // suggest into, and the listing is worth re-reading on every focus anyway —
+  // directories appear and vanish behind the daemon's back.
+  useEffect(() => {
+    if (!server || dirId <= 0 || !open) return;
+    let stale = false;
+    const parent = typedParent;
+    getJSON<string[]>(server, `/api/dirs/${dirId}/children?path=${encodeURIComponent(parent)}`)
+      .then((c) => {
+        if (stale) return;
+        setChildren(c);
+        setChildrenOf(parent);
+      })
+      .catch(() => {
+        // Suggestions are a convenience: a failure leaves the history-only list.
+        if (stale) return;
+        setChildren([]);
+        setChildrenOf(parent);
+      });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverId, dirId, typedParent, open]);
+
   if (!server) return null;
 
   // Empty lists only mean "nothing configured" once the fetch has resolved;
@@ -129,7 +174,30 @@ export default function HeaderLauncher({
   // reachable by typing "serv", not only by typing its prefix.
   const needle = subdir.trim().toLowerCase();
   const filtered = history.filter((h) => h.toLowerCase().includes(needle));
-  const showHistory = open && filtered.length > 0;
+
+  // Directories that really exist under the typed parent. Prefix-matched, not
+  // substring: this is path completion, and the parent segment is already
+  // pinned. Stale lists (still describing the previous segment) suggest nothing.
+  const leaf = typedLeaf.toLowerCase();
+  const suggestions =
+    childrenOf === typedParent
+      ? children
+          .filter((n) => n.toLowerCase().startsWith(leaf))
+          // Hidden directories are launch targets too — .config, .github — but
+          // they only clutter the list until the user types the dot.
+          .filter((n) => leaf.startsWith(".") || !n.startsWith("."))
+          .map((n) => typedParent + n)
+          .filter((p) => p !== subdir.trim() && !filtered.includes(p))
+          .slice(0, suggestionLimit)
+      : [];
+
+  // History first: a subdir launched before is a better guess than the
+  // alphabetical neighbours it shares a parent with.
+  const options = [
+    ...filtered.map((value) => ({ value, remembered: true })),
+    ...suggestions.map((value) => ({ value, remembered: false })),
+  ];
+  const showMenu = open && options.length > 0;
 
   async function launch() {
     if (!server || !canLaunch) return;
@@ -244,17 +312,17 @@ export default function HeaderLauncher({
               }}
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                  if (filtered.length === 0) return;
+                  if (options.length === 0) return;
                   e.preventDefault();
                   setOpen(true);
                   const step = e.key === "ArrowDown" ? 1 : -1;
                   setHighlight((h) =>
-                    h < 0 ? (step > 0 ? 0 : filtered.length - 1) : (h + step + filtered.length) % filtered.length,
+                    h < 0 ? (step > 0 ? 0 : options.length - 1) : (h + step + options.length) % options.length,
                   );
                 } else if (e.key === "Enter") {
-                  if (showHistory && highlight >= 0 && highlight < filtered.length) {
+                  if (showMenu && highlight >= 0 && highlight < options.length) {
                     e.preventDefault();
-                    setSubdir(filtered[highlight]);
+                    setSubdir(options[highlight].value);
                     setHighlight(-1);
                     setOpen(false);
                   } else {
@@ -270,13 +338,13 @@ export default function HeaderLauncher({
                 }
               }}
             />
-            {showHistory && (
+            {showMenu && (
               // preventDefault on mousedown keeps the input's blur from firing
               // first: without it the panel unmounts before any click lands.
               <div className="subdir-history" onMouseDown={(e) => e.preventDefault()}>
-                {filtered.map((h, i) => (
+                {options.map((o, i) => (
                   <div
-                    key={h}
+                    key={o.value}
                     className={`subdir-history-row${i === highlight ? " on" : ""}`}
                     onMouseEnter={() => setHighlight(-1)}
                   >
@@ -284,20 +352,28 @@ export default function HeaderLauncher({
                       type="button"
                       className="subdir-pick"
                       onClick={() => {
-                        setSubdir(h);
+                        setSubdir(o.value);
                         setOpen(false);
                       }}
                     >
-                      {h}
+                      {o.value}
                     </button>
-                    <button
-                      type="button"
-                      className="subdir-forget"
-                      aria-label={`forget ${h}`}
-                      onClick={() => forget(h)}
-                    >
-                      ×
-                    </button>
+                    {/* Only remembered entries can be forgotten: a directory
+                        that exists on disk is not the launcher's to drop. */}
+                    {o.remembered ? (
+                      <button
+                        type="button"
+                        className="subdir-forget"
+                        aria-label={`forget ${o.value}`}
+                        onClick={() => forget(o.value)}
+                      >
+                        ×
+                      </button>
+                    ) : (
+                      <span className="subdir-tag" aria-hidden="true">
+                        dir
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

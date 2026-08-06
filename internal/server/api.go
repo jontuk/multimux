@@ -177,6 +177,68 @@ func (s *Server) handleListSubdirs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, subdirs)
 }
 
+// childDirLimit caps one listing. A directory with thousands of children is
+// not something a type-ahead list can help with, and the cap keeps a pathological
+// path from turning a keystroke into a megabyte of JSON.
+const childDirLimit = 300
+
+// The immediate child directories of dir/{path}, for subdir type-ahead. `path`
+// is the already-typed portion of the subdir, so the client asks once per parent
+// segment and filters the last one itself.
+//
+// resolveSubdir does the containment work: the answer never escapes the
+// configured directory, and an unreadable or missing path is an empty list
+// rather than an error — type-ahead runs on every keystroke, most of which name
+// nothing yet.
+func (s *Server) handleListChildDirs(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "bad id"})
+		return
+	}
+	dirs, err := s.cfg.Store.ListDirs()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	var base string
+	for _, d := range dirs {
+		if d.ID == id {
+			base = d.Path
+		}
+	}
+	if base == "" {
+		writeJSON(w, 200, []string{})
+		return
+	}
+	parent, err := resolveSubdir(base, r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, 200, []string{})
+		return
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		writeJSON(w, 200, []string{})
+		return
+	}
+	names := []string{}
+	for _, e := range entries {
+		if len(names) >= childDirLimit {
+			break
+		}
+		// Symlinks report their own type, so a symlinked child needs a stat to
+		// be recognised as a directory. A broken one simply drops out.
+		if !e.IsDir() {
+			info, err := os.Stat(filepath.Join(parent, e.Name()))
+			if err != nil || !info.IsDir() {
+				continue
+			}
+		}
+		names = append(names, e.Name())
+	}
+	writeJSON(w, 200, names)
+}
+
 // The subdir is a query parameter, not a path segment: subdirs contain
 // slashes, which ServeMux's {id} wildcard does not match.
 func (s *Server) handleDeleteSubdir(w http.ResponseWriter, r *http.Request) {

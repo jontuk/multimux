@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -431,6 +433,63 @@ func TestSubdirHistoryBadRequests(t *testing.T) {
 	}
 	if w := do(t, s, "DELETE", "/api/dirs/1/subdirs", token); w.Code != 400 {
 		t.Fatalf("delete without subdir = %d, want 400", w.Code)
+	}
+}
+
+func TestListChildDirs(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	base := t.TempDir()
+	for _, p := range []string{"web/src", "internal/server", ".git"} {
+		if err := os.MkdirAll(filepath.Join(base, p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(base, "README.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := st.CreateDir("repos", base)
+
+	list := func(query string) []string {
+		t.Helper()
+		w := do(t, s, "GET", fmt.Sprintf("/api/dirs/%d/children%s", dir.ID, query), token)
+		if w.Code != 200 {
+			t.Fatalf("children%s = %d: %s", query, w.Code, w.Body.String())
+		}
+		var got []string
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	// Files are not launch targets; hidden directories are, and the client
+	// decides whether to show them.
+	if got := list(""); strings.Join(got, ",") != ".git,internal,web" {
+		t.Fatalf("root children = %v", got)
+	}
+	if got := list("?path=web"); strings.Join(got, ",") != "src" {
+		t.Fatalf("web children = %v", got)
+	}
+	// Type-ahead runs on every keystroke: a path that names nothing yet, or one
+	// that tries to climb out of the configured directory, is an empty list.
+	if got := list("?path=we"); len(got) != 0 {
+		t.Fatalf("partial path = %v, want none", got)
+	}
+	if got := list("?path=" + url.QueryEscape("../..")); len(got) != 0 {
+		t.Fatalf("escape attempt = %v, want none", got)
+	}
+	if got := list("?path=README.md"); len(got) != 0 {
+		t.Fatalf("file path = %v, want none", got)
+	}
+	if w := do(t, s, "GET", "/api/dirs/9999/children", token); w.Code != 200 {
+		t.Fatalf("unknown dir = %d, want 200", w.Code)
+	}
+	if w := do(t, s, "GET", "/api/dirs/abc/children", token); w.Code != 400 {
+		t.Fatalf("non-numeric id = %d, want 400", w.Code)
+	}
+	if w := do(t, s, "GET", fmt.Sprintf("/api/dirs/%d/children", dir.ID), ""); w.Code != 401 && w.Code != 403 {
+		t.Fatalf("unauthenticated = %d, want 401/403", w.Code)
 	}
 }
 
