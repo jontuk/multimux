@@ -416,10 +416,12 @@ a {
   min-width: 0;
 }
 
+/* Grows rightward over + New and the grid selector: the directory it extends
+   sits to the left, so keeping the left edge pinned reads as one path. */
 .subdir-wrap:focus-within input.subdir {
   position: absolute;
-  right: 0;
-  left: auto;
+  left: 0;
+  right: auto;
   top: 0;
   width: min(20rem, calc(100vw - 3rem));
   z-index: 20;
@@ -427,8 +429,8 @@ a {
 
 .subdir-history {
   position: absolute;
-  right: 0;
-  left: auto;
+  left: 0;
+  right: auto;
   top: calc(100% + 0.3rem);
   z-index: 20;
   width: min(20rem, calc(100vw - 3rem));
@@ -438,6 +440,24 @@ a {
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+}
+
+/* Reads as the separator between the selected dir and what is being typed, so
+   the pair looks like one path. Decorative only — the value never holds it. */
+.subdir-slash {
+  position: absolute;
+  left: 0.4rem;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 21;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.subdir-wrap.slashed input.subdir {
+  padding-left: 0.95rem;
 }
 
 .subdir-history-row {

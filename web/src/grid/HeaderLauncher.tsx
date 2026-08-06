@@ -220,7 +220,12 @@ export default function HeaderLauncher({
               </option>
             ))}
           </select>
-          <div className="subdir-wrap">
+          <div className={`subdir-wrap${open || subdir ? " slashed" : ""}`}>
+            {(open || subdir) && (
+              <span className="subdir-slash" aria-hidden="true">
+                /
+              </span>
+            )}
             <input
               className="subdir"
               aria-label="subdirectory"
