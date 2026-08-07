@@ -35,21 +35,6 @@ The script detects your OS/arch, downloads the latest release, verifies its
 checksum, and installs the `multimux` binary to `/usr/local/bin` (using `sudo` if
 that directory isn't writable). Override with environment variables:
 
-```sh
-# install a specific version to a custom directory
-MULTIMUX_VERSION=v0.2.0 MULTIMUX_INSTALL_DIR="$HOME/.local/bin" \
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/jontuk/multimux/main/install.sh)"
-```
-
-**Manual download** — grab `multimux_<version>_<os>_<arch>.tar.gz` from the
-[releases page](https://github.com/jontuk/multimux/releases), extract the
-`multimux` binary, and put it on your `PATH`. The binary is not notarised, so on
-macOS Gatekeeper blocks binaries downloaded via a browser (*“Apple could not
-verify 'multimux' is free from malware”*); clear the quarantine attribute with
-`xattr -d com.apple.quarantine /path/to/multimux`, or use System Settings →
-Privacy & Security → **Open Anyway**. (Binaries fetched by the install script or
-`curl` aren't quarantined, so this only affects browser downloads.)
-
 ## Quick start
 
 1. **Run the daemon once in the foreground with `--trust-ca`.** This picks the
