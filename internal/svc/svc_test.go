@@ -2,6 +2,7 @@ package svc
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -430,6 +431,34 @@ func TestInstallDarwinBootsOutBeforeBootstrap(t *testing.T) {
 	}
 	if len(*got) != 2 || !strings.Contains((*got)[0], "launchctl bootout") || !strings.Contains((*got)[1], "launchctl bootstrap") {
 		t.Fatalf("commands = %v", *got)
+	}
+}
+
+// bootout is async, so bootstrap can transiently fail with "Bootstrap failed:
+// 5: Input/output error" when it races the teardown; Install must retry it
+// rather than surface a benign timing race as an upgrade failure.
+func TestInstallDarwinRetriesBootstrap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	orig := runCmd
+	t.Cleanup(func() { runCmd = orig })
+	var got []string
+	bootstraps := 0
+	runCmd = func(name string, args ...string) error {
+		cmd := strings.Join(append([]string{name}, args...), " ")
+		got = append(got, cmd)
+		if strings.Contains(cmd, "bootstrap") {
+			bootstraps++
+			if bootstraps == 1 {
+				return fmt.Errorf("launchctl bootstrap: exit status 5: Bootstrap failed: 5: Input/output error")
+			}
+		}
+		return nil
+	}
+	if err := Install("darwin", "/usr/local/bin/multimux"); err != nil {
+		t.Fatalf("Install = %v after retry", err)
+	}
+	if bootstraps < 2 {
+		t.Fatalf("bootstrap attempts = %d, want a retry after the transient failure", bootstraps)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const label = "com.jontuk.multimux"
@@ -271,7 +272,7 @@ func Install(goos, execPath string) error {
 		// bootout first so re-install is idempotent (and so an upgraded binary
 		// actually replaces the running daemon); ignore its error.
 		_ = runCmd("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, label))
-		return runCmd("launchctl", "bootstrap", fmt.Sprintf("gui/%d", uid), path)
+		return bootstrap(uid, path)
 	default:
 		if err := runCmd("systemctl", "--user", "daemon-reload"); err != nil {
 			return err
@@ -285,6 +286,28 @@ func Install(goos, execPath string) error {
 		// starts the unit when it is inactive, so this covers a first install.
 		return runCmd("systemctl", "--user", "restart", "multimux")
 	}
+}
+
+// bootstrap loads the agent into the user's gui domain. bootout is
+// asynchronous — it returns before launchd has finished tearing the job down —
+// so an immediate bootstrap can race that teardown and fail transiently with
+// "Bootstrap failed: 5: Input/output error". That is exactly what makes
+// `service upgrade` intermittently fail on macOS: the unit file and the new
+// binary are already written, only the restart step tripped. Retry briefly so
+// the race resolves instead of surfacing as a bogus upgrade failure.
+func bootstrap(uid int, path string) error {
+	domain := fmt.Sprintf("gui/%d", uid)
+	var lastErr error
+	for i := 0; i < 5; i++ {
+		if i > 0 {
+			time.Sleep(200 * time.Millisecond)
+		}
+		lastErr = runCmd("launchctl", "bootstrap", domain, path)
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
 }
 
 // Installed reports whether a service unit for goos is present on disk. Used
