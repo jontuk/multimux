@@ -506,8 +506,8 @@ multimux is a **local, single-user tool** and its security posture reflects that
 - **No dedicated native phone app.** Android Chrome and the installed PWA have a
   focused one-session mobile view, but sustained phone-first terminal work and
   a comprehensive mobile redesign of every Settings panel remain out of scope.
-- **Contributions are not accepted.** This is a personal project shared as-is.
-  Issues and PRs may go unanswered; fork freely.
+- **Contributions may not be accepted.** This is a personal project shared as-is.
+  Issues and PRs may go unanswered.
 
 ## Troubleshooting
 
