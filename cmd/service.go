@@ -128,6 +128,10 @@ func runService(args []string, stdout, stderr io.Writer) int {
 		}
 		if err := installService(exe); err != nil {
 			fmt.Fprintln(stderr, err)
+			// The binary and the unit are already in place, so say what is left
+			// undone rather than leaving "upgrade failed" to imply the whole
+			// thing has to be redone.
+			fmt.Fprintln(stderr, "the new binary and unit are installed but the daemon was not restarted onto it — check `multimux service status`")
 			return 1
 		}
 		fmt.Fprintln(stdout, "upgraded and service restarted on the new binary — check `multimux service status`")

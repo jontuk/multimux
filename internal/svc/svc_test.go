@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUnitContentDarwin(t *testing.T) {
@@ -425,6 +426,8 @@ func TestInstallLinuxRestartsUnit(t *testing.T) {
 // On macOS the equivalent restart is bootout-then-bootstrap.
 func TestInstallDarwinBootsOutBeforeBootstrap(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	fastPolls(t)
+	stubJobLoaded(t, func(string) bool { return false })
 	got := stubRunCmd(t)
 	if err := Install("darwin", "/usr/local/bin/multimux"); err != nil {
 		t.Fatalf("Install = %v", err)
@@ -439,6 +442,8 @@ func TestInstallDarwinBootsOutBeforeBootstrap(t *testing.T) {
 // rather than surface a benign timing race as an upgrade failure.
 func TestInstallDarwinRetriesBootstrap(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	fastPolls(t)
+	stubJobLoaded(t, func(string) bool { return false })
 	orig := runCmd
 	t.Cleanup(func() { runCmd = orig })
 	var got []string
@@ -449,7 +454,7 @@ func TestInstallDarwinRetriesBootstrap(t *testing.T) {
 		if strings.Contains(cmd, "bootstrap") {
 			bootstraps++
 			if bootstraps == 1 {
-				return fmt.Errorf("launchctl bootstrap: exit status 5: Bootstrap failed: 5: Input/output error")
+				return errBootstrapEIO
 			}
 		}
 		return nil
@@ -459,6 +464,131 @@ func TestInstallDarwinRetriesBootstrap(t *testing.T) {
 	}
 	if bootstraps < 2 {
 		t.Fatalf("bootstrap attempts = %d, want a retry after the transient failure", bootstraps)
+	}
+}
+
+// The error launchctl returns both when bootstrap races a teardown and when
+// the label is already loaded — the ambiguity this whole dance exists for.
+var errBootstrapEIO = errors.New("launchctl bootstrap: exit status 5: Bootstrap failed: 5: Input/output error")
+
+// fastPolls shrinks the launchd poll timings so state-waiting tests do not
+// spend real seconds asleep.
+func fastPolls(t *testing.T) {
+	t.Helper()
+	origPoll, origTimeout := pollInterval, bootoutTimeout
+	t.Cleanup(func() { pollInterval, bootoutTimeout = origPoll, origTimeout })
+	pollInterval, bootoutTimeout = time.Millisecond, 50*time.Millisecond
+}
+
+// stubJobLoaded replaces the launchctl domain query with a fake.
+func stubJobLoaded(t *testing.T, fn func(target string) bool) {
+	t.Helper()
+	orig := jobLoaded
+	t.Cleanup(func() { jobLoaded = orig })
+	jobLoaded = fn
+}
+
+// The bug behind "upgrade needs a service install afterwards": launchctl exits
+// 5 "Input/output error" when the label is *already* loaded, so once a
+// bootstrap has taken effect every retry reports that same error. Install must
+// believe the domain, not the exit status — the daemon is up.
+func TestInstallDarwinSucceedsWhenTheJobIsLoadedDespiteBootstrapError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fastPolls(t)
+	loaded := false
+	stubJobLoaded(t, func(string) bool { return loaded })
+	orig := runCmd
+	t.Cleanup(func() { runCmd = orig })
+	bootstraps := 0
+	runCmd = func(name string, args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "bootstrap") {
+			bootstraps++
+			// Mimics launchd: the job lands in the domain, launchctl still
+			// exits 5 for every attempt.
+			loaded = true
+			return errBootstrapEIO
+		}
+		return nil
+	}
+	if err := Install("darwin", "/usr/local/bin/multimux"); err != nil {
+		t.Fatalf("Install = %v, want nil: the job is loaded, so the upgrade succeeded", err)
+	}
+	if bootstraps != 1 {
+		t.Fatalf("bootstrap attempts = %d, want 1 once the job is loaded", bootstraps)
+	}
+}
+
+// bootout returns while launchd is still tearing the old job down, and
+// bootstrapping into a domain that still holds the label is what triggers the
+// EIO in the first place. Wait for the label to actually go.
+func TestInstallDarwinWaitsForBootoutBeforeBootstrapping(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fastPolls(t)
+	polls := 0
+	stubJobLoaded(t, func(string) bool {
+		polls++
+		return polls < 3 // still tearing down for the first two checks
+	})
+	orig := runCmd
+	t.Cleanup(func() { runCmd = orig })
+	runCmd = func(name string, args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "bootstrap") && polls < 3 {
+			return fmt.Errorf("bootstrapped while the old job was still loaded")
+		}
+		return nil
+	}
+	if err := Install("darwin", "/usr/local/bin/multimux"); err != nil {
+		t.Fatalf("Install = %v", err)
+	}
+	if polls < 3 {
+		t.Fatalf("domain polls = %d, want Install to wait for the old job to leave", polls)
+	}
+}
+
+// The flip side of trusting the domain over the exit status: a job that never
+// loads is a real failure and must not be reported as a successful upgrade.
+func TestInstallDarwinReportsBootstrapFailureWhenNothingLoads(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fastPolls(t)
+	stubJobLoaded(t, func(string) bool { return false })
+	orig := runCmd
+	t.Cleanup(func() { runCmd = orig })
+	runCmd = func(name string, args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "bootstrap") {
+			return errBootstrapEIO
+		}
+		return nil
+	}
+	err := Install("darwin", "/usr/local/bin/multimux")
+	if err == nil {
+		t.Fatal("Install = nil, want the bootstrap error when no job is loaded")
+	}
+	if !errors.Is(err, errBootstrapEIO) {
+		t.Fatalf("Install = %v, want it to carry the launchctl error", err)
+	}
+}
+
+// An old daemon that refuses to leave the domain is also a real failure: the
+// label being loaded then means the *previous* binary is still serving, so
+// "already loaded" must not be read as success.
+func TestInstallDarwinReportsFailureWhenTheOldJobNeverStops(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fastPolls(t)
+	stubJobLoaded(t, func(string) bool { return true }) // never tears down
+	orig := runCmd
+	t.Cleanup(func() { runCmd = orig })
+	runCmd = func(name string, args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "bootstrap") {
+			return errBootstrapEIO
+		}
+		return nil
+	}
+	err := Install("darwin", "/usr/local/bin/multimux")
+	if err == nil {
+		t.Fatal("Install = nil, want an error while the old daemon is still loaded")
+	}
+	if !strings.Contains(err.Error(), "did not stop") {
+		t.Fatalf("Install = %v, want it to say the previous daemon did not stop", err)
 	}
 }
 

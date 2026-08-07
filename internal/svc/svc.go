@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const label = "com.jontuk.multimux"
+// label is the launchd job label / systemd unit basename. A var only so the
+// darwin integration test can drive real launchctl under a throwaway label
+// instead of the user's actual daemon; nothing in production reassigns it.
+var label = "com.jontuk.multimux"
 
 // defaultPathEnv covers the common tmux install locations (Homebrew on both
 // architectures, system paths) when the installing shell's PATH is unavailable.
@@ -268,11 +271,7 @@ func Install(goos, execPath string) error {
 			return err
 		}
 
-		uid := os.Getuid()
-		// bootout first so re-install is idempotent (and so an upgraded binary
-		// actually replaces the running daemon); ignore its error.
-		_ = runCmd("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, label))
-		return bootstrap(uid, path)
+		return restartAgent(os.Getuid(), path)
 	default:
 		if err := runCmd("systemctl", "--user", "daemon-reload"); err != nil {
 			return err
@@ -288,26 +287,87 @@ func Install(goos, execPath string) error {
 	}
 }
 
-// bootstrap loads the agent into the user's gui domain. bootout is
-// asynchronous — it returns before launchd has finished tearing the job down —
-// so an immediate bootstrap can race that teardown and fail transiently with
-// "Bootstrap failed: 5: Input/output error". That is exactly what makes
-// `service upgrade` intermittently fail on macOS: the unit file and the new
-// binary are already written, only the restart step tripped. Retry briefly so
-// the race resolves instead of surfacing as a bogus upgrade failure.
-func bootstrap(uid int, path string) error {
+// launchd teardown is asynchronous and bounded by the job's exit timeout
+// (5s by default), so waiting for the old job to leave the domain has to allow
+// for more than that. Vars so tests need not sleep for real.
+var (
+	pollInterval   = 200 * time.Millisecond
+	bootoutTimeout = 15 * time.Second
+)
+
+// bootstrapTries bounds the retries for a bootstrap that neither succeeds nor
+// leaves a loaded job behind — a real failure, not the already-loaded EIO.
+const bootstrapTries = 5
+
+// restartAgent replaces the loaded LaunchAgent with the definition at path.
+//
+// Two launchctl behaviours make the obvious bootout-then-bootstrap sequence
+// report failures that did not happen:
+//
+//   - bootout is asynchronous. It returns in microseconds while launchd is
+//     still tearing the job down, so an immediate bootstrap races it.
+//   - bootstrap exits 5 "Bootstrap failed: 5: Input/output error" when the
+//     label is *already* loaded — including when the load that put it there
+//     was our own earlier attempt.
+//
+// Together they produced a bogus `service upgrade` failure: the first
+// bootstrap raced the teardown, every retry then hit the already-loaded EIO,
+// and Install returned the last error while the upgraded daemon was in fact
+// running — sending the user off to re-run `service install` for nothing. So
+// the domain, not the exit status, is the source of truth here.
+func restartAgent(uid int, path string) error {
 	domain := fmt.Sprintf("gui/%d", uid)
-	var lastErr error
-	for i := 0; i < 5; i++ {
-		if i > 0 {
-			time.Sleep(200 * time.Millisecond)
+	target := fmt.Sprintf("%s/%s", domain, label)
+	// bootout first so re-install is idempotent (and so an upgraded binary
+	// actually replaces the running daemon); ignore its error.
+	_ = runCmd("launchctl", "bootout", target)
+	if !waitUntilGone(target) {
+		// The old job outlived its exit timeout. "Already loaded" now means
+		// the *previous* daemon is still serving, so it cannot be read as
+		// success — that would hide a failed upgrade behind a cheerful message.
+		if err := runCmd("launchctl", "bootstrap", domain, path); err != nil {
+			return fmt.Errorf("the previous daemon did not stop: %w", err)
 		}
-		lastErr = runCmd("launchctl", "bootstrap", domain, path)
-		if lastErr == nil {
+		return nil
+	}
+	var lastErr error
+	for i := 0; i < bootstrapTries; i++ {
+		if i > 0 {
+			time.Sleep(pollInterval)
+		}
+		if lastErr = runCmd("launchctl", "bootstrap", domain, path); lastErr == nil {
+			return nil
+		}
+		// The label left the domain above, so anything loaded under it now is
+		// this bootstrap having taken effect despite the error.
+		if jobLoaded(target) {
 			return nil
 		}
 	}
 	return lastErr
+}
+
+// waitUntilGone polls for the label to leave the user's domain, reporting
+// whether it did within bootoutTimeout.
+func waitUntilGone(target string) bool {
+	deadline := time.Now().Add(bootoutTimeout)
+	for {
+		if !jobLoaded(target) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// jobLoaded reports whether target is present in its launchd domain.
+// "launchctl print" exits non-zero ("Could not find service ... in domain")
+// when it is not. Package var so tests can drive the state machine above
+// without a real launchd.
+var jobLoaded = func(target string) bool {
+	return exec.Command("launchctl", "print", target).Run() == nil
 }
 
 // Installed reports whether a service unit for goos is present on disk. Used

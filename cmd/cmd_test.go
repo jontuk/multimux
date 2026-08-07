@@ -133,3 +133,29 @@ func TestServiceUpgradeReportsFailure(t *testing.T) {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
 }
+
+// A restart that genuinely fails leaves the binary and the unit installed, so
+// the message has to say which step is outstanding — otherwise "upgrade
+// failed" reads as "start over".
+func TestServiceUpgradeRestartFailureSaysWhatIsLeft(t *testing.T) {
+	origScript := runUpgradeScript
+	t.Cleanup(func() { runUpgradeScript = origScript })
+	runUpgradeScript = func(string) error { return nil }
+	dir := t.TempDir()
+	t.Setenv("MULTIMUX_INSTALL_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "multimux"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubServiceInstall(t, true)
+	origInstall := installService
+	t.Cleanup(func() { installService = origInstall })
+	installService = func(string) error { return errors.New("the previous daemon did not stop") }
+
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"service", "upgrade"}, "dev", fstest.MapFS{}, &out, &errOut); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "not restarted") {
+		t.Fatalf("stderr = %q, want it to say the daemon was not restarted", errOut.String())
+	}
+}
