@@ -13,6 +13,12 @@ export default defineConfig({
     chunkSizeWarningLimit: 1024, // KiB; xterm alone pushes the main chunk past the 500 default
   },
   server: {
+    // Bind all interfaces and accept any Host so the dev server is reachable
+    // from a phone on the LAN (http://<lan-host>:5173). Safe only because
+    // `pnpm dev` is never run on an untrusted network — and the daemon it
+    // proxies to runs with `--dev`, which has no auth anyway.
+    host: true,
+    allowedHosts: true,
     proxy: {
       "/api": { target, secure: false },
       "/healthz": { target, secure: false },
