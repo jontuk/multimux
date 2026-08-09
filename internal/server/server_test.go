@@ -19,9 +19,10 @@ import (
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
 
-// newTestServer builds a Server on a temp store with a fake web FS.
+// newTestServerCfg builds the Config newTestServer uses, so tests that need a
+// non-default field (NoAuth) can tweak it before calling New.
 // registered=true seeds one credential so the daemon is past setup-pending.
-func newTestServer(t *testing.T, registered bool) (*Server, *store.Store, *auth.Manager) {
+func newTestServerCfg(t *testing.T, registered bool) (Config, *store.Store, *auth.Manager) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -48,13 +49,20 @@ func newTestServer(t *testing.T, registered bool) (*Server, *store.Store, *auth.
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{
+	return Config{
 		Store: st, Auth: am, Tmux: tmuxmgr.New("mm", "test-none"),
 		Arbiter: tmuxmgr.NewArbiter(), WebFS: webFS,
 		Origins: []string{"https://localhost:8686"}, Version: "test",
 		ReadCA: func() ([]byte, error) { return append([]byte(nil), caPEM...), nil },
-	})
-	return s, st, am
+	}, st, am
+}
+
+// newTestServer builds a Server on a temp store with a fake web FS.
+// registered=true seeds one credential so the daemon is past setup-pending.
+func newTestServer(t *testing.T, registered bool) (*Server, *store.Store, *auth.Manager) {
+	t.Helper()
+	cfg, st, am := newTestServerCfg(t, registered)
+	return New(cfg), st, am
 }
 
 // authedRequest performs req with a valid bearer token.

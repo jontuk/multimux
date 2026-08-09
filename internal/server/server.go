@@ -27,6 +27,11 @@ type Config struct {
 	Arbiter *tmuxmgr.Arbiter
 	WebFS   fs.FS
 	Origins []string // this daemon's own origins (cookie-auth WS origin check)
+	// NoAuth disables authentication entirely: every route is served to every
+	// caller. Set ONLY by `serve --dev`, which refuses to run against a data
+	// dir holding passkeys or against the default install directory. A daemon
+	// with this set is an unauthenticated shell server on every interface.
+	NoAuth  bool
 	Version string
 	ReadCA  func() ([]byte, error) // reads the current public CA; never a key
 }
@@ -186,6 +191,9 @@ func isProtected(path string) bool {
 }
 
 func (s *Server) authGate(next http.Handler) http.Handler {
+	if s.cfg.NoAuth {
+		return next
+	}
 	protected := s.cfg.Auth.Middleware(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isProtected(r.URL.Path) {
@@ -197,8 +205,12 @@ func (s *Server) authGate(next http.Handler) http.Handler {
 }
 
 // setupGate 403s everything except healthz, setup ceremonies, and static
-// assets while no passkey is registered yet.
+// assets while no passkey is registered yet. Under NoAuth there will never be
+// a passkey, so the gate would otherwise 403 the whole API forever.
 func (s *Server) setupGate(next http.Handler) http.Handler {
+	if s.cfg.NoAuth {
+		return next
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pending, err := s.cfg.Auth.SetupPending()
 		if err != nil {
