@@ -681,19 +681,15 @@ a {
    buttons and an empty tile's picker, which is still where typing lands.
 
    Kept quiet on purpose: full accent read as an alert with several panes up.
-   The edge carries it — a muted accent border, and the header a shade warmer,
-   with the title left alone. */
+   The edges carry it — a muted accent border around the tile and under its
+   header — with the title left alone. The header's background stays out of it:
+   that channel now belongs to the directory tint alone, and warming it for
+   focus would make one tile of a linked pair look like a different group. */
 .tile:focus-within {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--tile-border));
 }
 
-/* Nested mix so focus warms the dir tint rather than replacing it. */
 .tile:focus-within .tile-header {
-  background: color-mix(
-    in srgb,
-    var(--accent) 6%,
-    color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--tile-header-bg))
-  );
   border-bottom-color: color-mix(in srgb, var(--accent) 45%, var(--tile-border));
 }
 
