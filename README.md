@@ -360,7 +360,8 @@ multimux --version                           print version
 ```
 
 `serve` takes `--hostname <name>`, `--trust-ca`, `--port <n>` (persisted), and
-`--dev` (throwaway installs only — see [Developing](#developing)).
+`--dev` (throwaway installs only, and **disables authentication** — see
+[Developing](#developing)).
 `multimux help serve` prints the full flag list.
 
 Environment variables: `MULTIMUX_DATA_DIR` (data directory, default
@@ -569,10 +570,14 @@ For the frontend hot-reload loop none of that is needed; see below.
 `go run . serve`. Frontend changes: `cd web && pnpm build`, then restart the
 daemon — `go run` re-embeds `web/dist` on every start.
 
-**Frontend hot reload.** Two terminals:
+**Frontend hot reload.** `--dev` disables authentication completely: every route
+on the dev daemon is served to anyone who can reach the port, which is a shell as
+your user. Run it only on a network you control. It refuses to start unless
+`MULTIMUX_DATA_DIR` is set to something other than the default install path, and
+still refuses any data dir that holds passkeys.
 
 ```bash
-# terminal 1 — dev daemon; --dev forces the RP ID to localhost and allows the Vite origin
+# terminal 1 — dev daemon; --dev means no auth, RP ID localhost, Vite origin allowed
 export MULTIMUX_DATA_DIR="/tmp/multimux-dev-$(date +%s)"
 go run . serve --dev --port 8787
 
@@ -580,15 +585,20 @@ go run . serve --dev --port 8787
 cd web && pnpm install && MULTIMUX_DEV_TARGET=https://localhost:8787 pnpm dev
 ```
 
-Register a throwaway passkey at `http://localhost:5173/setup?code=…` (the daemon
-prints the code) and the full app — login, grid, live terminals — works at
-`http://localhost:5173` with hot reload. No CA trust needed: the browser talks
-plain HTTP to Vite. Caveats:
+The full app — grid, live terminals, settings — loads at
+`http://localhost:5173` with hot reload, with no login step. No CA trust needed:
+the browser talks plain HTTP to Vite.
 
-- Chrome/Firefox only — Safari does not treat `http://localhost` as trustworthy
-  for `Secure` cookies, so login won't stick there.
-- `--dev` refuses to run against a data dir that already has passkeys; the
-  timestamped `MULTIMUX_DATA_DIR` above gives you a fresh one per shell.
+**On a phone or tablet.** The dev server binds all interfaces, so open
+`http://<your-lan-host>:5173` on the device. Nothing else is needed — no CA to
+install, no passkey to register. Plain HTTP over a LAN address rules out both
+`Secure` cookies and WebAuthn, which is precisely why `--dev` has no auth.
+
+Caveats:
+
+- Testing the passkey or first-run setup flows means running **without**
+  `--dev`, against a throwaway `MULTIMUX_DATA_DIR` and the daemon's own
+  `https://` origin.
 - Each dev data dir uses its own private tmux server, so its `mm-*` sessions
   cannot collide with another dev run or the installed daemon.
 - If nothing else is listening on 8686 you can drop `--port` and

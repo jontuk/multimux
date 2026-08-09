@@ -67,11 +67,16 @@ go run . serve --port 8790          # port 8686 is usually the real daemon
 For frontend hot reload, run the daemon with `--dev` and Vite against it:
 
 ```bash
+export MULTIMUX_DATA_DIR="/tmp/multimux-dev-$(date +%s)"   # --dev refuses without this
 go run . serve --dev --port 8787
 cd web && MULTIMUX_DEV_TARGET=https://localhost:8787 pnpm dev   # proxies /api, /healthz, /ws
 ```
 
-`--dev` forces the RP ID to `localhost`, allows `http://localhost:5173`, seeds the cwd as a launch dir, and **refuses to start against a data dir that has passkeys**. It also derives a private tmux socket from the data dir, so dev `mm-*` sessions can never collide with the real daemon's. Register a throwaway passkey at the `/setup?code=…` URL the daemon prints. Chrome/Firefox only — Safari won't send `Secure` cookies over `http://localhost`.
+`--dev` **disables authentication entirely** — every route on the daemon is served to anyone who can reach the port, which is a shell as your user. Use it only on a network you control. It also forces the RP ID to `localhost`, allows `http://localhost:5173`, seeds the cwd as a launch dir, and refuses to start unless `MULTIMUX_DATA_DIR` is set to something other than the default install path, or if that data dir has passkeys. It derives a private tmux socket from the data dir, so dev `mm-*` sessions can never collide with the real daemon's.
+
+**Testing on a phone.** Vite binds all interfaces, so open `http://<your-lan-host>:5173` on the phone — hot reload and live terminals both work, with no CA trust and no passkey (plain http rules out both `Secure` cookies and WebAuthn, which is why `--dev` has no auth). Any browser works; the Chrome/Firefox-only caveat applied to the passkey login that no longer exists.
+
+Testing the passkey and first-run setup flows means running **without** `--dev`, against a throwaway `MULTIMUX_DATA_DIR` and the daemon's own `https://` origin.
 
 Backend-only changes: restart `go run . serve` and work against the daemon's own `https://` URL (needs `--trust-ca`, or `multimux ca trust` with the same `MULTIMUX_DATA_DIR`).
 
