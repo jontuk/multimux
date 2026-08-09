@@ -344,3 +344,41 @@ func TestComputeOrigins(t *testing.T) {
 		})
 	}
 }
+
+// --dev disables authentication entirely, so it must never point at the real
+// install. Requiring an explicit, non-default MULTIMUX_DATA_DIR is the guard
+// that does not depend on passkeys already existing.
+func TestDevDataDirErr(t *testing.T) {
+	home := "/home/someone"
+	def := filepath.Join(home, ".local", "share", "multimux")
+
+	if err := devDataDirErr("", home); err == nil {
+		t.Fatal("unset MULTIMUX_DATA_DIR accepted, want refusal")
+	} else if !strings.Contains(err.Error(), "MULTIMUX_DATA_DIR") {
+		t.Fatalf("error = %q, want it to name MULTIMUX_DATA_DIR", err)
+	}
+	if err := devDataDirErr(def, home); err == nil {
+		t.Fatal("default install dir accepted, want refusal")
+	}
+	if err := devDataDirErr(def+string(filepath.Separator), home); err == nil {
+		t.Fatal("default install dir with trailing separator accepted, want refusal")
+	}
+	if err := devDataDirErr("/tmp/multimux-dev-1", home); err != nil {
+		t.Fatalf("throwaway dir refused: %v", err)
+	}
+}
+
+// The guard must fire from runServe before anything touches the real install's
+// database — with MULTIMUX_DATA_DIR unset, dataDir() IS the real install, so a
+// guard placed after store.Open would migrate the user's live database.
+func TestRunServeDevRefusesDefaultDataDir(t *testing.T) {
+	t.Setenv("MULTIMUX_DATA_DIR", "")
+	var out, errBuf strings.Builder
+	code := runServe([]string{"--dev"}, "test", nil, &out, &errBuf)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 (stderr: %s)", code, errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "MULTIMUX_DATA_DIR") {
+		t.Fatalf("stderr = %q, want MULTIMUX_DATA_DIR hint", errBuf.String())
+	}
+}

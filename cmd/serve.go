@@ -205,11 +205,42 @@ flags:
                       Convenience for first-run setup; failure is non-fatal.
   --port <n>          listen port (persisted; default from settings, else 8686)
   --dev               DEV MODE for throwaway installs only (see the README).
+                      DISABLES AUTHENTICATION: every route is served to anyone
+                      who can reach the port. Requires an explicit, non-default
+                      MULTIMUX_DATA_DIR and refuses a data dir with passkeys.
 
 Environment:
   MULTIMUX_HOSTNAME   default for --hostname
   MULTIMUX_DATA_DIR   data directory (default ~/.local/share/multimux)
 `
+
+// devDataDirErr rejects --dev data dirs that could be a real install. --dev
+// disables authentication entirely, so the daemon must be pointed at a
+// throwaway directory deliberately: an unset MULTIMUX_DATA_DIR (which falls
+// back to the install path) or the install path itself is always refused.
+// This is independent of the "data dir has passkeys" check — a fresh default
+// dir passes that one.
+func devDataDirErr(env, home string) error {
+	const hint = "--dev refused: it disables authentication entirely, so it must be pointed at a throwaway data dir.\nSet one explicitly, e.g.\n  export MULTIMUX_DATA_DIR=\"/tmp/multimux-dev-$(date +%s)\""
+	if strings.TrimSpace(env) == "" {
+		return errors.New(hint)
+	}
+	def := filepath.Join(home, ".local", "share", "multimux")
+	if filepath.Clean(env) == filepath.Clean(def) {
+		return errors.New(hint)
+	}
+	return nil
+}
+
+// devBanner warns that the daemon is serving every route unauthenticated. It
+// is deliberately loud: anyone who can reach this port gets a shell.
+func devBanner(port int) string {
+	return fmt.Sprintf("\n!! === DEV MODE: NO AUTHENTICATION === !!\n"+
+		"!! Every route on :%d is served to anyone who can reach it — that is a\n"+
+		"!! shell as your user, with no passkey and no login.\n"+
+		"!! Use this only on a network you control, and only with a throwaway data dir.\n"+
+		"!! RP ID forced to \"localhost\"; Vite dev origin http://localhost:5173 allowed.\n\n", port)
+}
 
 func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writer) int {
 	fs2 := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -217,7 +248,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	fs2.Usage = func() { fmt.Fprint(stderr, serveUsage) }
 	port := fs2.Int("port", 0, "listen port (default from settings, else 8686)")
 	hostname := fs2.String("hostname", "", "hostname browsers reach this daemon at; must contain a dot or be \"localhost\" (persisted; default from settings, else os.Hostname; env MULTIMUX_HOSTNAME)")
-	dev := fs2.Bool("dev", false, "DEV MODE: RP ID localhost, allow the Vite dev origin http://localhost:5173 (throwaway MULTIMUX_DATA_DIR only)")
+	dev := fs2.Bool("dev", false, "DEV MODE: NO AUTHENTICATION, RP ID localhost, allow the Vite dev origin http://localhost:5173 (throwaway MULTIMUX_DATA_DIR only)")
 	trustCAFlag := fs2.Bool("trust-ca", false, "install the local CA into the OS trust store after ensuring it (like `multimux ca trust`; non-fatal on failure)")
 	if err := fs2.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -227,6 +258,16 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	}
 	if *hostname == "" {
 		*hostname = os.Getenv("MULTIMUX_HOSTNAME")
+	}
+
+	// --dev disables authentication entirely. Refuse before touching any
+	// database: with MULTIMUX_DATA_DIR unset, dataDir() is the real install.
+	if *dev {
+		devHome, _ := os.UserHomeDir()
+		if err := devDataDirErr(os.Getenv("MULTIMUX_DATA_DIR"), devHome); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 
 	dir := dataDir()
@@ -259,8 +300,10 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		}
 	}
 
-	// --dev swaps the RP ID to localhost, which strands any real passkeys,
-	// and loosens the origin checks — never allow it on a real install.
+	// --dev disables authentication, swaps the RP ID to localhost (which would
+	// strand real passkeys), and loosens the origin checks — never allow it on
+	// a real install. Second of two independent refusals; the first (an
+	// explicit, non-default data dir) ran before the store was opened.
 	if *dev {
 		n, err := st.CountCredentials()
 		if err != nil {
@@ -283,7 +326,8 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	if *dev {
 		rpID = "localhost"
 		origins = devOrigins(origins, *port)
-		fmt.Fprintf(stdout, "\n=== DEV MODE ===\nRP ID forced to \"localhost\"; origins http://localhost:5173 and https://localhost:%d allowed.\nRegister/login at http://localhost:5173 (Chrome/Firefox — Safari won't send Secure cookies over http://localhost).\nDo not use this data dir for a real install.\n\n", *port)
+		fmt.Fprint(stdout, devBanner(*port))
+		slog.Warn("dev mode: authentication disabled", "port", *port)
 		// Dev data dirs start empty; seed the daemon's working directory so
 		// the first session can launch without a trip through Settings.
 		if dirs, err := st.ListDirs(); err == nil && len(dirs) == 0 {
@@ -328,6 +372,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	srv := server.New(server.Config{
 		Store: st, Auth: am, Tmux: tm, Arbiter: tmuxmgr.NewArbiter(),
 		WebFS: webFS, Origins: origins, Version: version, ReadCA: readCA,
+		NoAuth: *dev,
 	})
 	srv.StartBackground() // reconcile + tickers, Task 17
 
@@ -335,7 +380,8 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 
 	// First-run setup URL — one line per name, most-resolvable first, since
 	// the bare kernel hostname often doesn't resolve from another device.
-	if pending, _ := am.SetupPending(); pending {
+	// Skipped under --dev: nothing authenticates, so there is no code to use.
+	if pending, _ := am.SetupPending(); pending && !*dev {
 		code, err := am.NewSetupCode()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
