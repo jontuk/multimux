@@ -138,6 +138,15 @@ func (s *Server) Handler() http.Handler {
 // deliberately, which is how cross-daemon calls work; auth then uses that
 // token, never the cookie (TokenFromRequest is explicit-first), mirroring
 // checkWSOrigin.
+//
+// Under Config.NoAuth (serve --dev) a request never carries our cookie — there
+// is no login to have set one — so it always takes the no-cookie path through
+// this gate: the origin rule above is never triggered, and there is no
+// credential requirement downstream (authGate is a no-op) to constrain a
+// cross-origin caller either. Combined with the ACAO:* below, any website can
+// issue mutating API calls to a --dev daemon. Accepted for the same reason as
+// checkWSOrigin: --dev is for a network you control and is already an
+// unauthenticated shell server.
 func (s *Server) csrfGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -227,7 +236,11 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 
 // cors: /api/ is callable from any origin WITHOUT credentials — cross-origin
 // callers authenticate with bearer tokens, never cookies, so reflecting * is
-// safe (see design decision on multi-host auth).
+// safe (see design decision on multi-host auth). Under Config.NoAuth
+// (serve --dev) that safety argument doesn't apply the same way: there is no
+// cookie to protect, but there is also no credential requirement of any kind
+// behind this ACAO:*, so any website can call the API cross-origin (see the
+// NoAuth note on csrfGate). Accepted as a property of dev mode.
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {

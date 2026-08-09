@@ -222,6 +222,15 @@ Environment:
 // dir passes that one. env is resolved to an absolute path before comparing,
 // so a relative MULTIMUX_DATA_DIR that happens to resolve to the install path
 // (e.g. run from $HOME) cannot slip past this guard.
+//
+// Limitation: this check only rejects the unset case and an exact match on
+// the canonical default path — it does not resolve symlinks or normalize
+// case, by design (see the comment above the call site). So a non-default
+// real install — a second install, or the default path reached via a
+// symlink or a case-insensitive variant of it — passes this guard and, if
+// it also has no passkeys yet, the "data dir has passkeys" check too; it
+// then gets migrated and seeded by store.Open/SeedDefaults before --dev's
+// refusal has any further chance to fire.
 func devDataDirErr(env, home string) error {
 	const hint = "--dev refused: it disables authentication entirely, so it must be pointed at a throwaway data dir.\nSet one explicitly, e.g.\n  export MULTIMUX_DATA_DIR=\"/tmp/multimux-dev-$(date +%s)\""
 	if strings.TrimSpace(env) == "" {
@@ -269,6 +278,11 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	// --dev disables authentication entirely. Refuse before touching any
 	// database: with MULTIMUX_DATA_DIR unset, dataDir() is the real install.
 	if *dev {
+		// Error dropped deliberately: with an empty home, def below is a
+		// relative path that can never equal the absolute resolved abs, so
+		// the guard just degrades to "reject unset only" — the same
+		// degradation dataDir() accepts in this situation. Keep both sides
+		// in sync if either one changes.
 		devHome, _ := os.UserHomeDir()
 		if err := devDataDirErr(os.Getenv("MULTIMUX_DATA_DIR"), devHome); err != nil {
 			fmt.Fprintln(stderr, err)

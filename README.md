@@ -551,8 +551,7 @@ ones on its own socket.
 Prerequisites: Go, Node + pnpm, tmux.
 
 **Run a dev daemon** in the foreground with a throwaway data dir so you don't
-touch your real install (passkeys, sessions, CA). Use a fresh dir each run —
-`--dev` refuses to start against a data dir that already has passkeys:
+touch your real install (passkeys, sessions, CA). Use a fresh dir each run:
 
 ```bash
 export MULTIMUX_DATA_DIR="/tmp/multimux-dev-$(date +%s)"

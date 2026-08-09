@@ -28,12 +28,20 @@ const pingInterval = 30 * time.Second
 // absence, decides which rule applies. Auth then uses that token, never the
 // cookie (TokenFromRequest is explicit-first), so a garbage token cannot ride
 // a valid cookie through this skipped check.
+//
+// Under Config.NoAuth (serve --dev) there is no auth gate behind any of this:
+// authGate is a no-op, so a credential-less upgrade — the "no credentials at
+// all" branch below — is not rejected downstream the way it is in the normal
+// cookie-auth case. Any origin can open /ws/events and then /ws/pty/{id}, and
+// WebSockets are exempt from CORS regardless. This is an accepted property of
+// dev mode, not an oversight: --dev is documented as for use only on a
+// network you control, and it is already an unauthenticated shell server.
 func (s *Server) checkWSOrigin(r *http.Request) bool {
 	if auth.ExplicitToken(r) != "" {
 		return true // token-authenticated
 	}
 	if c, err := r.Cookie(auth.CookieName); err != nil || c.Value == "" {
-		return true // no credentials at all — the auth gate rejects these anyway
+		return true // no credentials at all — the auth gate rejects these anyway (except under NoAuth, see above)
 	}
 	origin := r.Header.Get("Origin")
 	return origin == "" || slices.Contains(s.cfg.Origins, origin)
