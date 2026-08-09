@@ -219,14 +219,20 @@ Environment:
 // throwaway directory deliberately: an unset MULTIMUX_DATA_DIR (which falls
 // back to the install path) or the install path itself is always refused.
 // This is independent of the "data dir has passkeys" check — a fresh default
-// dir passes that one.
+// dir passes that one. env is resolved to an absolute path before comparing,
+// so a relative MULTIMUX_DATA_DIR that happens to resolve to the install path
+// (e.g. run from $HOME) cannot slip past this guard.
 func devDataDirErr(env, home string) error {
 	const hint = "--dev refused: it disables authentication entirely, so it must be pointed at a throwaway data dir.\nSet one explicitly, e.g.\n  export MULTIMUX_DATA_DIR=\"/tmp/multimux-dev-$(date +%s)\""
 	if strings.TrimSpace(env) == "" {
 		return errors.New(hint)
 	}
+	abs, err := filepath.Abs(env)
+	if err != nil {
+		return errors.New(hint)
+	}
 	def := filepath.Join(home, ".local", "share", "multimux")
-	if filepath.Clean(env) == filepath.Clean(def) {
+	if abs == filepath.Clean(def) {
 		return errors.New(hint)
 	}
 	return nil

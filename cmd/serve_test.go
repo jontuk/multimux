@@ -368,6 +368,24 @@ func TestDevDataDirErr(t *testing.T) {
 	}
 }
 
+// A relative MULTIMUX_DATA_DIR that resolves (via cwd) to the default install
+// path must be refused too — not just an already-absolute match. Uses a real
+// directory as home (the fictional "/home/someone" above can't be chdir'd
+// into) and a relative env value that resolves to <home>/.local/share/multimux.
+func TestDevDataDirErrRefusesRelativePathToDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Chdir(home)
+
+	if err := devDataDirErr(".local/share/multimux", home); err == nil {
+		t.Fatal("relative path resolving to default install dir accepted, want refusal")
+	} else if !strings.Contains(err.Error(), "MULTIMUX_DATA_DIR") {
+		t.Fatalf("error = %q, want it to name MULTIMUX_DATA_DIR", err)
+	}
+	if err := devDataDirErr("scratch/multimux-dev", home); err != nil {
+		t.Fatalf("relative throwaway dir refused: %v", err)
+	}
+}
+
 // The guard must fire from runServe before anything touches the real install's
 // database — with MULTIMUX_DATA_DIR unset, dataDir() IS the real install, so a
 // guard placed after store.Open would migrate the user's live database.
