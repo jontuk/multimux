@@ -288,7 +288,12 @@ func (s *Server) buildID() string {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	pending, _ := s.cfg.Auth.SetupPending()
+	// Under NoAuth there is no passkey and never will be; reporting pending
+	// would make the SPA render the setup page instead of the app.
+	pending := false
+	if !s.cfg.NoAuth {
+		pending, _ = s.cfg.Auth.SetupPending()
+	}
 	accent, _ := s.cfg.Store.GetSetting("accent_color")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",

@@ -90,6 +90,12 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	// No credential exists under NoAuth, so UserName() is empty; the SPA needs
+	// a name to render the signed-in state.
+	if s.cfg.NoAuth {
+		writeJSON(w, 200, map[string]string{"name": "dev"})
+		return
+	}
 	name, err := s.cfg.Auth.UserName()
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -42,5 +43,48 @@ func TestWithoutNoAuthGatesStillApply(t *testing.T) {
 	registered, _, _ := newTestServer(t, true)
 	if w := do(t, registered, "GET", "/api/tools", ""); w.Code != 401 {
 		t.Fatalf("unauthenticated GET /api/tools = %d, want 401", w.Code)
+	}
+}
+
+// App.tsx renders SetupPage whenever /healthz says setupPending. A dev daemon
+// never registers a passkey, so it must report false or the app never loads.
+func TestNoAuthHealthzNotSetupPending(t *testing.T) {
+	s := newNoAuthServer(t)
+	w := do(t, s, "GET", "/healthz", "")
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["setupPending"] != false {
+		t.Fatalf("setupPending = %v, want false", got["setupPending"])
+	}
+}
+
+// Without NoAuth the same daemon (no credentials) must still report pending.
+func TestHealthzStillReportsSetupPending(t *testing.T) {
+	s, _, _ := newTestServer(t, false)
+	w := do(t, s, "GET", "/healthz", "")
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["setupPending"] != true {
+		t.Fatalf("setupPending = %v, want true", got["setupPending"])
+	}
+}
+
+// No credential exists to name, so /api/auth/me must still return something.
+func TestNoAuthMeReturnsDevName(t *testing.T) {
+	s := newNoAuthServer(t)
+	w := do(t, s, "GET", "/api/auth/me", "")
+	if w.Code != 200 {
+		t.Fatalf("GET /api/auth/me = %d, want 200", w.Code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["name"] != "dev" {
+		t.Fatalf("name = %q, want %q", got["name"], "dev")
 	}
 }
