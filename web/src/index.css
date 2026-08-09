@@ -6,6 +6,15 @@
      across a whole screen, and --border disappears against the terminal. */
   --tile-border: #3c4553;
   --tile-header-bg: #1b202a;
+  /* Per-directory header wash. Each session header overrides this inline with
+     a hue hashed from its working dir (web/src/grid/dirColor.ts), so tiles in
+     the same directory read as a group. The default is a no-op mix: tiles with
+     no session (empty, server-removed) keep the plain header. */
+  --dir-tint: var(--tile-header-bg);
+  /* Hashed hues land where they land: two directories can differ by ~30°, and
+     below roughly this mix such a pair is indistinguishable, which defeats the
+     grouping. 20% keeps the wash quiet but keeps near hues apart. */
+  --dir-tint-strength: 20%;
   --tile-gap: 8px;
   --ink: #e8ebef;
   --muted: #8a919d;
@@ -678,8 +687,13 @@ a {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--tile-border));
 }
 
+/* Nested mix so focus warms the dir tint rather than replacing it. */
 .tile:focus-within .tile-header {
-  background: color-mix(in srgb, var(--accent) 6%, var(--tile-header-bg));
+  background: color-mix(
+    in srgb,
+    var(--accent) 6%,
+    color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--tile-header-bg))
+  );
   border-bottom-color: color-mix(in srgb, var(--accent) 45%, var(--tile-border));
 }
 
@@ -703,7 +717,7 @@ a {
   align-items: center;
   gap: 0.6rem;
   padding: 0.25rem 0.5rem;
-  background: var(--tile-header-bg);
+  background: color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--tile-header-bg));
   border-bottom: 1px solid var(--tile-border);
   font-family: var(--mono);
   font-size: 0.75rem;
@@ -1299,7 +1313,7 @@ a {
     overflow: hidden;
     padding: 0.4rem 0.5rem;
     border-bottom: 1px solid var(--border);
-    background: var(--panel);
+    background: color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--panel));
     font-family: var(--mono);
     font-size: 0.75rem;
     white-space: nowrap;

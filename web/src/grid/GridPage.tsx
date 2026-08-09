@@ -12,6 +12,7 @@ import MobileSessionView from "./MobileSessionView";
 import { orderMobileSessions } from "./mobileModel";
 import type { Session, Tool } from "./types";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
+import { dirTintStyle } from "./dirColor";
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -446,6 +447,7 @@ export default function GridPage({
                       <div className="tile-cell">
                         <div
                           className="tile-header"
+                          style={session ? dirTintStyle(session.dir) : undefined}
                           onDoubleClick={() => setMaximizedKey((k) => (k === tileKey(tile) ? null : tileKey(tile)))}
                         >
                           <TileTitle

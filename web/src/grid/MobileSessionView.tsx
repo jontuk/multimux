@@ -3,6 +3,7 @@ import TerminalTile from "../term/TerminalTile";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
+import { dirTintStyle } from "./dirColor";
 import type { Tool } from "./types";
 
 export default function MobileSessionView({
@@ -104,7 +105,7 @@ export default function MobileSessionView({
         aria-valuemax={sessions.length}
         aria-valuenow={resolvedSelection.index + 1}
         aria-valuetext={`Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}`}
-        style={{ touchAction: "pan-y" }}
+        style={{ touchAction: "pan-y", ...dirTintStyle(selected.session.dir) }}
         onKeyDown={onKeyDown}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}

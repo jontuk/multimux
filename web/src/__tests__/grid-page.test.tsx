@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import GridPage from "../grid/GridPage";
+import { dirTint } from "../grid/dirColor";
 import { useEvents } from "../useEvents";
 import { MOBILE_VIEW_QUERY } from "../useMediaQuery";
 
@@ -467,6 +468,36 @@ test("tile for a removed server shows a non-interactive state, never the local d
   // Removing the orphaned tile from the grid is still allowed.
   await userEvent.click(screen.getByLabelText("remove session 1 from grid"));
   expect(screen.queryByText(/server removed/i)).not.toBeInTheDocument();
+});
+
+test("tile headers carry a --dir-tint hashed from the session's directory", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const header = (id: string) => screen.getByText(id).closest(".tile-header") as HTMLElement;
+  // Session #1 is in /a, #2 in /b: same dir means the same tint, so different
+  // dirs must not collide.
+  expect(header("#1 · claude").style.getPropertyValue("--dir-tint")).toBe(dirTint("/a"));
+  expect(header("#2 · api refactor").style.getPropertyValue("--dir-tint")).toBe(dirTint("/b"));
+  expect(dirTint("/a")).not.toBe(dirTint("/b"));
+});
+
+test("a tile whose server was removed gets no dir tint", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "gone", sessionId: 1 }] };
+  mockFetch(layout);
+
+  render(<GridPage />);
+  const header = (await screen.findByText("#1 · server removed")).closest(".tile-header") as HTMLElement;
+  expect(header.style.getPropertyValue("--dir-tint")).toBe("");
 });
 
 test("double-clicking a tile header maximizes the tile; double-clicking again restores", async () => {
