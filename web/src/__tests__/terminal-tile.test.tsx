@@ -37,12 +37,32 @@ class FakeWebSocket {
   onopen: (() => void) | null = null;
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
+  sent: unknown[] = [];
   constructor(url: string) {
     this.url = url;
     FakeWebSocket.instances.push(this);
   }
-  send() {}
+  send(data: unknown) {
+    this.sent.push(data);
+  }
   close() {}
+}
+
+class FakeResizeObserver {
+  static instances: FakeResizeObserver[] = [];
+  cb: () => void;
+  constructor(cb: () => void) {
+    this.cb = cb;
+    FakeResizeObserver.instances.push(this);
+  }
+  observe() {}
+  disconnect() {}
+}
+
+// Last {"type":"resize"} the tile sent, parsed.
+function lastResize(ws: FakeWebSocket) {
+  const texts = ws.sent.filter((d): d is string => typeof d === "string").map((d) => JSON.parse(d));
+  return texts.filter((m) => m.type === "resize").at(-1);
 }
 
 const server = { id: "local", origin: "http://daemon.test", name: "local" };
@@ -69,17 +89,12 @@ async function failHandshake() {
 
 beforeAll(() => {
   vi.stubGlobal("WebSocket", FakeWebSocket);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
 });
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
+  FakeResizeObserver.instances = [];
 });
 
 afterEach(() => {
@@ -150,6 +165,39 @@ test("running session that closes keeps retrying", async () => {
 
   await screen.findByText(/daemon unreachable/);
   await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(1), { timeout: 2000 });
+});
+
+// Window-size ownership is arbitrated server-side and claimed by active:true.
+// Only real interaction with THIS terminal may claim it: a reconnecting tile on
+// a dormant machine (whose document still reports focus) would otherwise steal
+// the shared tmux window and shrink it for whoever is actually typing.
+test("only terminal focus claims window-size ownership", async () => {
+  mockSessions(async () => new Response(JSON.stringify([session("running")])));
+  // The dormant-laptop case: document reports visible and focused throughout.
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+
+  const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+
+  act(() => ws.onopen?.());
+  expect(lastResize(ws)).toMatchObject({ type: "resize", active: false });
+
+  act(() => FakeResizeObserver.instances[0].cb());
+  expect(lastResize(ws)).toMatchObject({ active: false });
+
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(lastResize(ws)).toMatchObject({ active: false });
+
+  const term = container.querySelector(".terminal-tile > div")!;
+  act(() => {
+    term.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  });
+  expect(lastResize(ws)).toMatchObject({ active: true });
 });
 
 test("loads WebLinksAddon on terminal mount", () => {

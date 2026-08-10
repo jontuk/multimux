@@ -81,9 +81,14 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     let backoff = 500;
     let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    function sendResize() {
+    // active claims ownership of the shared tmux window size (see Arbiter), so
+    // only real interaction with THIS terminal may set it. Document-level focus
+    // is not enough: a dormant machine's PWA still reports visible+focused, and
+    // every reconnect there would re-claim the window and shrink it under the
+    // person actually typing. Passive resizes still size our own attach PTY,
+    // and are applied to the window when we already own it.
+    function sendResize(active = false) {
       if (ws?.readyState === WebSocket.OPEN) {
-        const active = document.visibilityState === "visible" && document.hasFocus();
         ws.send(encodeResize(term.cols, term.rows, active));
       }
     }
@@ -159,6 +164,12 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     };
     captureContainer.addEventListener("mousedown", shiftDragCapture, true);
 
+    // Focusing this terminal claims the window size at our dims — the cheap way
+    // to reclaim a window some other client shrank, without having to type.
+    // (Keyboard input claims it too, server-side, via Arbiter.ClaimInput.)
+    const claimOnFocus = () => sendResize(true);
+    captureContainer.addEventListener("focusin", claimOnFocus);
+
     const dataSub = term.onData((data) => {
       if (suppressNextCR && data === "\r") {
         suppressNextCR = false;
@@ -171,8 +182,11 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       sendResize();
     });
     ro.observe(containerRef.current!);
-    window.addEventListener("focus", sendResize);
-    document.addEventListener("visibilitychange", sendResize);
+    // Re-sync dims after the tab comes back; the listener args must not leak
+    // into sendResize's active parameter.
+    const resyncSize = () => sendResize();
+    window.addEventListener("focus", resyncSize);
+    document.addEventListener("visibilitychange", resyncSize);
 
     return () => {
       closed = true;
@@ -184,10 +198,11 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       }
       captureContainer.removeEventListener("keydown", shiftEnterCapture, true);
       captureContainer.removeEventListener("mousedown", shiftDragCapture, true);
+      captureContainer.removeEventListener("focusin", claimOnFocus);
       dataSub.dispose();
       ro.disconnect();
-      window.removeEventListener("focus", sendResize);
-      document.removeEventListener("visibilitychange", sendResize);
+      window.removeEventListener("focus", resyncSize);
+      document.removeEventListener("visibilitychange", resyncSize);
       term.dispose();
     };
   }, [url, sessionId, retryNonce]);
