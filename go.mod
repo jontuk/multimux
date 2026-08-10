@@ -1,6 +1,6 @@
 module github.com/jontuk/multimux
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/creack/pty/v2 v2.0.1
