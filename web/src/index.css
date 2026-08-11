@@ -664,7 +664,7 @@ a {
 }
 
 .grid {
-  gap: var(--tile-gap);
+  position: relative;
 }
 
 .tile {

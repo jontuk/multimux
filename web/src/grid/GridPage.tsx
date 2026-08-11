@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { del, getJSON, putJSON } from "../api";
 import { connectServer, listServers, localServer, removeServer, type Server } from "../servers";
 import { addTile, emptyLayout, normalize, removeTile, setCols, swapTiles, type Layout, type Tile } from "./model";
+import { tileRect } from "./sizes";
 import ColumnStepper from "./ColumnStepper";
 import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
@@ -334,7 +335,6 @@ export default function GridPage({
     [layout, servers, sessionsByServer],
   );
   const initialLoading = !layoutSettled || servers.some((server) => !settledSessionServers.has(server.id));
-  const { rows, cols } = layout.shape;
   return (
     <div className="grid-page">
       {servers.map((s) => (
@@ -386,46 +386,123 @@ export default function GridPage({
           <div
             className="grid"
             style={{
-              display: "grid",
-              gridTemplateRows: `repeat(${rows}, 1fr)`,
-              gridTemplateColumns: `repeat(${cols}, 1fr)`,
-              // gap lives in .grid (var(--tile-gap)) — inline would win over it.
+              // Tiles are absolutely positioned rather than laid out by CSS
+              // grid: column widths differ per row, which a single grid cannot
+              // express, and a row-element-per-row would reparent tiles — which
+              // unmounts xterm and reconnects the PTY (see the key comment
+              // below).
+              position: "relative",
               height: "calc(100vh - 60px)",
             }}
           >
-            {layout.tiles.map((tile: Tile, i: number) => (
-              <div
-                // Identity keys: swapping tiles moves the DOM nodes instead of
-                // re-rendering each position with a different session, which would
-                // rebuild xterm and reconnect the WebSocket for both tiles.
-                key={tile ? tileKey(tile) : `empty-${i}`}
-                className={`tile${tile && tileKey(tile) === maximizedKey ? " tile-maximized" : ""}`}
-                draggable={tile !== null && tileKey(tile) !== editingKey}
-                onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
-                onDragOver={(e) => {
-                  if (e.dataTransfer.types.includes("text/tile-index")) e.preventDefault();
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  // Only our own drags: foreign drops yield "" and Number("")
-                  // is 0, which would silently swap with tile zero.
-                  const raw = e.dataTransfer.getData("text/tile-index");
-                  if (!/^\d+$/.test(raw)) return;
-                  const from = Number(raw);
-                  if (from === i || from >= layout.tiles.length) return;
-                  persist((l) => swapTiles(l, from, i));
-                }}
-              >
-                {tile ? (
-                  (() => {
-                    const server = servers.find((s) => s.id === tile.serverId);
-                    // Never fall back to another server: attaching or terminating
-                    // would target that server's session with the same id.
-                    if (!server) {
+            {layout.tiles.map((tile: Tile, i: number) => {
+              // layout.rowSizes / layout.colSizes are non-null on anything
+              // normalize() returned, and every layout in GridPage comes from
+              // normalize — hence the `!`.
+              const rect = tileRect(layout.shape, layout.rowSizes!, layout.colSizes!, i);
+              return (
+                <div
+                  // Identity keys: swapping tiles moves the DOM nodes instead of
+                  // re-rendering each position with a different session, which would
+                  // rebuild xterm and reconnect the WebSocket for both tiles.
+                  key={tile ? tileKey(tile) : `empty-${i}`}
+                  data-tile-index={i}
+                  className={`tile${tile && tileKey(tile) === maximizedKey ? " tile-maximized" : ""}`}
+                  style={
+                    tile && tileKey(tile) === maximizedKey
+                      ? undefined
+                      : {
+                          position: "absolute",
+                          left: `calc(${rect.left}% + var(--tile-gap) / 2)`,
+                          top: `calc(${rect.top}% + var(--tile-gap) / 2)`,
+                          width: `calc(${rect.width}% - var(--tile-gap))`,
+                          height: `calc(${rect.height}% - var(--tile-gap))`,
+                        }
+                  }
+                  draggable={tile !== null && tileKey(tile) !== editingKey}
+                  onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
+                  onDragOver={(e) => {
+                    if (e.dataTransfer.types.includes("text/tile-index")) e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    // Only our own drags: foreign drops yield "" and Number("")
+                    // is 0, which would silently swap with tile zero.
+                    const raw = e.dataTransfer.getData("text/tile-index");
+                    if (!/^\d+$/.test(raw)) return;
+                    const from = Number(raw);
+                    if (from === i || from >= layout.tiles.length) return;
+                    persist((l) => swapTiles(l, from, i));
+                  }}
+                >
+                  {tile ? (
+                    (() => {
+                      const server = servers.find((s) => s.id === tile.serverId);
+                      // Never fall back to another server: attaching or terminating
+                      // would target that server's session with the same id.
+                      if (!server) {
+                        return (
+                          <div className="tile-cell">
+                            <div className="tile-header">
+                              <span className="tile-title">#{tile.sessionId} · server removed</span>
+                              <span className="tile-actions">
+                                <button
+                                  aria-label={`remove session ${tile.sessionId} from grid`}
+                                  title="remove from grid"
+                                  onClick={() => persist((l) => removeTile(l, i))}
+                                >
+                                  −
+                                </button>
+                              </span>
+                            </div>
+                            <div className="tile-body empty-tile-hint">
+                              This session's server was removed. Re-add the server in Settings or remove this tile.
+                            </div>
+                          </div>
+                        );
+                      }
+                      const session = (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId);
                       return (
                         <div className="tile-cell">
-                          <div className="tile-header">
-                            <span className="tile-title">#{tile.sessionId} · server removed</span>
+                          <div
+                            className="tile-header"
+                            style={session ? dirTintStyle(session.dir) : undefined}
+                            onDoubleClick={() => setMaximizedKey((k) => (k === tileKey(tile) ? null : tileKey(tile)))}
+                          >
+                            <TileTitle
+                              sessionId={tile.sessionId}
+                              text={sessionTitle(toolsByServer[tile.serverId], session)}
+                              label={session?.label ?? ""}
+                              onEditingChange={(editing) => setEditingKey(editing ? tileKey(tile) : null)}
+                              onRename={(label) => renameSession(server, tile.sessionId, label)}
+                            />
+                            {session && (
+                              <span className="tile-dir" title={session.dir}>
+                                {session.dir}
+                              </span>
+                            )}
+                            {session?.gitState && (
+                              <span className="tile-branch">
+                                <span
+                                  className={`git-dot git-dot-${session.gitState}`}
+                                  title={gitStateTitles[session.gitState]}
+                                />
+                                <span className="tile-branch-name">{session.branch}</span>
+                                <TrackingMarks session={session} />
+                              </span>
+                            )}
+                            {session?.repoUrl && (
+                              <a
+                                className="tile-repo-link"
+                                href={session.repoUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                aria-label="open repository on GitHub"
+                                title={session.repoUrl}
+                              >
+                                <GitHubIcon />
+                              </a>
+                            )}
                             <span className="tile-actions">
                               <button
                                 aria-label={`remove session ${tile.sessionId} from grid`}
@@ -434,103 +511,46 @@ export default function GridPage({
                               >
                                 −
                               </button>
+                              <button
+                                className="danger"
+                                aria-label={`terminate session ${tile.sessionId}`}
+                                title="terminate session"
+                                onClick={() => terminateSession(server, tile.sessionId, i)}
+                              >
+                                ✕
+                              </button>
                             </span>
                           </div>
-                          <div className="tile-body empty-tile-hint">
-                            This session's server was removed. Re-add the server in Settings or remove this tile.
-                          </div>
+                          {session && session.status !== "running" ? (
+                            // Dead sessions must not mount a terminal: the daemon
+                            // rejects the attach and the tile would retry forever.
+                            <div className="tile-body empty-tile-hint">
+                              session ended <button onClick={() => persist((l) => removeTile(l, i))}>dismiss</button>
+                            </div>
+                          ) : (
+                            <div className="tile-body">
+                              <TerminalTile
+                                server={server}
+                                sessionId={tile.sessionId}
+                                autoFocus={tileKey(tile) === focusKey}
+                                onClose={() => persist((l) => removeTile(l, i))}
+                              />
+                            </div>
+                          )}
                         </div>
                       );
-                    }
-                    const session = (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId);
-                    return (
-                      <div className="tile-cell">
-                        <div
-                          className="tile-header"
-                          style={session ? dirTintStyle(session.dir) : undefined}
-                          onDoubleClick={() => setMaximizedKey((k) => (k === tileKey(tile) ? null : tileKey(tile)))}
-                        >
-                          <TileTitle
-                            sessionId={tile.sessionId}
-                            text={sessionTitle(toolsByServer[tile.serverId], session)}
-                            label={session?.label ?? ""}
-                            onEditingChange={(editing) => setEditingKey(editing ? tileKey(tile) : null)}
-                            onRename={(label) => renameSession(server, tile.sessionId, label)}
-                          />
-                          {session && (
-                            <span className="tile-dir" title={session.dir}>
-                              {session.dir}
-                            </span>
-                          )}
-                          {session?.gitState && (
-                            <span className="tile-branch">
-                              <span
-                                className={`git-dot git-dot-${session.gitState}`}
-                                title={gitStateTitles[session.gitState]}
-                              />
-                              <span className="tile-branch-name">{session.branch}</span>
-                              <TrackingMarks session={session} />
-                            </span>
-                          )}
-                          {session?.repoUrl && (
-                            <a
-                              className="tile-repo-link"
-                              href={session.repoUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              aria-label="open repository on GitHub"
-                              title={session.repoUrl}
-                            >
-                              <GitHubIcon />
-                            </a>
-                          )}
-                          <span className="tile-actions">
-                            <button
-                              aria-label={`remove session ${tile.sessionId} from grid`}
-                              title="remove from grid"
-                              onClick={() => persist((l) => removeTile(l, i))}
-                            >
-                              −
-                            </button>
-                            <button
-                              className="danger"
-                              aria-label={`terminate session ${tile.sessionId}`}
-                              title="terminate session"
-                              onClick={() => terminateSession(server, tile.sessionId, i)}
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        </div>
-                        {session && session.status !== "running" ? (
-                          // Dead sessions must not mount a terminal: the daemon
-                          // rejects the attach and the tile would retry forever.
-                          <div className="tile-body empty-tile-hint">
-                            session ended <button onClick={() => persist((l) => removeTile(l, i))}>dismiss</button>
-                          </div>
-                        ) : (
-                          <div className="tile-body">
-                            <TerminalTile
-                              server={server}
-                              sessionId={tile.sessionId}
-                              autoFocus={tileKey(tile) === focusKey}
-                              onClose={() => persist((l) => removeTile(l, i))}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()
-                ) : (
-                  <EmptyTile
-                    servers={servers}
-                    sessionsByServer={sessionsByServer}
-                    placed={placed}
-                    onAttach={attachSession}
-                  />
-                )}
-              </div>
-            ))}
+                    })()
+                  ) : (
+                    <EmptyTile
+                      servers={servers}
+                      sessionsByServer={sessionsByServer}
+                      placed={placed}
+                      onAttach={attachSession}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </>
       )}

@@ -872,3 +872,36 @@ test("double-clicking the tile title does not maximize the tile", async () => {
   await userEvent.dblClick(title);
   expect(container.querySelector(".tile-maximized")).toBeNull();
 });
+
+test("tiles are positioned from the stored row and column sizes", async () => {
+  mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+    rowSizes: [0.3, 0.7],
+    colSizes: [
+      [0.35, 0.65],
+      [0.8, 0.2],
+    ],
+  });
+  render(<GridPage />);
+  // GridPage paints an empty placeholder grid (also carrying data-tile-index)
+  // before the mocked layout fetch resolves, so wait for real session content
+  // rather than mere attribute presence — otherwise the assertions below can
+  // race the placeholder's equal-split sizing.
+  await screen.findByTestId("term-1");
+  const first = document.querySelector('[data-tile-index="0"]') as HTMLElement;
+  expect(first.style.top).toContain("0%");
+  expect(first.style.left).toContain("0%");
+  expect(first.style.width).toContain("35%");
+  expect(first.style.height).toContain("30%");
+
+  const third = document.querySelector('[data-tile-index="2"]') as HTMLElement;
+  expect(third.style.top).toContain("30%");
+  expect(third.style.width).toContain("80%");
+  expect(third.style.height).toContain("70%");
+});
