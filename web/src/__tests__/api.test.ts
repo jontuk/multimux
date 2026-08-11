@@ -27,6 +27,13 @@ test("wsURL swaps scheme and appends token", () => {
   expect(wsURL(remote, "/ws/pty/3")).toBe("wss://otherbox:8686/ws/pty/3?token=tok");
 });
 
+test("wsURL appends extra params alongside the token", () => {
+  expect(wsURL(remote, "/ws/pty/3", { client: "a b" })).toBe("wss://otherbox:8686/ws/pty/3?token=tok&client=a%20b");
+  expect(wsURL(local, "/ws/pty/3", { client: "abc" })).toBe(
+    `${local.origin.replace(/^http/, "ws")}/ws/pty/3?client=abc`,
+  );
+});
+
 test("a rejected fetch becomes ApiError status 0, not a TypeError", async () => {
   const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
   const err = await getJSON(local, "/api/tools").catch((e: unknown) => e);

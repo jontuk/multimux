@@ -30,7 +30,7 @@ func claimInput(t *testing.T, c *ArbConn) (cols, rows uint16, reapplied bool) {
 
 func TestFirstConnMayResize(t *testing.T) {
 	a := NewArbiter()
-	c := a.Register("mm-1")
+	c := a.Register("mm-1", "A")
 	defer c.Unregister()
 	if !resizeAllowed(t, c, 80, 24, false) {
 		t.Fatal("sole connection should be allowed to resize")
@@ -39,8 +39,8 @@ func TestFirstConnMayResize(t *testing.T) {
 
 func TestOwnershipFollowsInput(t *testing.T) {
 	a := NewArbiter()
-	c1 := a.Register("mm-1")
-	c2 := a.Register("mm-1")
+	c1 := a.Register("mm-1", "A")
+	c2 := a.Register("mm-1", "B")
 	defer c1.Unregister()
 	defer c2.Unregister()
 
@@ -66,7 +66,7 @@ func TestOwnershipFollowsInput(t *testing.T) {
 
 func TestClaimInputByOwnerIsNoop(t *testing.T) {
 	a := NewArbiter()
-	c := a.Register("mm-1")
+	c := a.Register("mm-1", "A")
 	defer c.Unregister()
 	resizeAllowed(t, c, 80, 24, false)
 	claimInput(t, c)
@@ -75,22 +75,87 @@ func TestClaimInputByOwnerIsNoop(t *testing.T) {
 	}
 }
 
-func TestUnregisterReleasesOwnership(t *testing.T) {
+// Ownership is keyed on the client, not the socket: a tile that reconnects
+// (network blip, remount, tab restore) must come back as the same owner, and a
+// different machine must not be able to grab the window in the gap.
+func TestOwnershipSurvivesOwnerReconnect(t *testing.T) {
 	a := NewArbiter()
-	c1 := a.Register("mm-1")
-	c2 := a.Register("mm-1")
-	defer c2.Unregister()
-	claimInput(t, c1)
-	c1.Unregister()
-	if !resizeAllowed(t, c2, 100, 30, false) {
-		t.Fatal("resize must be allowed once owner disconnects")
+	owner := a.Register("mm-1", "desktop")
+	other := a.Register("mm-1", "phone")
+	defer other.Unregister()
+
+	resizeAllowed(t, owner, 200, 50, false)
+	claimInput(t, owner)
+	owner.Unregister() // desktop's socket drops
+
+	if resizeAllowed(t, other, 60, 20, false) {
+		t.Fatal("another client must not claim the window while the owner is merely reconnecting")
+	}
+
+	reconnected := a.Register("mm-1", "desktop")
+	defer reconnected.Unregister()
+	if !resizeAllowed(t, reconnected, 200, 50, false) {
+		t.Fatal("the owning client must still own the window after reconnecting")
+	}
+	if resizeAllowed(t, other, 60, 20, false) {
+		t.Fatal("non-owner client must stay denied after the owner is back")
+	}
+}
+
+// A client that is gone for good must not hold the window hostage.
+func TestOwnershipLapsesAfterOwnerStaysGone(t *testing.T) {
+	a := NewArbiter()
+	now := time.Now()
+	a.now = func() time.Time { return now }
+
+	owner := a.Register("mm-1", "desktop")
+	other := a.Register("mm-1", "phone")
+	defer other.Unregister()
+	claimInput(t, owner)
+	owner.Unregister()
+
+	now = now.Add(ownerGrace - time.Second)
+	if resizeAllowed(t, other, 60, 20, false) {
+		t.Fatal("resize must stay denied inside the reconnect grace window")
+	}
+
+	now = now.Add(2 * time.Second)
+	if !resizeAllowed(t, other, 60, 20, false) {
+		t.Fatal("resize must be allowed once the owner has stayed gone past the grace window")
+	}
+	if _, _, reapply := claimInput(t, other); reapply {
+		t.Fatal("the lapsed-grace resize should have transferred ownership already")
+	}
+}
+
+// Two tabs of the same browser share a client id; whichever one is live owns.
+func TestSecondConnOfOwningClientKeepsOwnership(t *testing.T) {
+	a := NewArbiter()
+	now := time.Now()
+	a.now = func() time.Time { return now }
+
+	first := a.Register("mm-1", "desktop")
+	second := a.Register("mm-1", "desktop")
+	defer second.Unregister()
+	other := a.Register("mm-1", "phone")
+	defer other.Unregister()
+
+	claimInput(t, first)
+	first.Unregister()
+
+	now = now.Add(2 * ownerGrace)
+	if resizeAllowed(t, other, 60, 20, false) {
+		t.Fatal("grace must not start while the owning client still has a live connection")
+	}
+	if !resizeAllowed(t, second, 200, 50, false) {
+		t.Fatal("the owning client's other connection must be allowed to resize")
 	}
 }
 
 func TestUnregisterIdempotent(t *testing.T) {
 	a := NewArbiter()
-	c1 := a.Register("mm-1")
-	c2 := a.Register("mm-1")
+	c1 := a.Register("mm-1", "A")
+	c2 := a.Register("mm-1", "B")
 	defer c2.Unregister()
 
 	c1.Unregister()
@@ -107,8 +172,8 @@ func TestUnregisterIdempotent(t *testing.T) {
 
 func TestSessionsIsolated(t *testing.T) {
 	a := NewArbiter()
-	c1 := a.Register("mm-1")
-	c2 := a.Register("mm-2")
+	c1 := a.Register("mm-1", "A")
+	c2 := a.Register("mm-2", "B")
 	defer c1.Unregister()
 	defer c2.Unregister()
 	claimInput(t, c1)
@@ -119,8 +184,8 @@ func TestSessionsIsolated(t *testing.T) {
 
 func TestActiveResizeClaimsAndTransfersOwnership(t *testing.T) {
 	a := NewArbiter()
-	foreground := a.Register("mm-1")
-	background := a.Register("mm-1")
+	foreground := a.Register("mm-1", "A")
+	background := a.Register("mm-1", "B")
 	defer foreground.Unregister()
 	defer background.Unregister()
 
@@ -140,8 +205,8 @@ func TestActiveResizeClaimsAndTransfersOwnership(t *testing.T) {
 
 func TestResizeApplicationIsSerializedWithOwnership(t *testing.T) {
 	a := NewArbiter()
-	first := a.Register("mm-1")
-	second := a.Register("mm-1")
+	first := a.Register("mm-1", "A")
+	second := a.Register("mm-1", "B")
 	defer first.Unregister()
 	defer second.Unregister()
 
@@ -190,8 +255,8 @@ func TestResizeApplicationIsSerializedWithOwnership(t *testing.T) {
 
 func TestResizeApplicationDoesNotBlockOtherSessions(t *testing.T) {
 	a := NewArbiter()
-	first := a.Register("mm-1")
-	second := a.Register("mm-2")
+	first := a.Register("mm-1", "A")
+	second := a.Register("mm-2", "B")
 	defer first.Unregister()
 	defer second.Unregister()
 

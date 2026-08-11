@@ -200,6 +200,17 @@ test("only terminal focus claims window-size ownership", async () => {
   expect(lastResize(ws)).toMatchObject({ active: true });
 });
 
+// The daemon keys window-size ownership on this id so our own reconnects keep
+// the shared tmux window instead of losing it to another machine.
+test("PTY socket carries this browser's client id", () => {
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const first = new URL(FakeWebSocket.instances[0].url).searchParams.get("client");
+  expect(first).toBeTruthy();
+
+  render(<TerminalTile server={server} sessionId={8} onClose={() => {}} />);
+  expect(new URL(FakeWebSocket.instances[1].url).searchParams.get("client")).toBe(first);
+});
+
 test("loads WebLinksAddon on terminal mount", () => {
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
   expect(loadedAddons.some((addon) => addon?.constructor?.name === "WebLinksAddon")).toBe(true);

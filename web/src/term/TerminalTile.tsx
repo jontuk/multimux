@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import { apiFetch, wsURL } from "../api";
 import type { Server } from "../servers";
 import type { Session } from "../grid/types";
+import { clientId } from "../clientId";
 import { encodeResize, parseServerText } from "./protocol";
 
 type Props = { server: Server; sessionId: number; onClose: () => void; autoFocus?: boolean };
@@ -50,7 +51,9 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
 
   // Depend on the URL string, not the server object: listServers() returns
   // fresh objects each render, but the string only changes when it matters.
-  const url = wsURL(server, `/ws/pty/${sessionId}`);
+  // client= keys window-size ownership to this browser, so our reconnects don't
+  // hand the shared tmux window to another machine's next passive resize.
+  const url = wsURL(server, `/ws/pty/${sessionId}`, { client: clientId() });
   const serverRef = useRef(server);
   useEffect(() => {
     serverRef.current = server;

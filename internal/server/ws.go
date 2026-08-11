@@ -1,11 +1,14 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -54,6 +57,25 @@ func (s *Server) wsUpgrader() websocket.Upgrader {
 	}
 }
 
+// clientID identifies the browser behind a PTY connection so window-size
+// ownership can survive its reconnects (see tmuxmgr.Arbiter). It is a client-
+// supplied opaque string with no authority of its own — it only picks which
+// already-authenticated connections count as "the same client" — so it is
+// merely bounded, not trusted. A client that sends none (or a bogus one) gets a
+// fresh random id, which degrades ownership to per-connection: the old
+// behaviour, never someone else's ownership.
+func clientID(r *http.Request) string {
+	id := r.URL.Query().Get("client")
+	if id != "" && len(id) <= 64 {
+		return "c:" + id
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "anon:" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return "anon:" + hex.EncodeToString(b[:])
+}
+
 type resizeMsg struct {
 	Type   string `json:"type"`
 	Cols   uint16 `json:"cols"`
@@ -92,7 +114,7 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	arb := s.cfg.Arbiter.Register(sess.TmuxName)
+	arb := s.cfg.Arbiter.Register(sess.TmuxName, clientID(r))
 	defer arb.Unregister()
 
 	// Keepalive pings; WriteControl is safe alongside the PTY→WS writer.

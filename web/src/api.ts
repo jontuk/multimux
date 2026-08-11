@@ -105,7 +105,10 @@ export async function del(server: Server, path: string): Promise<void> {
   if (!res.ok) throw await failed(path, res);
 }
 
-export function wsURL(server: Server, path: string): string {
+export function wsURL(server: Server, path: string, params?: Record<string, string>): string {
+  const query = Object.entries({ ...(server.token ? { token: server.token } : {}), ...params }).map(
+    ([k, v]) => `${k}=${encodeURIComponent(v)}`,
+  );
   const base = server.origin.replace(/^http/, "ws") + path;
-  return server.token ? `${base}?token=${encodeURIComponent(server.token)}` : base;
+  return query.length ? `${base}?${query.join("&")}` : base;
 }
