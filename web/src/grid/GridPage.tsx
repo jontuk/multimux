@@ -219,7 +219,7 @@ export default function GridPage({
       getJSON<unknown>(localServer(), "/api/layout")
         .then((v) => {
           // Normalize so layouts persisted before rows were derived still load cleanly.
-          if (isLayout(v)) adoptLayout(normalize(v.tiles, v.shape.cols));
+          if (isLayout(v)) adoptLayout(normalize(v.tiles, v.shape.cols, v.rowSizes, v.colSizes));
         })
         .catch(() => {})
         .finally(() => {

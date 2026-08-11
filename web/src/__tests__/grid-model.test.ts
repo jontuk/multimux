@@ -1,4 +1,15 @@
-import { addTile, removeTile, emptyLayout, normalize, setCols, swapTiles, MAX_COLS, MIN_COLS } from "../grid/model";
+import {
+  addTile,
+  removeTile,
+  emptyLayout,
+  normalize,
+  setCols,
+  setColSizes,
+  setRowSizes,
+  swapTiles,
+  MAX_COLS,
+  MIN_COLS,
+} from "../grid/model";
 
 const sess = (id: number) => ({ serverId: "local", sessionId: id });
 
@@ -90,4 +101,71 @@ test("swapTiles with a trailing empty slot moves the session to the end", () => 
   let l = normalize([sess(1), sess(2), sess(3)], 2);
   l = swapTiles(l, 0, 3);
   expect(l.tiles).toEqual([sess(2), sess(3), sess(1), null]);
+});
+
+test("normalize fills in equal sizes and derives one width array per row", () => {
+  const l = normalize([sess(1), sess(2), sess(3)], 2);
+  expect(l.rowSizes).toEqual([0.5, 0.5]);
+  expect(l.colSizes).toEqual([
+    [0.5, 0.5],
+    [0.5, 0.5],
+  ]);
+});
+
+test("swapTiles keeps the dragged sizes because the shape is unchanged", () => {
+  let l = normalize([sess(1), sess(2), sess(3), sess(4)], 2);
+  l = setRowSizes(l, [0.3, 0.7]);
+  l = setColSizes(l, 1, [0.8, 0.2]);
+  const swapped = swapTiles(l, 0, 3);
+  expect(swapped.rowSizes).toEqual([0.3, 0.7]);
+  expect(swapped.colSizes).toEqual([
+    [0.5, 0.5],
+    [0.8, 0.2],
+  ]);
+  expect(swapped.tiles).toEqual([sess(4), sess(2), sess(3), sess(1)]);
+});
+
+test("setCols resets every row's widths but keeps row heights when rows survive", () => {
+  let l = normalize([sess(1), sess(2), sess(3), sess(4), sess(5), sess(6)], 3);
+  l = setRowSizes(l, [0.25, 0.75]);
+  l = setColSizes(l, 0, [0.2, 0.3, 0.5]);
+  const wider = setCols(l, 2); // 6 tiles / 2 cols = 3 rows: both axes change
+  expect(wider.shape).toEqual({ rows: 3, cols: 2 });
+  expect(wider.rowSizes).toEqual([1 / 3, 1 / 3, 1 / 3]);
+  expect(wider.colSizes).toEqual([
+    [0.5, 0.5],
+    [0.5, 0.5],
+    [0.5, 0.5],
+  ]);
+});
+
+test("addTile into an existing row keeps both axes", () => {
+  let l = normalize([sess(1), sess(2), sess(3)], 2);
+  l = setRowSizes(l, [0.3, 0.7]);
+  l = setColSizes(l, 0, [0.35, 0.65]);
+  const grown = addTile(l, sess(4)); // fills the trailing null; shape unchanged
+  expect(grown.shape).toEqual({ rows: 2, cols: 2 });
+  expect(grown.rowSizes).toEqual([0.3, 0.7]);
+  expect(grown.colSizes).toEqual([
+    [0.35, 0.65],
+    [0.5, 0.5],
+  ]);
+});
+
+test("removeTile that drops a row re-equalizes heights and keeps surviving widths", () => {
+  let l = normalize([sess(1), sess(2), sess(3)], 2);
+  l = setRowSizes(l, [0.3, 0.7]);
+  l = setColSizes(l, 0, [0.35, 0.65]);
+  const smaller = removeTile(l, 2); // back to a single full row
+  expect(smaller.shape).toEqual({ rows: 1, cols: 2 });
+  expect(smaller.rowSizes).toEqual([1]);
+  expect(smaller.colSizes).toEqual([[0.35, 0.65]]);
+});
+
+test("setColSizes only touches the row it names", () => {
+  const l = setColSizes(normalize([sess(1), sess(2), sess(3)], 2), 1, [0.9, 0.1]);
+  expect(l.colSizes).toEqual([
+    [0.5, 0.5],
+    [0.9, 0.1],
+  ]);
 });
