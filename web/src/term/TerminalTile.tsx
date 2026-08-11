@@ -9,6 +9,7 @@ import type { Server } from "../servers";
 import type { Session } from "../grid/types";
 import { clientId } from "../clientId";
 import { encodeResize, parseServerText } from "./protocol";
+import { isReflowHeld, onReflowRelease } from "./reflowGate";
 
 type Props = { server: Server; sessionId: number; onClose: () => void; autoFocus?: boolean };
 
@@ -180,11 +181,27 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       }
       if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data));
     });
-    const ro = new ResizeObserver(() => {
+    // A splitter drag moves this tile's box every frame; defer to one refit on
+    // release instead of reflowing xterm and resizing the PTY per frame. The
+    // catch-up call is a passive sendResize(), so ownership is unaffected.
+    let reflowPending = false;
+    const reflow = () => {
       fit.fit();
       sendResize();
+    };
+    const ro = new ResizeObserver(() => {
+      if (isReflowHeld()) {
+        reflowPending = true;
+        return;
+      }
+      reflow();
     });
     ro.observe(containerRef.current!);
+    const unsubscribeReflow = onReflowRelease(() => {
+      if (!reflowPending) return;
+      reflowPending = false;
+      reflow();
+    });
     // Re-sync dims after the tab comes back; the listener args must not leak
     // into sendResize's active parameter.
     const resyncSize = () => sendResize();
@@ -204,6 +221,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       captureContainer.removeEventListener("focusin", claimOnFocus);
       dataSub.dispose();
       ro.disconnect();
+      unsubscribeReflow();
       window.removeEventListener("focus", resyncSize);
       document.removeEventListener("visibilitychange", resyncSize);
       term.dispose();

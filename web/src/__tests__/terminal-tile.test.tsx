@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import TerminalTile from "../term/TerminalTile";
+import { beginReflowHold, endReflowHold, isReflowHeld } from "../term/reflowGate";
 
 const loadedAddons: unknown[] = [];
 
@@ -99,6 +100,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // reflowGate is module-level state shared across tiles/tests; never let a
+  // failed assertion mid-test leave the gate held for the next test.
+  if (isReflowHeld()) endReflowHold();
 });
 
 test("missing session shows not-found overlay and stops retrying", async () => {
@@ -198,6 +202,31 @@ test("only terminal focus claims window-size ownership", async () => {
     term.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
   });
   expect(lastResize(ws)).toMatchObject({ active: true });
+});
+
+test("resize observations are suppressed while a splitter drag holds the gate", async () => {
+  mockSessions(async () => new Response(JSON.stringify([session("running")])));
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  // Frames the tile sent so far, resize frames only.
+  const sentFrames = () =>
+    ws.sent
+      .filter((d): d is string => typeof d === "string")
+      .map((d) => JSON.parse(d))
+      .filter((m) => m.type === "resize");
+
+  const before = sentFrames().length;
+  beginReflowHold();
+  act(() => FakeResizeObserver.instances[0].cb());
+  act(() => FakeResizeObserver.instances[0].cb());
+  expect(sentFrames().length).toBe(before);
+
+  act(() => endReflowHold());
+  // One catch-up resize for the tile, not one per observation.
+  expect(sentFrames().length).toBe(before + 1);
 });
 
 // The daemon keys window-size ownership on this id so our own reconnects keep
