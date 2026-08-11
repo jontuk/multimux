@@ -676,6 +676,34 @@ a {
   min-width: 0;
 }
 
+/* Hit area is wider than the visible gutter so an 8px gap stays grabbable. */
+.grid-divider {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+}
+
+.grid-divider-row {
+  left: 0;
+  right: 0;
+  height: 9px;
+  margin-top: -4.5px;
+  cursor: row-resize;
+}
+
+.grid-divider-col {
+  width: 9px;
+  margin-left: -4.5px;
+  cursor: col-resize;
+}
+
+.grid-divider:hover,
+.grid-divider:active {
+  background: var(--accent);
+  opacity: 0.35;
+  border-radius: 3px;
+}
+
 /* The tile holding keyboard focus. xterm's input is a real textarea inside the
    tile, so :focus-within needs no JS — it also lights up for a tile's header
    buttons and an empty tile's picker, which is still where typing lands.

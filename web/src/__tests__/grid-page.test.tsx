@@ -5,6 +5,7 @@ import GridPage from "../grid/GridPage";
 import { dirTint } from "../grid/dirColor";
 import { useEvents } from "../useEvents";
 import { MOBILE_VIEW_QUERY } from "../useMediaQuery";
+import { endReflowHold, isReflowHeld } from "../term/reflowGate";
 
 vi.mock("../useEvents", () => ({ useEvents: vi.fn() }));
 vi.mock("../term/TerminalTile", () => ({
@@ -70,6 +71,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.removeItem("multimux.servers");
+  // A failed or interrupted drag test must not leave the module-level reflow
+  // gate held for other tests in this file.
+  if (isReflowHeld()) endReflowHold();
 });
 
 function stubMatchMedia(initialMatches: boolean) {
@@ -904,4 +908,136 @@ test("tiles are positioned from the stored row and column sizes", async () => {
   expect(third.style.top).toContain("30%");
   expect(third.style.width).toContain("80%");
   expect(third.style.height).toContain("70%");
+});
+
+function gridRect(width: number, height: number) {
+  // jsdom reports zero-sized boxes; the drag math divides by the container
+  // size, so stub it.
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect);
+}
+
+test("dragging a row divider persists new row heights", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+  fireEvent.pointerUp(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+
+  await waitFor(() => {
+    const put = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    const body = JSON.parse(String(put![1]!.body));
+    expect(body.rowSizes[0]).toBeCloseTo(0.3, 6);
+    expect(body.rowSizes[1]).toBeCloseTo(0.7, 6);
+  });
+});
+
+test("a column divider only changes its own row", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="col-1-0"]') as HTMLElement;
+
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 750 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 800, clientY: 750 });
+  fireEvent.pointerUp(divider, { pointerId: 1, clientX: 800, clientY: 750 });
+
+  await waitFor(() => {
+    const put = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+    );
+    const body = JSON.parse(String(put![1]!.body));
+    expect(body.colSizes[0]).toEqual([0.5, 0.5]);
+    expect(body.colSizes[1][0]).toBeCloseTo(0.8, 6);
+  });
+});
+
+test("a drag never falls below the minimum tile size", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 5 });
+  fireEvent.pointerUp(divider, { pointerId: 1, clientX: 500, clientY: 5 });
+
+  await waitFor(() => {
+    const put = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+    );
+    // 120px of a 1000px container.
+    expect(JSON.parse(String(put![1]!.body)).rowSizes[0]).toBeCloseTo(0.12, 6);
+  });
+});
+
+test("double-clicking a divider equalizes that axis", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+    rowSizes: [0.2, 0.8],
+    colSizes: [
+      [0.5, 0.5],
+      [0.5, 0.5],
+    ],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+  fireEvent.doubleClick(divider);
+
+  await waitFor(() => {
+    const put = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+    );
+    expect(JSON.parse(String(put![1]!.body)).rowSizes).toEqual([0.5, 0.5]);
+  });
 });

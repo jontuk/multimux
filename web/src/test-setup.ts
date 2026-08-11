@@ -25,3 +25,21 @@ Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
   configurable: true,
   value: () => null,
 });
+
+// jsdom does not implement pointer capture. Real browsers need it so a
+// splitter drag survives the pointer leaving the handle; tests just need the
+// call not to throw.
+if (!HTMLElement.prototype.setPointerCapture) {
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    writable: true,
+    value: () => {},
+  });
+}
+if (!HTMLElement.prototype.releasePointerCapture) {
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    writable: true,
+    value: () => {},
+  });
+}

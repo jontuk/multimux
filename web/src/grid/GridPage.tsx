@@ -5,6 +5,7 @@ import { connectServer, listServers, localServer, removeServer, type Server } fr
 import { addTile, emptyLayout, normalize, removeTile, setCols, swapTiles, type Layout, type Tile } from "./model";
 import { tileRect } from "./sizes";
 import ColumnStepper from "./ColumnStepper";
+import GridDividers from "./GridDividers";
 import HeaderLauncher from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
@@ -146,6 +147,9 @@ export default function GridPage({
   // Mirrors `layout` so edits always build on the newest state, not the state
   // captured when a handler's closure was created.
   const layoutRef = useRef(layout);
+  // The `.grid` container: divider drags read its box to convert pixel deltas
+  // into fractions.
+  const gridRef = useRef<HTMLDivElement>(null);
 
   // A maximized tile that leaves the layout (removed, terminated, server-side
   // layout change) must not leave the page stuck fullscreen — or re-maximize
@@ -384,6 +388,7 @@ export default function GridPage({
         <>
           {headerSlot ? createPortal(headerControls, headerSlot) : headerControls}
           <div
+            ref={gridRef}
             className="grid"
             style={{
               // Tiles are absolutely positioned rather than laid out by CSS
@@ -551,6 +556,12 @@ export default function GridPage({
                 </div>
               );
             })}
+            <GridDividers
+              layout={layout}
+              containerRef={gridRef}
+              onPreview={adoptLayout}
+              onCommit={(next) => persist(() => next)}
+            />
           </div>
         </>
       )}
