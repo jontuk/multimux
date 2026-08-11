@@ -52,7 +52,7 @@ State lives in `$MULTIMUX_DATA_DIR` (default `~/.local/share/multimux`): `multim
 - **Sessions are reconciled, not trusted.** A row is written before its tmux session exists, so `Reconcile` (every 5s, plus at startup) honours `reconcileGrace` before declaring a running row dead. `CheckGitInfo` rides the same tick; auth-session sweeping runs hourly.
 - **`pki.Ensure` compares hostname slices for equality**, so `hostnames()` must return a deterministic order (hostname first, then sorted extra SANs) or the CA regenerates spuriously — which forces the user to re-trust it.
 - **Frontend/backend duplicated constants**: the default theme color lives in `internal/server/pwa.go`, `web/src/App.tsx`, and `web/index.html`; the app icon SVG is templated in `pwa.go` and mirrored in `web/public/icon.svg`. Change them together.
-- **Grid layout has a canonical form** (`web/src/grid/model.ts`): occupied tiles packed to the front row-major, rows derived from count, trailing nulls, cols clamped 1–4. Always round-trip through `normalize` — sessions are never dropped, the grid grows instead.
+- **Grid layout has a canonical form** (`web/src/grid/model.ts`): occupied tiles packed to the front row-major, rows derived from count, trailing nulls, cols clamped 1–4. `normalize` also carries `rowSizes`/`colSizes`, keeping tracks whose count survived and resetting the rest to equal. Always round-trip through `normalize` — sessions are never dropped, the grid grows instead.
 - Multi-host servers are browser-local: `web/src/servers.ts` keeps the list (and tokens) in `localStorage`. Nothing about a remote daemon is persisted server-side.
 
 ## Dev loops

@@ -50,6 +50,8 @@ export function resizeTracks(sizes: number[], boundary: number, delta: number, m
   const lo = Math.min(min, pair / 2);
   const hi = pair - lo;
   let next = Math.min(hi, Math.max(lo, a + delta));
+  // Snap to equal *between the two adjacent tracks* (pair / 2), not an equal
+  // split of the whole axis — that's the boundary the user is holding.
   if (snap > 0 && Math.abs(next - pair / 2) <= snap) next = pair / 2;
   const out = sizes.slice();
   out[boundary] = next;

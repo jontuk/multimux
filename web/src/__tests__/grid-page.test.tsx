@@ -1041,3 +1041,103 @@ test("double-clicking a divider equalizes that axis", async () => {
     expect(JSON.parse(String(put![1]!.body)).rowSizes).toEqual([0.5, 0.5]);
   });
 });
+
+function layoutPuts(fetchMock: ReturnType<typeof mockFetch>) {
+  return fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT");
+}
+
+test("a drag with several pointermoves persists exactly one PUT", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 450 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 400 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+  fireEvent.pointerUp(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+
+  await waitFor(() => expect(layoutPuts(fetchMock)).toHaveLength(1));
+});
+
+test("a double-click reset persists exactly one PUT", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+    rowSizes: [0.2, 0.8],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+  fireEvent.doubleClick(divider);
+
+  await waitFor(() => expect(layoutPuts(fetchMock)).toHaveLength(1));
+});
+
+test("a pointerdown/pointerup with no movement does not commit or PUT", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+  fireEvent.pointerUp(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+
+  // Give any errant async work a turn before asserting nothing happened.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(layoutPuts(fetchMock)).toHaveLength(0);
+});
+
+test("the reflow gate is released when GridDividers unmounts mid-drag", async () => {
+  mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  gridRect(1000, 1000);
+  const media = stubMatchMedia(false);
+  const { unmount } = render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+  expect(isReflowHeld()).toBe(true);
+
+  // Crossing the mobile breakpoint unmounts the desktop grid branch (and
+  // GridDividers with it) without ever delivering a pointerup/pointercancel.
+  media.setMatches(true);
+  await screen.findByText("1/3");
+  expect(isReflowHeld()).toBe(false);
+
+  unmount();
+});

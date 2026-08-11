@@ -277,7 +277,8 @@ and must stay inside the chosen directory. With more than one server configured,
 a server picker appears first.
 
 **The grid.** Tiles are laid out in a column count you set with the header
-stepper; rows follow. Each tile header shows the session id, tool name,
+stepper; rows follow, and row/column boundaries can be dragged to resize the
+tiles around them. Each tile header shows the session id, tool name,
 directory, the git branch with a colour dot (clean / modified / untracked), and
 a GitHub link when the directory is a GitHub checkout. Double-click a tile's
 title to rename the session; the name is a display label only — the tmux
@@ -287,6 +288,8 @@ session keeps its `mm-{id}` name — and clearing it restores the tool name.
 | --- | --- |
 | Maximize / restore a tile | double-click its header, or `Escape` to restore |
 | Move a tile | drag it onto another cell |
+| Resize tiles | drag the boundary between them |
+| Reset tile sizes | double-click a boundary (a row boundary resets all heights; a column boundary resets that row's widths) |
 | Remove a tile from the grid | − (the tmux session keeps running) |
 | Terminate the session | ✕ (kills the tmux session) |
 | Re-attach a running session | pick it from the `+ #id` buttons in the header, or from an empty tile |

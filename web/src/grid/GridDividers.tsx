@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { setColSizes, setRowSizes, type Layout } from "./model";
 import { equalSizes, resizeTracks, MIN_TILE_PX, SNAP_PX } from "./sizes";
 import { beginReflowHold, endReflowHold } from "../term/reflowGate";
@@ -20,6 +20,7 @@ type Drag = {
   extent: number;
   origin: number;
   start: number[];
+  moved: boolean;
 };
 
 export default function GridDividers({ layout, containerRef, onPreview, onCommit }: Props) {
@@ -38,13 +39,17 @@ export default function GridDividers({ layout, containerRef, onPreview, onCommit
   }
 
   function startDrag(e: React.PointerEvent, axis: "row" | "col", row: number, boundary: number) {
+    // Only the primary mouse button starts a drag: a right-click would open
+    // the context menu without a matching pointerup, stranding the reflow
+    // hold for the rest of the session. Touch/pen pointers have no button 0.
+    if (e.button !== 0 && e.pointerType === "mouse") return;
     const box = containerRef.current?.getBoundingClientRect();
     if (!box) return;
     // A splitter drag is not a tile drag: stop the tile's HTML5 dragstart and
     // the terminal underneath from seeing this pointer at all.
     e.preventDefault();
     e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = {
       axis,
       row,
@@ -52,6 +57,7 @@ export default function GridDividers({ layout, containerRef, onPreview, onCommit
       extent: axis === "row" ? box.height : box.width,
       origin: axis === "row" ? e.clientY : e.clientX,
       start: axis === "row" ? rowSizes.slice() : (colSizes[row] ?? equalSizes(layout.shape.cols)).slice(),
+      moved: false,
     };
     beginReflowHold();
   }
@@ -59,18 +65,38 @@ export default function GridDividers({ layout, containerRef, onPreview, onCommit
   function moveDrag(e: React.PointerEvent) {
     const d = drag.current;
     if (!d) return;
-    apply(d, d.axis === "row" ? e.clientY : e.clientX, false);
+    const pos = d.axis === "row" ? e.clientY : e.clientX;
+    if (pos !== d.origin) d.moved = true;
+    apply(d, pos, false);
   }
 
   function endDrag(e: React.PointerEvent) {
     const d = drag.current;
     if (!d) return;
     drag.current = null;
+    if (!d.moved) {
+      // A click with no movement is not a resize: skip the commit so it
+      // neither PUTs nor snaps the boundary to its midpoint.
+      endReflowHold();
+      return;
+    }
     apply(d, d.axis === "row" ? e.clientY : e.clientX, true);
     // Release after the commit so the tiles are at their final size when each
     // terminal does its single catch-up refit.
     endReflowHold();
   }
+
+  // If the grid shrinks (a hub event) or the viewport crosses the mobile
+  // breakpoint mid-drag, this component can unmount with the hold still on.
+  useEffect(
+    () => () => {
+      if (drag.current) {
+        drag.current = null;
+        endReflowHold();
+      }
+    },
+    [],
+  );
 
   function reset(axis: "row" | "col", row: number) {
     onCommit(
