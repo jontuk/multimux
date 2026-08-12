@@ -35,11 +35,24 @@ export function leafName(path: string): string {
 
 export type DirButton = { path: string; name: string; count: number };
 
-// One entry per distinct directory of a running session, on any server. Dead
-// sessions get no button: they cannot be launched into and hiding them is not
-// what the user is reaching for.
-export function dirButtons(servers: Server[], sessionsByServer: Record<string, Session[]>): DirButton[] {
+// One entry per distinct directory of a running session, on any server, plus
+// one for every currently-hidden path even if nothing running is left in it.
+//
+// Dead sessions alone earn no button: they cannot be launched into and hiding
+// them is not what the user is reaching for. But a *hidden* directory must
+// keep its button whatever its sessions are doing — the last session in a
+// hidden directory can end at any moment (tmux exit, another tab, the CLI),
+// and without a button there would be no in-app way to unhide it again: the
+// directory's tiles would stay filtered out, unseeable and undismissable, and
+// the browser would be stuck in a filter it cannot see. The count is then 0,
+// which also advertises that the filter is on but empty.
+export function dirButtons(
+  servers: Server[],
+  sessionsByServer: Record<string, Session[]>,
+  hidden: ReadonlySet<string> = new Set(),
+): DirButton[] {
   const counts = new Map<string, number>();
+  for (const path of hidden) counts.set(path, 0);
   for (const server of servers) {
     for (const sess of sessionsByServer[server.id] ?? []) {
       if (sess.status === "running") counts.set(sess.dir, (counts.get(sess.dir) ?? 0) + 1);

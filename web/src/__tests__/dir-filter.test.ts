@@ -52,6 +52,23 @@ test("dirButtons skips sessions that are not running", () => {
   expect(dirButtons([server("local")], { local: [sess(1, "/a", "dead")] })).toEqual([]);
 });
 
+test("dirButtons keeps a button for a hidden directory with no running sessions", () => {
+  // Otherwise the last session in a hidden directory ending would take the
+  // button with it and leave no way to unhide.
+  expect(dirButtons([server("local")], { local: [sess(1, "/a", "dead")] }, new Set(["/a"]))).toEqual([
+    { path: "/a", name: "a", count: 0 },
+  ]);
+  // Even with no sessions known at all — a server that is still loading or
+  // unreachable must not make the button disappear.
+  expect(dirButtons([server("local")], {}, new Set(["/gone"]))).toEqual([{ path: "/gone", name: "gone", count: 0 }]);
+});
+
+test("dirButtons still counts running sessions in a hidden directory", () => {
+  expect(dirButtons([server("local")], { local: [sess(1, "/a"), sess(2, "/a")] }, new Set(["/a"]))).toEqual([
+    { path: "/a", name: "a", count: 2 },
+  ]);
+});
+
 test("dirButtons sorts by leaf name, then full path", () => {
   const buttons = dirButtons([server("local")], {
     local: [sess(1, "/z/api"), sess(2, "/a/api"), sess(3, "/a/web")],

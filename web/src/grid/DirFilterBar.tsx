@@ -24,7 +24,11 @@ export default function DirFilterBar({
             className={off ? "dir-filter-off" : undefined}
             style={dirTintStyle(d.path)}
             aria-pressed={!off}
-            aria-label={`${off ? "show" : "hide"} sessions in ${d.path}`}
+            // The visible text leads the accessible name rather than being
+            // replaced by it: a screen reader still hears the leaf name and
+            // count, and voice control can act on the label it can see
+            // (WCAG 2.5.3).
+            aria-label={`${d.name} ${d.count} — ${off ? "show" : "hide"} sessions in ${d.path}`}
             title={`${off ? "show" : "hide"} sessions in ${d.path}`}
             onClick={() => onToggle(d.path)}
           >

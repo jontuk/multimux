@@ -1196,6 +1196,89 @@ test("removing a tile while filtered removes the right session", async () => {
   });
 });
 
+test("drag-swapping tiles while filtered swaps the right stored tiles", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  render(<GridPage />);
+  await screen.findByTestId("term-5");
+  // Hide /a: sessions 2 and 5 repack into view indices 0 and 1, while the
+  // hidden session 1 still sits at real index 0.
+  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+
+  const tiles = document.querySelectorAll(".tile");
+  const dt = makeDataTransfer();
+  fireEvent.dragStart(tiles[0], { dataTransfer: dt });
+  fireEvent.drop(tiles[1], { dataTransfer: dt });
+
+  // On screen, the two visible tiles traded places…
+  await waitFor(() => {
+    const after = document.querySelectorAll(".tile");
+    expect(after[0].querySelector("[data-testid=term-5]")).not.toBeNull();
+    expect(after[1].querySelector("[data-testid=term-2]")).not.toBeNull();
+  });
+  // …and the stored layout swapped real indices 1 and 2, leaving the hidden
+  // session 1 exactly where it was.
+  await waitFor(() => {
+    const puts = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+    );
+    expect(JSON.parse(puts[puts.length - 1][1]?.body as string).tiles).toEqual([
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 5 },
+      { serverId: "local", sessionId: 2 },
+      null,
+    ]);
+  });
+});
+
+test("a hidden directory with no running sessions keeps a button and does not disable persistence", async () => {
+  // The last session in a hidden directory can end from anywhere (tmux exit,
+  // another tab, the CLI). The hidden set is never pruned, so the button must
+  // survive on its own — otherwise there is no in-app way to unhide — and the
+  // now-empty filter must not keep splitter drags out of the daemon.
+  localStorage.setItem("multimux.hiddenDirs", '["/gone"]');
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const button = await screen.findByRole("button", { name: /show sessions in \/gone/ });
+  expect(button).toHaveTextContent("0");
+
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+  fireEvent.pointerUp(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+
+  await waitFor(() => {
+    const puts = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+    );
+    expect(puts.length).toBeGreaterThan(0);
+    expect(JSON.parse(puts[puts.length - 1][1]?.body as string).rowSizes[0]).toBeCloseTo(0.3, 6);
+  });
+
+  // Clicking it self-cleans the stale entry.
+  await userEvent.click(button);
+  await waitFor(() => expect(hiddenDirs()).toEqual(new Set()));
+});
+
 test("attaching a hidden-directory session from an empty tile's dropdown unhides that directory", async () => {
   mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
   render(<GridPage />);

@@ -160,8 +160,6 @@ export default function GridPage({
     setHidden((prev) => {
       const next = new Set(prev);
       if (!next.delete(path)) next.add(path);
-      setHiddenDirs(next);
-      setViewSizes(null);
       return next;
     });
   }, []);
@@ -175,10 +173,19 @@ export default function GridPage({
       if (!prev.has(path)) return prev;
       const next = new Set(prev);
       next.delete(path);
-      setHiddenDirs(next);
       return next;
     });
   }, []);
+
+  // The updaters above stay pure — StrictMode runs them twice — so the two
+  // side effects of a changed hidden set live here: persist it to
+  // localStorage, and drop the view-local splitter sizes, which belong to the
+  // shape the previous filter produced. Both are skipped when an updater
+  // returned `prev` unchanged (React bails out, so this does not re-run).
+  useEffect(() => {
+    setHiddenDirs(hidden);
+    setViewSizes(null);
+  }, [hidden]);
 
   // Mirrors `layout` so edits always build on the newest state, not the state
   // captured when a handler's closure was created.
@@ -335,7 +342,6 @@ export default function GridPage({
     [sessionsByServer],
   );
 
-  const filtering = hidden.size > 0;
   // A tile whose session is not known yet (or whose server was removed) has no
   // directory to judge it by, so it always shows — hiding it would strand it
   // with no button to bring it back.
@@ -347,6 +353,13 @@ export default function GridPage({
       }),
     [layout, hidden, sessionFor],
   );
+  // Derived from what the view actually dropped, not from `hidden.size > 0`:
+  // a hidden directory with no tiles on this grid (its sessions ended, or they
+  // live only on another browser's layout) leaves the view byte-identical to
+  // the layout and `map` an identity. Treating that as "filtering" would send
+  // every splitter drag to `viewSizes` — silently discarding it on reload —
+  // while the user sees no filtered-out tile anywhere.
+  const filtering = map.length < layout.tiles.filter((t) => t !== null).length;
   // normalizeSizes (inside normalize) drops any track array whose count no
   // longer matches, so a stale drag from a differently shaped view cannot
   // survive into this one.
@@ -389,14 +402,19 @@ export default function GridPage({
         rows={layout.shape.rows}
         onChange={(c) => persist((l) => setCols(l, c))}
       />
-      <DirFilterBar dirs={dirButtons(servers, sessionsByServer)} hidden={hidden} onToggle={toggleDir} />
+      <DirFilterBar dirs={dirButtons(servers, sessionsByServer, hidden)} hidden={hidden} onToggle={toggleDir} />
       {unplaced.length > 0 && (
         <div className="unplaced-sessions">
           {unplaced.map(({ server, sess }) => (
             <button
               key={`${server.id}:${sess.id}`}
               className="unplaced-session"
-              aria-label={`add to grid — ${sess.dir}${servers.length > 1 ? ` on ${server.name}` : ""}`}
+              // Prefixed with the visible text rather than replacing it, so
+              // the id and title are still announced and voice control can
+              // act on the label the user can see (WCAG 2.5.3).
+              aria-label={`#${sess.id} ${sessionTitle(toolsByServer[server.id], sess)} — add to grid — ${sess.dir}${
+                servers.length > 1 ? ` on ${server.name}` : ""
+              }`}
               title={`add to grid — ${sess.dir}${servers.length > 1 ? ` on ${server.name}` : ""}`}
               onClick={() => attachSession(server, sess.id)}
             >
