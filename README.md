@@ -283,6 +283,8 @@ directory, the git branch with a colour dot (clean / modified / untracked), and
 a GitHub link when the directory is a GitHub checkout. Double-click a tile's
 title to rename the session; the name is a display label only — the tmux
 session keeps its `mm-{id}` name — and clearing it restores the tool name.
+Directory buttons in the header toggle the visibility of every session in that
+directory; the filter is browser-local.
 
 | Action | How |
 | --- | --- |
