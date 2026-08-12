@@ -159,6 +159,20 @@ export default function GridPage({
     });
   }, []);
 
+  // Unconditional un-hide, not a toggle: callers that unhide as a side effect
+  // of another action (attaching/launching into a hidden directory) must not
+  // re-hide it on a stale read of `hidden` — the state updater is the only
+  // place allowed to decide, so this can only ever remove.
+  const unhide = useCallback((path: string) => {
+    setHidden((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.delete(path);
+      setHiddenDirs(next);
+      return next;
+    });
+  }, []);
+
   // Mirrors `layout` so edits always build on the newest state, not the state
   // captured when a handler's closure was created.
   const layoutRef = useRef(layout);
@@ -293,12 +307,17 @@ export default function GridPage({
   );
   function attachSession(server: Server, sessionId: number) {
     if (placed.has(`${server.id}:${sessionId}`)) return;
+    // Attaching a hidden-directory session — from the empty-tile dropdown or
+    // a quick-add button — would otherwise land the tile and immediately
+    // filter it back out, with no visible way to get it back.
+    const session = (sessionsByServer[server.id] ?? []).find((s) => s.id === sessionId);
+    if (session) unhide(session.dir);
     persist((l) => addTile(l, { serverId: server.id, sessionId }));
   }
 
   function placeSession(server: Server, session: Session) {
     // Launching into a hidden directory would look like nothing happened.
-    if (hidden.has(session.dir)) toggleDir(session.dir);
+    unhide(session.dir);
     persist((l) => addTile(l, { serverId: server.id, sessionId: session.id }));
     setFocusKey(`${server.id}:${session.id}`);
     refreshSessions();

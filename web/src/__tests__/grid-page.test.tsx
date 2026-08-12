@@ -1195,3 +1195,21 @@ test("removing a tile while filtered removes the right session", async () => {
     expect(JSON.parse(puts[puts.length - 1][1]?.body as string).tiles).toEqual([{ serverId: "local", sessionId: 1 }]);
   });
 });
+
+test("attaching a hidden-directory session from an empty tile's dropdown unhides that directory", async () => {
+  mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  // Hide /b — session 2 stays offered in the empty tile's attach dropdown
+  // (EmptyTile does not filter by hidden dirs), but attaching it must not
+  // land a tile that the filter immediately hides again.
+  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/b/ }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: /add to grid — \/b/ })).not.toBeInTheDocument());
+
+  const attach = screen.getAllByRole("combobox").find((b) => b.textContent?.includes("attach session on local"))!;
+  await userEvent.selectOptions(attach, "2");
+
+  await screen.findByTestId("term-2");
+  expect(screen.getByRole("button", { name: /hide sessions in \/b/ })).toBeInTheDocument();
+});
