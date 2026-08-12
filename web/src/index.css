@@ -655,6 +655,53 @@ a {
   outline-offset: 2px;
 }
 
+/* ---- directory filter (header) ---- */
+
+.dir-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* Same wash as a tile header, over the header's own panel background, so a
+   button and the tiles it controls read as the same colour. */
+.dir-filter button {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--panel));
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dir-filter button:hover {
+  border-color: var(--accent);
+}
+
+.dir-filter button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Off state is drawn twice over — dimmed and dashed — so it does not depend
+   on telling two washes of the same hue apart. */
+.dir-filter-off {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.dir-filter-count {
+  color: var(--muted);
+}
+
 /* ---- grid tiles ---- */
 
 /* Outer padding stays 4px: the grid's height is a fixed calc() off the
