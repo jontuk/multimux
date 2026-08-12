@@ -5,6 +5,7 @@
 
 import type { Server } from "../servers";
 import type { Session } from "./types";
+import { normalize, type Layout, type Tile } from "./model";
 
 const KEY = "multimux.hiddenDirs";
 
@@ -44,9 +45,31 @@ export function dirButtons(servers: Server[], sessionsByServer: Record<string, S
       if (sess.status === "running") counts.set(sess.dir, (counts.get(sess.dir) ?? 0) + 1);
     }
   }
-  return [...counts]
-    .map(([path, count]) => ({ path, name: leafName(path), count }))
-    // Leaf name is what the user reads; the full path breaks ties so two
-    // repos with the same leaf keep a stable order.
-    .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+  return (
+    [...counts]
+      .map(([path, count]) => ({ path, name: leafName(path), count }))
+      // Leaf name is what the user reads; the full path breaks ties so two
+      // repos with the same leaf keep a stable order.
+      .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path))
+  );
+}
+
+// Hidden tiles are dropped and the survivors re-packed through the layout's
+// own canonical form, so the filtered grid has the same shape rules as any
+// other — no gaps, rows derived from the count. `map` carries each view slot
+// back to its index in the real layout: mutations (remove, swap) must be
+// applied to the stored layout, which still holds the hidden tiles.
+export function filterLayout(
+  layout: Layout,
+  isVisible: (tile: NonNullable<Tile>) => boolean,
+): { view: Layout; map: number[] } {
+  const visible: NonNullable<Tile>[] = [];
+  const map: number[] = [];
+  layout.tiles.forEach((t, i) => {
+    if (t && isVisible(t)) {
+      visible.push(t);
+      map.push(i);
+    }
+  });
+  return { view: normalize(visible, layout.shape.cols, layout.rowSizes, layout.colSizes), map };
 }

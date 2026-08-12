@@ -1,5 +1,6 @@
-import { dirButtons, hiddenDirs, leafName, setHiddenDirs } from "../grid/dirFilter";
+import { dirButtons, filterLayout, hiddenDirs, leafName, setHiddenDirs } from "../grid/dirFilter";
 import type { Session } from "../grid/types";
+import { normalize } from "../grid/model";
 
 const server = (id: string) => ({ id, origin: "https://x", name: id });
 
@@ -56,4 +57,36 @@ test("dirButtons sorts by leaf name, then full path", () => {
     local: [sess(1, "/z/api"), sess(2, "/a/api"), sess(3, "/a/web")],
   });
   expect(buttons.map((b) => b.path)).toEqual(["/a/api", "/z/api", "/a/web"]);
+});
+
+const tile = (id: number) => ({ serverId: "local", sessionId: id });
+
+test("filterLayout is the identity when everything is visible", () => {
+  const layout = normalize([tile(1), tile(2), tile(3)], 2);
+  const { view, map } = filterLayout(layout, () => true);
+  expect(view).toEqual(layout);
+  expect(map).toEqual([0, 1, 2]);
+});
+
+test("filterLayout repacks the survivors and shrinks the row count", () => {
+  const layout = normalize([tile(1), tile(2), tile(3), tile(4)], 2);
+  const { view, map } = filterLayout(layout, (t) => t.sessionId % 2 === 1);
+  expect(view.shape).toEqual({ rows: 1, cols: 2 });
+  expect(view.tiles).toEqual([tile(1), tile(3)]);
+  expect(map).toEqual([0, 2]);
+});
+
+test("filterLayout keeps at least one empty row when everything is hidden", () => {
+  const layout = normalize([tile(1), tile(2)], 2);
+  const { view, map } = filterLayout(layout, () => false);
+  expect(view.shape).toEqual({ rows: 1, cols: 2 });
+  expect(view.tiles).toEqual([null, null]);
+  expect(map).toEqual([]);
+});
+
+test("filterLayout leaves no map entry for empty view slots", () => {
+  const layout = normalize([tile(1), tile(2), tile(3)], 2);
+  const { view, map } = filterLayout(layout, (t) => t.sessionId === 3);
+  expect(view.tiles).toEqual([tile(3), null]);
+  expect(map[1]).toBeUndefined();
 });
