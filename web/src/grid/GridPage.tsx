@@ -150,11 +150,18 @@ export default function GridPage({
   // persisted server-side and never written into the layout.
   const [hidden, setHidden] = useState<Set<string>>(() => hiddenDirs());
 
+  // Splitter sizes while a filter is active. Neither axis can round-trip into
+  // the stored layout: the filtered grid has fewer rows, and colSizes is one
+  // width array per row *indexed by row*, so a filtered drag would land on an
+  // unrelated row. Held here for the life of the current filter instead.
+  const [viewSizes, setViewSizes] = useState<{ rowSizes: number[]; colSizes: number[][] } | null>(null);
+
   const toggleDir = useCallback((path: string) => {
     setHidden((prev) => {
       const next = new Set(prev);
       if (!next.delete(path)) next.add(path);
       setHiddenDirs(next);
+      setViewSizes(null);
       return next;
     });
   }, []);
@@ -332,13 +339,23 @@ export default function GridPage({
   // A tile whose session is not known yet (or whose server was removed) has no
   // directory to judge it by, so it always shows — hiding it would strand it
   // with no button to bring it back.
-  const { view, map } = useMemo(
+  const { view: packed, map } = useMemo(
     () =>
       filterLayout(layout, (tile) => {
         const dir = sessionFor(tile)?.dir;
         return dir === undefined || !hidden.has(dir);
       }),
     [layout, hidden, sessionFor],
+  );
+  // normalizeSizes (inside normalize) drops any track array whose count no
+  // longer matches, so a stale drag from a differently shaped view cannot
+  // survive into this one.
+  const view = useMemo(
+    () =>
+      filtering && viewSizes
+        ? normalize(packed.tiles, packed.shape.cols, viewSizes.rowSizes, viewSizes.colSizes)
+        : packed,
+    [filtering, viewSizes, packed],
   );
   // Index in the stored layout for a slot on screen. Empty view slots have no
   // counterpart while filtering, so drops onto them are ignored below.
@@ -626,8 +643,12 @@ export default function GridPage({
             <GridDividers
               layout={view}
               containerRef={gridRef}
-              onPreview={adoptLayout}
-              onCommit={(next) => persist(() => next)}
+              onPreview={(next) =>
+                filtering ? setViewSizes({ rowSizes: next.rowSizes!, colSizes: next.colSizes! }) : adoptLayout(next)
+              }
+              onCommit={(next) =>
+                filtering ? setViewSizes({ rowSizes: next.rowSizes!, colSizes: next.colSizes! }) : persist(() => next)
+              }
             />
           </div>
         </>

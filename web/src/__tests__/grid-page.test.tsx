@@ -1213,3 +1213,68 @@ test("attaching a hidden-directory session from an empty tile's dropdown unhides
   await screen.findByTestId("term-2");
   expect(screen.getByRole("button", { name: /hide sessions in \/b/ })).toBeInTheDocument();
 });
+
+test("splitter drags while filtered resize the view without persisting", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+      null,
+    ],
+  });
+  const { container } = render(<GridPage />);
+  await screen.findByTestId("term-5");
+  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+
+  const putsBefore = fetchMock.mock.calls.filter(
+    ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+  ).length;
+
+  const divider = container.querySelector('[data-divider="col-0-0"]') as HTMLElement;
+  vi.spyOn(container.querySelector(".grid") as HTMLElement, "getBoundingClientRect").mockReturnValue({
+    width: 1000,
+    height: 800,
+    top: 0,
+    left: 0,
+    right: 1000,
+    bottom: 800,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+  divider.setPointerCapture = () => {};
+  fireEvent.pointerDown(divider, { button: 0, clientX: 500, clientY: 10 });
+  fireEvent.pointerMove(divider, { clientX: 700, clientY: 10 });
+  fireEvent.pointerUp(divider, { clientX: 700, clientY: 10 });
+
+  // The view resized...
+  await waitFor(() => expect(container.querySelector('[data-divider="col-0-0"]')).toHaveStyle({ left: "70%" }));
+  // ...and nothing was written to the daemon.
+  const putsAfter = fetchMock.mock.calls.filter(
+    ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+  ).length;
+  expect(putsAfter).toBe(putsBefore);
+  expect(isReflowHeld()).toBe(false);
+});
+
+test("clearing the filter restores the stored sizes", async () => {
+  mockFetch({
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+    rowSizes: [1],
+    colSizes: [[0.3, 0.7]],
+  });
+  const { container } = render(<GridPage />);
+  await screen.findByTestId("term-2");
+  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /show sessions in \/a/ }));
+  await screen.findByTestId("term-1");
+  expect(container.querySelector('[data-divider="col-0-0"]')).toHaveStyle({ left: "30%" });
+});
