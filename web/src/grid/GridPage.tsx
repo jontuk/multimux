@@ -15,6 +15,8 @@ import { orderMobileSessions } from "./mobileModel";
 import type { Session, Tool } from "./types";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 import { dirTintStyle } from "./dirColor";
+import DirFilterBar from "./DirFilterBar";
+import { dirButtons, filterLayout, hiddenDirs, setHiddenDirs } from "./dirFilter";
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -143,6 +145,19 @@ export default function GridPage({
   // stable across re-renders and the events sockets don't churn; refreshed
   // explicitly after reconnect/remove changes the stored list.
   const [servers, setServers] = useState(() => listServers());
+
+  // Browser-local view filter: which directories' sessions are hidden. Not
+  // persisted server-side and never written into the layout.
+  const [hidden, setHidden] = useState<Set<string>>(() => hiddenDirs());
+
+  const toggleDir = useCallback((path: string) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(path)) next.add(path);
+      setHiddenDirs(next);
+      return next;
+    });
+  }, []);
 
   // Mirrors `layout` so edits always build on the newest state, not the state
   // captured when a handler's closure was created.
@@ -282,10 +297,33 @@ export default function GridPage({
   }
 
   function placeSession(server: Server, session: Session) {
+    // Launching into a hidden directory would look like nothing happened.
+    if (hidden.has(session.dir)) toggleDir(session.dir);
     persist((l) => addTile(l, { serverId: server.id, sessionId: session.id }));
     setFocusKey(`${server.id}:${session.id}`);
     refreshSessions();
   }
+
+  const sessionFor = useCallback(
+    (tile: NonNullable<Tile>) => (sessionsByServer[tile.serverId] ?? []).find((s) => s.id === tile.sessionId),
+    [sessionsByServer],
+  );
+
+  const filtering = hidden.size > 0;
+  // A tile whose session is not known yet (or whose server was removed) has no
+  // directory to judge it by, so it always shows — hiding it would strand it
+  // with no button to bring it back.
+  const { view, map } = useMemo(
+    () =>
+      filterLayout(layout, (tile) => {
+        const dir = sessionFor(tile)?.dir;
+        return dir === undefined || !hidden.has(dir);
+      }),
+    [layout, hidden, sessionFor],
+  );
+  // Index in the stored layout for a slot on screen. Empty view slots have no
+  // counterpart while filtering, so drops onto them are ignored below.
+  const realIndex = (i: number): number | undefined => (filtering ? map[i] : i);
 
   async function terminateSession(server: Server, sessionId: number, tileIndex: number) {
     if (confirmTerminate && !window.confirm(`Terminate session #${sessionId}?`)) return;
@@ -303,19 +341,26 @@ export default function GridPage({
   // to a tmux session that no longer exists.
   const unplaced = servers.flatMap((server) =>
     (sessionsByServer[server.id] ?? [])
-      .filter((sess) => sess.status === "running" && !placed.has(`${server.id}:${sess.id}`))
+      .filter((sess) => sess.status === "running" && !placed.has(`${server.id}:${sess.id}`) && !hidden.has(sess.dir))
       .map((sess) => ({ server, sess })),
   );
 
   const headerControls = (
     <div className="header-controls">
       <HeaderLauncher servers={servers} onLaunched={placeSession} />
+      <ColumnStepper
+        cols={layout.shape.cols}
+        rows={layout.shape.rows}
+        onChange={(c) => persist((l) => setCols(l, c))}
+      />
+      <DirFilterBar dirs={dirButtons(servers, sessionsByServer)} hidden={hidden} onToggle={toggleDir} />
       {unplaced.length > 0 && (
         <div className="unplaced-sessions">
           {unplaced.map(({ server, sess }) => (
             <button
               key={`${server.id}:${sess.id}`}
               className="unplaced-session"
+              aria-label={`add to grid — ${sess.dir}${servers.length > 1 ? ` on ${server.name}` : ""}`}
               title={`add to grid — ${sess.dir}${servers.length > 1 ? ` on ${server.name}` : ""}`}
               onClick={() => attachSession(server, sess.id)}
             >
@@ -325,11 +370,6 @@ export default function GridPage({
           ))}
         </div>
       )}
-      <ColumnStepper
-        cols={layout.shape.cols}
-        rows={layout.shape.rows}
-        onChange={(c) => persist((l) => setCols(l, c))}
-      />
     </div>
   );
 
@@ -400,11 +440,14 @@ export default function GridPage({
               height: "calc(100vh - 60px)",
             }}
           >
-            {layout.tiles.map((tile: Tile, i: number) => {
-              // layout.rowSizes / layout.colSizes are non-null on anything
+            {view.tiles.map((tile: Tile, i: number) => {
+              // view.rowSizes / view.colSizes are non-null on anything
               // normalize() returned, and every layout in GridPage comes from
               // normalize — hence the `!`.
-              const rect = tileRect(layout.shape, layout.rowSizes!, layout.colSizes!, i);
+              const rect = tileRect(view.shape, view.rowSizes!, view.colSizes!, i);
+              // Non-null for every occupied slot, which is the only kind that
+              // renders a remove or terminate control.
+              const real = realIndex(i) ?? i;
               return (
                 <div
                   // Identity keys: swapping tiles moves the DOM nodes instead of
@@ -435,9 +478,14 @@ export default function GridPage({
                     // is 0, which would silently swap with tile zero.
                     const raw = e.dataTransfer.getData("text/tile-index");
                     if (!/^\d+$/.test(raw)) return;
-                    const from = Number(raw);
-                    if (from === i || from >= layout.tiles.length) return;
-                    persist((l) => swapTiles(l, from, i));
+                    const rawFrom = Number(raw);
+                    if (rawFrom >= view.tiles.length) return;
+                    const from = realIndex(rawFrom);
+                    const to = realIndex(i);
+                    // A drop onto an empty slot while filtering has no index in
+                    // the stored layout; there is nothing to swap with.
+                    if (from === undefined || to === undefined || from === to) return;
+                    persist((l) => swapTiles(l, from, to));
                   }}
                 >
                   {tile ? (
@@ -454,7 +502,7 @@ export default function GridPage({
                                 <button
                                   aria-label={`remove session ${tile.sessionId} from grid`}
                                   title="remove from grid"
-                                  onClick={() => persist((l) => removeTile(l, i))}
+                                  onClick={() => persist((l) => removeTile(l, real))}
                                 >
                                   −
                                 </button>
@@ -512,7 +560,7 @@ export default function GridPage({
                               <button
                                 aria-label={`remove session ${tile.sessionId} from grid`}
                                 title="remove from grid"
-                                onClick={() => persist((l) => removeTile(l, i))}
+                                onClick={() => persist((l) => removeTile(l, real))}
                               >
                                 −
                               </button>
@@ -520,7 +568,7 @@ export default function GridPage({
                                 className="danger"
                                 aria-label={`terminate session ${tile.sessionId}`}
                                 title="terminate session"
-                                onClick={() => terminateSession(server, tile.sessionId, i)}
+                                onClick={() => terminateSession(server, tile.sessionId, real)}
                               >
                                 ✕
                               </button>
@@ -530,7 +578,7 @@ export default function GridPage({
                             // Dead sessions must not mount a terminal: the daemon
                             // rejects the attach and the tile would retry forever.
                             <div className="tile-body empty-tile-hint">
-                              session ended <button onClick={() => persist((l) => removeTile(l, i))}>dismiss</button>
+                              session ended <button onClick={() => persist((l) => removeTile(l, real))}>dismiss</button>
                             </div>
                           ) : (
                             <div className="tile-body">
@@ -538,7 +586,7 @@ export default function GridPage({
                                 server={server}
                                 sessionId={tile.sessionId}
                                 autoFocus={tileKey(tile) === focusKey}
-                                onClose={() => persist((l) => removeTile(l, i))}
+                                onClose={() => persist((l) => removeTile(l, real))}
                               />
                             </div>
                           )}
@@ -557,7 +605,7 @@ export default function GridPage({
               );
             })}
             <GridDividers
-              layout={layout}
+              layout={view}
               containerRef={gridRef}
               onPreview={adoptLayout}
               onCommit={(next) => persist(() => next)}

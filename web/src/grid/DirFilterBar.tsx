@@ -24,6 +24,7 @@ export default function DirFilterBar({
             className={off ? "dir-filter-off" : undefined}
             style={dirTintStyle(d.path)}
             aria-pressed={!off}
+            aria-label={`${off ? "show" : "hide"} sessions in ${d.path}`}
             title={`${off ? "show" : "hide"} sessions in ${d.path}`}
             onClick={() => onToggle(d.path)}
           >
