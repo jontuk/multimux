@@ -76,3 +76,8 @@ export function setColSizes(layout: Layout, row: number, sizes: number[]): Layou
   cols[row] = sizes;
   return normalize(layout.tiles, layout.shape.cols, layout.rowSizes, cols);
 }
+
+/** Stable identity for a tile: its session, on its server. */
+export function tileKey(t: NonNullable<Tile>): string {
+  return `${t.serverId}:${t.sessionId}`;
+}
