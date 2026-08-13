@@ -4,7 +4,7 @@
 // record of which sessions are placed at all, and of the unfiltered grid's own
 // arrangement.
 
-import { tileKey, type Layout, type Tile } from "./model";
+import { normalize, tileKey, type Layout, type Tile } from "./model";
 
 const KEY = "multimux.viewLayout";
 
@@ -63,4 +63,40 @@ export function seedOverlay(view: Layout): Overlay {
     rowSizes: view.rowSizes ?? [],
     colSizes: view.colSizes ?? [],
   };
+}
+
+// Reorder a filtered view by its directory's overlay, then re-normalize with
+// the overlay's columns and sizes. `map` (each view slot's index in the stored
+// layout) is rebuilt alongside the tiles: it is what remove, terminate and
+// swap translate through, so it has to follow them.
+//
+// Keys the overlay does not name sort last and keep their relative stored
+// order — Array.prototype.sort is stable and equal ranks compare 0 — which is
+// what puts a newly launched session at the end of the view instead of
+// somewhere arbitrary. Order entries naming no visible tile simply match
+// nothing.
+export function applyOverlay(packed: Layout, map: number[], overlay: Overlay | null): { view: Layout; map: number[] } {
+  if (!overlay) return { view: packed, map };
+  const rank = new Map(overlay.order.map((key, i) => [key, i]));
+  const pairs = packed.tiles
+    .map((tile, i) => ({ tile, real: map[i] }))
+    .filter((p): p is { tile: NonNullable<Tile>; real: number } => p.tile !== null)
+    .sort((a, b) => (rank.get(tileKey(a.tile)) ?? Infinity) - (rank.get(tileKey(b.tile)) ?? Infinity));
+  return {
+    view: normalize(
+      pairs.map((p) => p.tile),
+      overlay.cols,
+      overlay.rowSizes,
+      overlay.colSizes,
+    ),
+    map: pairs.map((p) => p.real),
+  };
+}
+
+/** Trade two positions in an order. Out-of-range indices are a no-op. */
+export function swapOrder(order: string[], a: number, b: number): string[] {
+  if (a < 0 || b < 0 || a >= order.length || b >= order.length) return order.slice();
+  const out = order.slice();
+  [out[a], out[b]] = [out[b], out[a]];
+  return out;
 }
