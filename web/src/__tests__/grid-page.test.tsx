@@ -1171,6 +1171,43 @@ test("clicking a dir button solos that directory's tiles and quick-add buttons",
   expect(soloDir()).toBeNull();
 });
 
+test("Ctrl+Alt+arrows rotate the solo and Ctrl+Alt+0 clears it", async () => {
+  mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  // Running directories, in bar order: /a, /b, /d. /c has only a dead session.
+  const press = (key: string, code?: string) =>
+    fireEvent.keyDown(window, { key, code: code ?? key, ctrlKey: true, altKey: true });
+
+  press("ArrowRight");
+  await waitFor(() => expect(soloDir()).toBe("/a"));
+  press("ArrowRight");
+  await waitFor(() => expect(soloDir()).toBe("/b"));
+  // Backwards retraces the ring.
+  press("ArrowLeft");
+  await waitFor(() => expect(soloDir()).toBe("/a"));
+  // Past the first button is show-all, then round to the last one.
+  press("ArrowLeft");
+  await waitFor(() => expect(soloDir()).toBeNull());
+  press("ArrowLeft");
+  await waitFor(() => expect(soloDir()).toBe("/d"));
+
+  // Ctrl+Alt+0 clears from anywhere; macOS reports `key` as "º" with Alt held.
+  press("º", "Digit0");
+  await waitFor(() => expect(soloDir()).toBeNull());
+  await screen.findByTestId("term-1");
+});
+
+test("the solo shortcut ignores other modifier combinations", async () => {
+  mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  for (const mods of [{ ctrlKey: true }, { altKey: true }, { ctrlKey: true, altKey: true, shiftKey: true }]) {
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", ...mods });
+  }
+  expect(soloDir()).toBeNull();
+});
+
 test("a solo shows its ended sessions and hides tiles with no known session", async () => {
   mockFetch(
     {

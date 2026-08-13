@@ -1,4 +1,4 @@
-import { dirButtons, effectiveSolo, filterLayout, leafName, setSoloDir, soloDir } from "../grid/dirFilter";
+import { cycleSolo, dirButtons, effectiveSolo, filterLayout, leafName, setSoloDir, soloDir } from "../grid/dirFilter";
 import type { Session } from "../grid/types";
 import { normalize } from "../grid/model";
 
@@ -84,6 +84,31 @@ test("effectiveSolo falls back to showing everything when the button is gone", (
   expect(effectiveSolo("/a", [button("/b")])).toBeNull();
   expect(effectiveSolo("/a", [])).toBeNull();
   expect(soloDir()).toBe("/a");
+});
+
+test("cycleSolo walks forward from show-all through the buttons and back", () => {
+  const dirs = [button("/a"), button("/b")];
+  expect(cycleSolo(null, dirs, 1)).toBe("/a");
+  expect(cycleSolo("/a", dirs, 1)).toBe("/b");
+  expect(cycleSolo("/b", dirs, 1)).toBeNull();
+});
+
+test("cycleSolo walks backward through the same ring", () => {
+  const dirs = [button("/a"), button("/b")];
+  expect(cycleSolo(null, dirs, -1)).toBe("/b");
+  expect(cycleSolo("/b", dirs, -1)).toBe("/a");
+  expect(cycleSolo("/a", dirs, -1)).toBeNull();
+});
+
+test("cycleSolo shows everything when there is nothing to cycle through", () => {
+  expect(cycleSolo(null, [], 1)).toBeNull();
+  expect(cycleSolo("/a", [], -1)).toBeNull();
+});
+
+test("cycleSolo treats a path with no button as show-all", () => {
+  // effectiveSolo already made it so on screen; the ring must agree, or the
+  // first press would land on the second button.
+  expect(cycleSolo("/gone", [button("/a"), button("/b")], 1)).toBe("/a");
 });
 
 const tile = (id: number) => ({ serverId: "local", sessionId: id });

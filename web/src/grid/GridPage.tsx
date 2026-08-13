@@ -16,7 +16,7 @@ import type { Session, Tool } from "./types";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 import { dirTintStyle } from "./dirColor";
 import DirFilterBar from "./DirFilterBar";
-import { dirButtons, effectiveSolo, filterLayout, setSoloDir, soloDir } from "./dirFilter";
+import { cycleSolo, dirButtons, effectiveSolo, filterLayout, setSoloDir, soloDir } from "./dirFilter";
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -342,6 +342,30 @@ export default function GridPage({
   // cannot see. The stored value stays put and comes back when its button
   // does.
   const activeSolo = effectiveSolo(solo, dirs);
+
+  // Ctrl+Alt+←/→ rotates the solo through the filter bar, Ctrl+Alt+0 clears it.
+  // Ctrl+Alt is the one modifier pair left free: plain Alt+arrow is browser
+  // back/forward, Cmd+arrow is line-start/end in the shell, and both reach the
+  // terminal. Listened for in the capture phase at the window and stopped
+  // there, so a focused xterm.js never also sees the keypress (same trick as
+  // TerminalTile's Shift+Enter interception, one layer up). Digit0 is read off
+  // `code`: with Alt held, macOS reports `key` as "º".
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey) return;
+      let next: string | null;
+      if (e.key === "ArrowRight") next = cycleSolo(activeSolo, dirs, 1);
+      else if (e.key === "ArrowLeft") next = cycleSolo(activeSolo, dirs, -1);
+      else if (e.code === "Digit0") next = null;
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      setSolo(next);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [activeSolo, dirs]);
 
   // With a solo in effect a tile shows iff its session's directory is the
   // solo, whatever the session's status — an ended session in the soloed

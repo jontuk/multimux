@@ -284,8 +284,9 @@ a GitHub link when the directory is a GitHub checkout. Double-click a tile's
 title to rename the session; the name is a display label only — the tmux
 session keeps its `mm-{id}` name — and clearing it restores the tool name.
 Directory buttons in the header show one directory's sessions on their own;
-clicking the soloed button shows every directory again. The filter is
-browser-local.
+clicking the soloed button shows every directory again. `Ctrl+Alt+←`/`→`
+rotates through the buttons (passing back through "show all" at each end) and
+`Ctrl+Alt+0` shows every directory. The filter is browser-local.
 
 | Action | How |
 | --- | --- |

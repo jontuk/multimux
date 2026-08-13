@@ -34,7 +34,10 @@ export default function DirFilterBar({
             // count, and voice control can act on the label it can see
             // (WCAG 2.5.3).
             aria-label={`${d.name} ${d.count} — ${action}`}
-            title={action}
+            // The keyboard route is only in the tooltip: it belongs to the bar
+            // as a whole, and repeating it in every accessible name would make
+            // a screen reader read it once per button.
+            title={`${action}\nCtrl+Alt+←/→ to rotate, Ctrl+Alt+0 to show all`}
             onClick={() => onSolo(d.path)}
           >
             {d.name}

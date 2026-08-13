@@ -68,6 +68,20 @@ export function effectiveSolo(solo: string | null, dirs: DirButton[]): string | 
   return solo !== null && dirs.some((d) => d.path === solo) ? solo : null;
 }
 
+// Keyboard rotation through the same buttons the bar shows, in the same order.
+// "Show all" is a slot in the ring rather than a separate key, so holding one
+// direction walks every directory and passes back through the unfiltered grid
+// instead of stopping at an end the user cannot see. `solo` must be the
+// effective solo: a stored path with no button is not in effect, and starting
+// the walk from it would skip a step.
+export function cycleSolo(solo: string | null, dirs: DirButton[], step: 1 | -1): string | null {
+  if (dirs.length === 0) return null;
+  const ring: (string | null)[] = [null, ...dirs.map((d) => d.path)];
+  // A path with no button is show-all on screen, so it starts from that slot.
+  const at = Math.max(ring.indexOf(solo), 0);
+  return ring[(at + step + ring.length) % ring.length];
+}
+
 // Hidden tiles are dropped and the survivors re-packed through the layout's
 // own canonical form, so the filtered grid has the same shape rules as any
 // other — no gaps, rows derived from the count. `map` carries each view slot

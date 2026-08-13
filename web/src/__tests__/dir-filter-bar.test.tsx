@@ -19,7 +19,7 @@ test("shows a tinted button per directory with its session count", () => {
   const button = screen.getByRole("button", { name: /multimux/ });
   expect(button).toHaveTextContent("multimux");
   expect(button).toHaveTextContent("3");
-  expect(button.title).toBe("show only sessions in /Users/jon/Repos/multimux");
+  expect(button.title).toContain("show only sessions in /Users/jon/Repos/multimux");
   expect(button.style.getPropertyValue("--dir-tint")).toBe(dirTint("/Users/jon/Repos/multimux"));
 });
 
@@ -37,7 +37,8 @@ test("the soloed directory reads pressed and the rest dimmed", () => {
   const soloed = screen.getByRole("button", { name: /old/ });
   expect(soloed).toHaveAttribute("aria-pressed", "true");
   expect(soloed).not.toHaveClass("dir-filter-off");
-  expect(soloed.title).toBe("show all directories");
+  expect(soloed.title).toContain("show all directories");
+  expect(soloed.title).toContain("Ctrl+Alt");
 
   const other = screen.getByRole("button", { name: /multimux/ });
   expect(other).toHaveAttribute("aria-pressed", "false");
