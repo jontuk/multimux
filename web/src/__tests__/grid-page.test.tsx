@@ -1444,3 +1444,64 @@ test("clearing the filter restores the stored sizes", async () => {
   await screen.findByTestId("term-1");
   expect(container.querySelector('[data-divider="col-0-0"]')).toHaveStyle({ left: "30%" });
 });
+
+// In all mode the launcher follows the session the user is working in, so
+// "+ New" opens a second session alongside the first without re-picking the
+// directory. The focused session's dir is a launch dir plus a subdir; both
+// halves land in the launcher.
+test("focusing a tile aims the launcher at that session's directory and subdir", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  };
+  const fetchMock = mockFetch(layout, [
+    { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/Users/jon/Repos/multimux", status: "running" },
+    { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/Users/jon/Repos/other/pkg", status: "running" },
+  ]);
+  const { container } = render(<GridPage />);
+
+  const dirSelect = await screen.findByLabelText<HTMLSelectElement>("dir");
+  const subdir = screen.getByLabelText<HTMLInputElement>("subdirectory");
+  await screen.findByTestId("term-2");
+
+  fireEvent.focusIn(container.querySelector('[data-tile-index="1"]')!);
+  await waitFor(() => expect(dirSelect.value).toBe("2"));
+  expect(subdir.value).toBe("pkg");
+
+  fireEvent.focusIn(container.querySelector('[data-tile-index="0"]')!);
+  await waitFor(() => expect(dirSelect.value).toBe("1"));
+  expect(subdir.value).toBe("");
+
+  await userEvent.click(screen.getByText("+ New"));
+  const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+  expect(JSON.parse(String(post?.[1]?.body))).toEqual({ toolId: 1, dirId: 1, subdir: "" });
+});
+
+// A solo is the standing answer to "which directory am I in", so it outranks
+// whatever tile happens to hold focus.
+test("a soloed directory outranks the focused tile", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  };
+  mockFetch(layout, [
+    { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/Users/jon/Repos/multimux", status: "running" },
+    { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/Users/jon/Repos/other/pkg", status: "running" },
+  ]);
+  const { container } = render(<GridPage />);
+
+  const dirSelect = await screen.findByLabelText<HTMLSelectElement>("dir");
+  await screen.findByTestId("term-2");
+  fireEvent.focusIn(container.querySelector('[data-tile-index="1"]')!);
+  await waitFor(() => expect(dirSelect.value).toBe("2"));
+
+  await userEvent.click(screen.getByRole("button", { name: /^multimux 1/ }));
+  await waitFor(() => expect(dirSelect.value).toBe("1"));
+  expect(screen.getByLabelText<HTMLInputElement>("subdirectory").value).toBe("");
+});

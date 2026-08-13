@@ -11,15 +11,23 @@ const suggestionLimit = 12;
 export default function HeaderLauncher({
   servers,
   targetDir = null,
+  targetServerId = null,
   onLaunched,
 }: {
   servers: Server[];
   /**
-   * Working directory the grid is currently soloed on, or null for none. The
-   * launcher points itself at it so "+ New" opens another session where the
-   * user is already looking.
+   * Working directory the grid is pointing at — the soloed directory, or the
+   * focused session's when nothing is soloed. The launcher aims itself there so
+   * "+ New" opens another session where the user already is. Null for none.
    */
   targetDir?: string | null;
+  /**
+   * Server `targetDir` belongs to, or null when it belongs to no server in
+   * particular (a soloed directory is counted across every daemon). A target
+   * pinned to another server is ignored: the same path on another daemon is a
+   * different machine's directory.
+   */
+  targetServerId?: string | null;
   onLaunched: (server: Server, session: Session) => void;
 }) {
   const [serverId, setServerId] = useState(servers[0]?.id ?? "");
@@ -137,25 +145,27 @@ export default function HeaderLauncher({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
 
-  // Follow the grid's soloed directory: soloing is the user saying "this is the
-  // project I'm in", so the launcher aims at it and "+ New" is one click from
-  // another session in the same place. A session's working directory is a
-  // launch dir plus a subdir, and both halves are restored — soloing
-  // .../multimux/web fills the subdir too, not just the repo.
+  // Follow the directory the grid is pointing at, so "+ New" is one click from
+  // another session in the same place. A working directory is a launch dir plus
+  // a subdir, and both halves are restored — a target of .../multimux/web fills
+  // the subdir too, not just the repo.
   //
-  // Only the directory moves; the tool keeps whatever the user chose. A solo
+  // Only the directory moves; the tool keeps whatever the user chose. A target
   // this daemon has no directory for (it belongs to another server, or its dir
   // was removed) leaves the selection untouched rather than resetting it.
-  // Deliberately overwrites a hand-typed subdir: the solo is the more recent
+  // Deliberately overwrites a hand-typed subdir: the target is the more recent
   // statement of intent, and the typed one is one keystroke away again.
   // Adjusted during render rather than in an effect, so the launcher never
   // paints a frame pointing at the old directory (and never fetches that
   // directory's history on the way past). `applied` records the pair the
-  // current selection was derived from — the solo *and* the dir list, because
-  // both arrive asynchronously: a solo that matched nothing while the list was
-  // still loading is applied the moment the list lands.
+  // current selection was derived from — the target *and* the dir list, because
+  // both arrive asynchronously: a target that matched nothing while the list
+  // was still loading is applied the moment the list lands. A target for
+  // another server is not recorded at all, so switching to that server (a new
+  // `dirs` identity) applies it then.
   const [applied, setApplied] = useState<{ target: string; dirs: Dir[] } | null>(null);
-  if (targetDir !== null && dirs.length > 0 && (applied?.target !== targetDir || applied.dirs !== dirs)) {
+  const mine = targetServerId === null || targetServerId === serverId;
+  if (targetDir !== null && mine && dirs.length > 0 && (applied?.target !== targetDir || applied.dirs !== dirs)) {
     setApplied({ target: targetDir, dirs });
     const match = splitUnderDir(dirs, targetDir);
     if (match && (match.dirId !== dirId || match.subdir !== subdir)) {

@@ -138,6 +138,11 @@ export default function GridPage({
   // Ephemeral: a just-launched tile whose terminal should grab keyboard focus
   // so the user can type immediately. Only the freshly-mounted tile reads it.
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  // Tile key of the session the user is working in — last tile to take focus,
+  // and it stays after focus leaves the grid entirely (clicking the launcher
+  // must not un-answer "which session am I in?"). Feeds the launcher, so
+  // "+ New" opens where the user already is.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   // Tile key whose title is being renamed; the tile drops `draggable` while it
   // is, so the drag doesn't eat text selection in the input.
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -328,6 +333,9 @@ export default function GridPage({
     showDir(session.dir);
     persist((l) => addTile(l, { serverId: server.id, sessionId: session.id }));
     setFocusKey(`${server.id}:${session.id}`);
+    // The terminal's autoFocus raises this too, but only once it has mounted;
+    // setting it here means the launcher is already aimed at the new session.
+    setActiveKey(`${server.id}:${session.id}`);
     refreshSessions();
   }
 
@@ -342,6 +350,25 @@ export default function GridPage({
   // cannot see. The stored value stays put and comes back when its button
   // does.
   const activeSolo = effectiveSolo(solo, dirs);
+
+  // Where "+ New" should aim. A solo wins: it is the standing statement of
+  // which directory the user is working in, and it is server-agnostic — the
+  // filter bar counts a directory across every daemon — so any server whose
+  // dirs contain it may answer. Without one, the focused tile's session
+  // answers, which is what "follow me around the grid" means in all mode; that
+  // one is pinned to its own server, since an identical path on another daemon
+  // is a different machine's directory.
+  const activeTile = useMemo(
+    () => layout.tiles.find((t): t is NonNullable<Tile> => t !== null && tileKey(t) === activeKey),
+    [layout, activeKey],
+  );
+  const activeSession = activeTile && sessionFor(activeTile);
+  const target =
+    activeSolo !== null
+      ? { dir: activeSolo, serverId: null }
+      : activeSession
+        ? { dir: activeSession.dir, serverId: activeTile.serverId }
+        : { dir: null, serverId: null };
 
   // Ctrl+Alt+←/→ rotates the solo through the filter bar, Ctrl+Alt+0 clears it.
   // Ctrl+Alt is the one modifier pair left free: plain Alt+arrow is browser
@@ -425,7 +452,12 @@ export default function GridPage({
 
   const headerControls = (
     <div className="header-controls">
-      <HeaderLauncher servers={servers} targetDir={activeSolo} onLaunched={placeSession} />
+      <HeaderLauncher
+        servers={servers}
+        targetDir={target.dir}
+        targetServerId={target.serverId}
+        onLaunched={placeSession}
+      />
       <ColumnStepper
         cols={layout.shape.cols}
         rows={layout.shape.rows}
@@ -550,6 +582,9 @@ export default function GridPage({
                           height: `calc(${rect.height}% - var(--tile-gap))`,
                         }
                   }
+                  // React's onFocus is focusin, so this catches focus landing
+                  // anywhere inside the tile — xterm's textarea included.
+                  onFocus={() => tile && setActiveKey(tileKey(tile))}
                   draggable={tile !== null && tileKey(tile) !== editingKey}
                   onDragStart={(e) => e.dataTransfer.setData("text/tile-index", String(i))}
                   onDragOver={(e) => {
