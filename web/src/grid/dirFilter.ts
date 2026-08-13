@@ -4,7 +4,7 @@
 // sees the full grid. Mirrors how servers.ts keeps its list browser-local.
 
 import type { Server } from "../servers";
-import type { Session } from "./types";
+import type { Dir, Session } from "./types";
 import { normalize, type Layout, type Tile } from "./model";
 
 const KEY = "multimux.soloDir";
@@ -54,6 +54,30 @@ export function dirButtons(servers: Server[], sessionsByServer: Record<string, S
       // repos with the same leaf keep a stable order.
       .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path))
   );
+}
+
+// Split a session's working directory back into the launch directory it lives
+// under and the subdir below it — the two halves the launcher needs to open
+// another session in the same place. The longest matching directory wins, so a
+// dir configured inside another dir is preferred over its parent (the subdir
+// the user would have to type is then the shorter, more specific one).
+//
+// Matching is on path segments: "/repos/multi" is not a parent of
+// "/repos/multimux". Returns null when no configured directory contains the
+// path — a working directory on another daemon, or one whose dir was since
+// removed. The daemon resolves symlinks when it records a session's dir but not
+// when it stores a launch dir, so a symlinked dir can also miss here; null is
+// the same answer in every case, and the caller leaves its selection alone.
+export function splitUnderDir(dirs: Dir[], path: string): { dirId: number; subdir: string } | null {
+  const target = path.replace(/\/+$/, "");
+  let best: { dirId: number; subdir: string } | null = null;
+  for (const d of dirs) {
+    const base = d.path.replace(/\/+$/, "");
+    if (target !== base && !target.startsWith(base + "/")) continue;
+    const subdir = target === base ? "" : target.slice(base.length + 1);
+    if (!best || subdir.length < best.subdir.length) best = { dirId: d.id, subdir };
+  }
+  return best;
 }
 
 // The solo that is actually in effect for this render. A stored path that

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { del, getJSON, postJSON } from "../api";
 import type { Server } from "../servers";
+import { splitUnderDir } from "./dirFilter";
 import type { Dir, Session, Tool } from "./types";
 
 // A dropdown longer than this stops being a shortcut: past a dozen entries the
@@ -9,9 +10,16 @@ const suggestionLimit = 12;
 
 export default function HeaderLauncher({
   servers,
+  targetDir = null,
   onLaunched,
 }: {
   servers: Server[];
+  /**
+   * Working directory the grid is currently soloed on, or null for none. The
+   * launcher points itself at it so "+ New" opens another session where the
+   * user is already looking.
+   */
+  targetDir?: string | null;
   onLaunched: (server: Server, session: Session) => void;
 }) {
   const [serverId, setServerId] = useState(servers[0]?.id ?? "");
@@ -41,10 +49,20 @@ export default function HeaderLauncher({
   // directory or server — dir ids are per-daemon autoincrements, so a bare
   // dirId match is not enough; a server switch can hand back the same
   // number on a different daemon. Assigned synchronously wherever the
-  // selection changes (selectServer, selectDir, and the tools/dirs effect's
-  // auto-select), never via an effect, so a microtask that resumes before
-  // the next render still sees the true current selection.
+  // selection changes (selectServer, selectDir, and the tools/dirs fetch's
+  // auto-select), never from a passive effect, so a microtask that resumes
+  // before the next render still sees the true current selection.
   const selectionRef = useRef({ serverId, dirId });
+
+  // The solo below can also move the selection, and it does so during render,
+  // where writing a ref is not allowed. A layout effect closes that gap: it
+  // runs during the commit, before paint and before any microtask a later
+  // event could schedule, so nothing observes a selectionRef out of step with
+  // what is on screen. It writes the same value selectServer/selectDir already
+  // wrote when the change came from those.
+  useLayoutEffect(() => {
+    selectionRef.current = { serverId, dirId };
+  }, [serverId, dirId]);
 
   // Switching servers must drop the previous daemon's options in the same
   // render as the switch: tool/dir ids are per-daemon autoincrements, so a
@@ -118,6 +136,38 @@ export default function HeaderLauncher({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
+
+  // Follow the grid's soloed directory: soloing is the user saying "this is the
+  // project I'm in", so the launcher aims at it and "+ New" is one click from
+  // another session in the same place. A session's working directory is a
+  // launch dir plus a subdir, and both halves are restored — soloing
+  // .../multimux/web fills the subdir too, not just the repo.
+  //
+  // Only the directory moves; the tool keeps whatever the user chose. A solo
+  // this daemon has no directory for (it belongs to another server, or its dir
+  // was removed) leaves the selection untouched rather than resetting it.
+  // Deliberately overwrites a hand-typed subdir: the solo is the more recent
+  // statement of intent, and the typed one is one keystroke away again.
+  // Adjusted during render rather than in an effect, so the launcher never
+  // paints a frame pointing at the old directory (and never fetches that
+  // directory's history on the way past). `applied` records the pair the
+  // current selection was derived from — the solo *and* the dir list, because
+  // both arrive asynchronously: a solo that matched nothing while the list was
+  // still loading is applied the moment the list lands.
+  const [applied, setApplied] = useState<{ target: string; dirs: Dir[] } | null>(null);
+  if (targetDir !== null && dirs.length > 0 && (applied?.target !== targetDir || applied.dirs !== dirs)) {
+    setApplied({ target: targetDir, dirs });
+    const match = splitUnderDir(dirs, targetDir);
+    if (match && (match.dirId !== dirId || match.subdir !== subdir)) {
+      setDirId(match.dirId);
+      setSubdir(match.subdir);
+      setChildren([]);
+      setChildrenOf(null);
+      setOpen(false);
+      setHighlight(-1);
+      setError("");
+    }
+  }
 
   // Same `stale` guard as the tools/dirs fetch: a slow answer for a directory
   // the user has already moved on from must not land over the current one.

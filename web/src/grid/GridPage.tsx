@@ -425,7 +425,7 @@ export default function GridPage({
 
   const headerControls = (
     <div className="header-controls">
-      <HeaderLauncher servers={servers} onLaunched={placeSession} />
+      <HeaderLauncher servers={servers} targetDir={activeSolo} onLaunched={placeSession} />
       <ColumnStepper
         cols={layout.shape.cols}
         rows={layout.shape.rows}

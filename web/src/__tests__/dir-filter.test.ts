@@ -1,4 +1,13 @@
-import { cycleSolo, dirButtons, effectiveSolo, filterLayout, leafName, setSoloDir, soloDir } from "../grid/dirFilter";
+import {
+  cycleSolo,
+  dirButtons,
+  effectiveSolo,
+  filterLayout,
+  leafName,
+  setSoloDir,
+  soloDir,
+  splitUnderDir,
+} from "../grid/dirFilter";
 import type { Session } from "../grid/types";
 import { normalize } from "../grid/model";
 
@@ -141,4 +150,41 @@ test("filterLayout leaves no map entry for empty view slots", () => {
   const { view, map } = filterLayout(layout, (t) => t.sessionId === 3);
   expect(view.tiles).toEqual([tile(3), null]);
   expect(map[1]).toBeUndefined();
+});
+
+const dirs = [
+  { id: 7, name: "multimux", path: "/repos/multimux" },
+  { id: 8, name: "web", path: "/repos/multimux/web" },
+  { id: 9, name: "multi", path: "/repos/multi" },
+];
+
+test("splitUnderDir splits a working directory into its launch dir and subdir", () => {
+  expect(splitUnderDir(dirs, "/repos/multimux/internal/server")).toEqual({ dirId: 7, subdir: "internal/server" });
+});
+
+test("splitUnderDir returns an empty subdir for the launch dir itself", () => {
+  expect(splitUnderDir(dirs, "/repos/multimux")).toEqual({ dirId: 7, subdir: "" });
+});
+
+// The nested dir is the more specific answer: launching there needs no subdir
+// at all, where its parent would need "web/src".
+test("splitUnderDir prefers the deepest configured directory", () => {
+  expect(splitUnderDir(dirs, "/repos/multimux/web")).toEqual({ dirId: 8, subdir: "" });
+  expect(splitUnderDir(dirs, "/repos/multimux/web/src")).toEqual({ dirId: 8, subdir: "src" });
+});
+
+test("splitUnderDir matches whole path segments, not string prefixes", () => {
+  expect(splitUnderDir(dirs, "/repos/multi")).toEqual({ dirId: 9, subdir: "" });
+  expect(splitUnderDir([{ id: 9, name: "multi", path: "/repos/multi" }], "/repos/multimux")).toBeNull();
+});
+
+test("splitUnderDir ignores trailing slashes on either side", () => {
+  expect(splitUnderDir([{ id: 7, name: "multimux", path: "/repos/multimux/" }], "/repos/multimux/web/")).toEqual({
+    dirId: 7,
+    subdir: "web",
+  });
+});
+
+test("splitUnderDir returns null for a directory no configured dir contains", () => {
+  expect(splitUnderDir(dirs, "/elsewhere/thing")).toBeNull();
 });
