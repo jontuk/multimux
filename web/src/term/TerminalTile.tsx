@@ -66,7 +66,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       fontSize: 13,
       // On Mac, xterm.js only bypasses app mouse-mode for Option+drag (never
       // Shift — that's hardcoded Linux/Windows-only in SelectionService).
-      // shiftDragCapture below makes Shift+drag work too.
+      // selectDragCapture below drives that flag, so this must stay on.
       macOptionClickForcesSelection: true,
     });
     const fit = new FitAddon();
@@ -155,18 +155,33 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     };
     captureContainer.addEventListener("keydown", shiftEnterCapture, true);
 
-    // Shift+drag selection. tmux mouse mode owns click-drag, and xterm.js's
-    // escape hatch (shouldForceSelection) is Option-only on Mac — Shift is
-    // hardcoded Linux/Windows-only. Both call sites read event.altKey off the
-    // mousedown, so shadow it on the instance in the capture phase, before
-    // xterm.js's bubble-phase listeners see the event. Mac only: elsewhere
-    // Shift already works, and a forced altKey would trip column-select.
-    const shiftDragCapture = (e: MouseEvent) => {
-      if (isMac && e.button === 0 && e.shiftKey && !e.altKey) {
-        Object.defineProperty(e, "altKey", { value: true, configurable: true });
-      }
+    // Drag-to-select without a modifier, Shift+drag to reach tmux. tmux mouse
+    // mode normally owns click-drag; xterm.js's escape hatch
+    // (shouldForceSelection) is Option-only on Mac and Shift-only elsewhere,
+    // both read off the mousedown. Shadow that property on the instance in the
+    // capture phase, before xterm.js's bubble-phase listeners see it, and set
+    // it from the inverse of Shift: plain drag selects, Shift+drag (pane
+    // focus/resize, copy-mode drag) passes through to tmux.
+    const forceProp = isMac ? "altKey" : "shiftKey";
+    const selectDragCapture = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      Object.defineProperty(e, forceProp, { value: !e.shiftKey, configurable: true });
     };
-    captureContainer.addEventListener("mousedown", shiftDragCapture, true);
+    captureContainer.addEventListener("mousedown", selectDragCapture, true);
+
+    // Copy-on-select, so a drag is the whole gesture — no Cmd/Ctrl+C. Deferred
+    // to the end of the drag: onSelectionChange fires per mousemove, and each
+    // write would race the last. Empty selections are skipped so clearing one
+    // doesn't wipe the clipboard.
+    let copyTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const selectionSub = term.onSelectionChange(() => {
+      if (copyTimeoutId) clearTimeout(copyTimeoutId);
+      copyTimeoutId = setTimeout(() => {
+        const text = term.getSelection();
+        // Insecure contexts (plain-http dev on a phone) have no clipboard API.
+        if (text) void navigator.clipboard?.writeText(text).catch(() => {});
+      }, 150);
+    });
 
     // Focusing this terminal claims the window size at our dims — the cheap way
     // to reclaim a window some other client shrank, without having to type.
@@ -217,7 +232,9 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
         ws.close();
       }
       captureContainer.removeEventListener("keydown", shiftEnterCapture, true);
-      captureContainer.removeEventListener("mousedown", shiftDragCapture, true);
+      captureContainer.removeEventListener("mousedown", selectDragCapture, true);
+      if (copyTimeoutId) clearTimeout(copyTimeoutId);
+      selectionSub.dispose();
       captureContainer.removeEventListener("focusin", claimOnFocus);
       dataSub.dispose();
       ro.disconnect();

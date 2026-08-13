@@ -315,9 +315,11 @@ or leaving mobile view changes the saved desktop grid layout. Viewports wider
 than 560 pixels — including most tablets — keep the full grid.
 
 **In the terminal.** Sessions run with tmux mouse mode on, so the wheel/trackpad
-scrolls tmux's copy-mode with 50 000 lines of scrollback. Because tmux owns
-click-drag, hold **Shift** (or Option on macOS) to make a native browser
-selection. A copy-mode yank reaches your system clipboard via OSC 52.
+scrolls tmux's copy-mode with 50 000 lines of scrollback. A plain click-drag
+makes a native browser selection and copies it to your system clipboard, so no
+modifier and no Cmd/Ctrl+C are needed; hold **Shift** while dragging to send
+the drag to tmux instead (pane focus and resize, copy-mode drags). A copy-mode
+yank reaches your system clipboard via OSC 52.
 **Shift+Enter** is sent as an extended key rather than a bare newline. When the
 same session is open on several machines, the window size follows whoever typed
 last, so switching machines and typing reclaims it at that machine's size.

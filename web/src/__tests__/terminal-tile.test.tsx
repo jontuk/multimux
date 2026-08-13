@@ -5,6 +5,13 @@ import TerminalTile from "../term/TerminalTile";
 import { beginReflowHold, endReflowHold, isReflowHeld } from "../term/reflowGate";
 
 const loadedAddons: unknown[] = [];
+// Selection hooks the tile subscribes to; a test drives them via fireSelection.
+let selectionListener: (() => void) | null = null;
+let selectionText = "";
+function fireSelection(text: string) {
+  selectionText = text;
+  selectionListener?.();
+}
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
@@ -16,6 +23,17 @@ vi.mock("@xterm/xterm", () => ({
     }
     onData() {
       return { dispose() {} };
+    }
+    onSelectionChange(cb: () => void) {
+      selectionListener = cb;
+      return {
+        dispose() {
+          selectionListener = null;
+        },
+      };
+    }
+    getSelection() {
+      return selectionText;
     }
     write() {}
     dispose() {}
@@ -238,6 +256,48 @@ test("PTY socket carries this browser's client id", () => {
 
   render(<TerminalTile server={server} sessionId={8} onClose={() => {}} />);
   expect(new URL(FakeWebSocket.instances[1].url).searchParams.get("client")).toBe(first);
+});
+
+// tmux mouse mode owns click-drag, so xterm.js only selects when its
+// force-selection modifier is set on the mousedown (shiftKey off Mac, altKey
+// on it). The tile drives that flag off the inverse of Shift: plain drag
+// selects, Shift+drag reaches tmux.
+test("plain drag forces selection, Shift+drag passes through to tmux", () => {
+  const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const term = container.querySelector(".terminal-tile > div")!;
+  // jsdom is not a Mac, so the flag under test is shiftKey.
+  const forced = (init: MouseEventInit) => {
+    const e = new MouseEvent("mousedown", { bubbles: true, button: 0, ...init });
+    term.dispatchEvent(e);
+    return e.shiftKey;
+  };
+
+  expect(forced({})).toBe(true);
+  expect(forced({ shiftKey: true })).toBe(false);
+  // Non-primary buttons are left alone: right-click must keep its menu.
+  const right = new MouseEvent("mousedown", { bubbles: true, button: 2 });
+  term.dispatchEvent(right);
+  expect(right.shiftKey).toBe(false);
+});
+
+test("selection is copied to the clipboard once the drag settles", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  // stubGlobal is off-limits here: unstubbing would also drop the WebSocket and
+  // ResizeObserver stubs the whole file installs in beforeAll.
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+
+  // Mid-drag churn must not race the final write.
+  act(() => fireSelection("hel"));
+  act(() => fireSelection("hello"));
+  await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+  expect(writeText).toHaveBeenCalledWith("hello");
+
+  // Clearing a selection must not wipe the clipboard.
+  act(() => fireSelection(""));
+  await new Promise((r) => setTimeout(r, 250));
+  expect(writeText).toHaveBeenCalledTimes(1);
+  Reflect.deleteProperty(navigator, "clipboard");
 });
 
 test("loads WebLinksAddon on terminal mount", () => {
