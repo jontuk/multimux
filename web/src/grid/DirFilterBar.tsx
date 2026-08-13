@@ -26,7 +26,7 @@ export default function DirFilterBar({
         return (
           <button
             key={d.path}
-            className={off ? "dir-filter-off" : undefined}
+            className={on ? "dir-filter-on" : off ? "dir-filter-off" : undefined}
             style={dirTintStyle(d.path)}
             aria-pressed={on}
             // The visible text leads the accessible name rather than being

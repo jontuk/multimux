@@ -662,6 +662,9 @@ a {
   align-items: center;
   gap: 0.3rem;
   min-width: 0;
+  /* overflow-x: auto makes overflow-y a scroll container too, which would clip
+     the on-state ring and focus outline: 3px of padding keeps both inside. */
+  padding: 3px;
   overflow-x: auto;
 }
 
@@ -689,6 +692,19 @@ a {
 .dir-filter button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* On state is an accent border plus a ring outside it, so the soloed button is
+   findable on its own rather than inferred from the other buttons' dimming.
+   Both are drawn outside the box (box-shadow, not border width or font weight)
+   so turning a button on never reflows the row. */
+.dir-filter-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.dir-filter-on .dir-filter-count {
+  color: var(--ink);
 }
 
 /* Off state is drawn twice over — dimmed and dashed — so it does not depend

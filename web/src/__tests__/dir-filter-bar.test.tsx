@@ -29,13 +29,15 @@ test("with no solo every button reads unpressed and undimmed", () => {
     const button = screen.getByRole("button", { name });
     expect(button).toHaveAttribute("aria-pressed", "false");
     expect(button).not.toHaveClass("dir-filter-off");
+    expect(button).not.toHaveClass("dir-filter-on");
   }
 });
 
-test("the soloed directory reads pressed and the rest dimmed", () => {
+test("the soloed directory reads pressed and highlighted, the rest dimmed", () => {
   render(<DirFilterBar dirs={dirs} solo="/Users/jon/old" onSolo={() => {}} />);
   const soloed = screen.getByRole("button", { name: /old/ });
   expect(soloed).toHaveAttribute("aria-pressed", "true");
+  expect(soloed).toHaveClass("dir-filter-on");
   expect(soloed).not.toHaveClass("dir-filter-off");
   expect(soloed.title).toContain("show all directories");
   expect(soloed.title).toContain("Ctrl+Alt");
