@@ -458,11 +458,11 @@ export default function GridPage({
         targetServerId={target.serverId}
         onLaunched={placeSession}
       />
-      <ColumnStepper
-        cols={layout.shape.cols}
-        rows={layout.shape.rows}
-        onChange={(c) => persist((l) => setCols(l, c))}
-      />
+      {/* Shows the grid on screen, so under a dir filter it counts the visible
+          tiles, not the hidden ones. Columns are still a property of the stored
+          layout, so the change is persisted there and the filtered view
+          re-derives its rows from it. */}
+      <ColumnStepper cols={view.shape.cols} rows={view.shape.rows} onChange={(c) => persist((l) => setCols(l, c))} />
       <DirFilterBar dirs={dirs} solo={activeSolo} onSolo={toggleDir} />
       {unplaced.length > 0 && (
         <div className="unplaced-sessions">
