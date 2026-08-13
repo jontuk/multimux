@@ -10,28 +10,43 @@ const dirs = [
 ];
 
 test("renders nothing when there are no directories", () => {
-  const { container } = render(<DirFilterBar dirs={[]} hidden={new Set()} onToggle={() => {}} />);
+  const { container } = render(<DirFilterBar dirs={[]} solo={null} onSolo={() => {}} />);
   expect(container).toBeEmptyDOMElement();
 });
 
 test("shows a tinted button per directory with its session count", () => {
-  render(<DirFilterBar dirs={dirs} hidden={new Set()} onToggle={() => {}} />);
+  render(<DirFilterBar dirs={dirs} solo={null} onSolo={() => {}} />);
   const button = screen.getByRole("button", { name: /multimux/ });
   expect(button).toHaveTextContent("multimux");
   expect(button).toHaveTextContent("3");
-  expect(button.title).toContain("/Users/jon/Repos/multimux");
+  expect(button.title).toBe("show only sessions in /Users/jon/Repos/multimux");
   expect(button.style.getPropertyValue("--dir-tint")).toBe(dirTint("/Users/jon/Repos/multimux"));
 });
 
-test("a hidden directory reads as unpressed", () => {
-  render(<DirFilterBar dirs={dirs} hidden={new Set(["/Users/jon/old"])} onToggle={() => {}} />);
-  expect(screen.getByRole("button", { name: /multimux/ })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: /old/ })).toHaveAttribute("aria-pressed", "false");
+test("with no solo every button reads unpressed and undimmed", () => {
+  render(<DirFilterBar dirs={dirs} solo={null} onSolo={() => {}} />);
+  for (const name of [/multimux/, /old/]) {
+    const button = screen.getByRole("button", { name });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(button).not.toHaveClass("dir-filter-off");
+  }
 });
 
-test("clicking a button toggles that directory", async () => {
-  const onToggle = vi.fn();
-  render(<DirFilterBar dirs={dirs} hidden={new Set()} onToggle={onToggle} />);
+test("the soloed directory reads pressed and the rest dimmed", () => {
+  render(<DirFilterBar dirs={dirs} solo="/Users/jon/old" onSolo={() => {}} />);
+  const soloed = screen.getByRole("button", { name: /old/ });
+  expect(soloed).toHaveAttribute("aria-pressed", "true");
+  expect(soloed).not.toHaveClass("dir-filter-off");
+  expect(soloed.title).toBe("show all directories");
+
+  const other = screen.getByRole("button", { name: /multimux/ });
+  expect(other).toHaveAttribute("aria-pressed", "false");
+  expect(other).toHaveClass("dir-filter-off");
+});
+
+test("clicking a button reports that directory", async () => {
+  const onSolo = vi.fn();
+  render(<DirFilterBar dirs={dirs} solo={null} onSolo={onSolo} />);
   await userEvent.click(screen.getByRole("button", { name: /old/ }));
-  expect(onToggle).toHaveBeenCalledWith("/Users/jon/old");
+  expect(onSolo).toHaveBeenCalledWith("/Users/jon/old");
 });

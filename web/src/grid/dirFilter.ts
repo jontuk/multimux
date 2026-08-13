@@ -1,4 +1,4 @@
-// The dir filter is a view, not state the daemon knows about: hiding a
+// The dir filter is a view, not state the daemon knows about: soloing a
 // directory changes what this browser renders and nothing else. The stored
 // layout keeps every tile, so another tab (or this one after a clear) still
 // sees the full grid. Mirrors how servers.ts keeps its list browser-local.
@@ -7,22 +7,24 @@ import type { Server } from "../servers";
 import type { Session } from "./types";
 import { normalize, type Layout, type Tile } from "./model";
 
-const KEY = "multimux.hiddenDirs";
+const KEY = "multimux.soloDir";
 
-/** Full paths whose sessions this browser is hiding. Absent means visible. */
-export function hiddenDirs(): Set<string> {
+/**
+ * The one full path this browser is showing on its own, or null for all of
+ * them. Null is the default, so a directory seen for the first time shows
+ * without being enumerated anywhere.
+ */
+export function soloDir(): string | null {
   try {
-    const raw: unknown = JSON.parse(localStorage.getItem(KEY) ?? "[]");
-    if (!Array.isArray(raw)) return new Set();
-    return new Set(raw.filter((v): v is string => typeof v === "string"));
+    const raw: unknown = JSON.parse(localStorage.getItem(KEY) ?? "null");
+    return typeof raw === "string" ? raw : null;
   } catch {
-    return new Set();
+    return null;
   }
 }
 
-export function setHiddenDirs(hidden: Set<string>) {
-  // Sorted so the stored value is stable regardless of toggle order.
-  localStorage.setItem(KEY, JSON.stringify([...hidden].sort()));
+export function setSoloDir(path: string | null) {
+  localStorage.setItem(KEY, JSON.stringify(path));
 }
 
 // Last path segment, trailing slashes ignored. Root (and anything else that
@@ -35,24 +37,11 @@ export function leafName(path: string): string {
 
 export type DirButton = { path: string; name: string; count: number };
 
-// One entry per distinct directory of a running session, on any server, plus
-// one for every currently-hidden path even if nothing running is left in it.
-//
-// Dead sessions alone earn no button: they cannot be launched into and hiding
-// them is not what the user is reaching for. But a *hidden* directory must
-// keep its button whatever its sessions are doing — the last session in a
-// hidden directory can end at any moment (tmux exit, another tab, the CLI),
-// and without a button there would be no in-app way to unhide it again: the
-// directory's tiles would stay filtered out, unseeable and undismissable, and
-// the browser would be stuck in a filter it cannot see. The count is then 0,
-// which also advertises that the filter is on but empty.
-export function dirButtons(
-  servers: Server[],
-  sessionsByServer: Record<string, Session[]>,
-  hidden: ReadonlySet<string> = new Set(),
-): DirButton[] {
+// One entry per distinct directory of a running session, on any server. Dead
+// sessions alone earn no button: they cannot be launched into, and soloing
+// them is not what the user is reaching for.
+export function dirButtons(servers: Server[], sessionsByServer: Record<string, Session[]>): DirButton[] {
   const counts = new Map<string, number>();
-  for (const path of hidden) counts.set(path, 0);
   for (const server of servers) {
     for (const sess of sessionsByServer[server.id] ?? []) {
       if (sess.status === "running") counts.set(sess.dir, (counts.get(sess.dir) ?? 0) + 1);
@@ -65,6 +54,18 @@ export function dirButtons(
       // repos with the same leaf keep a stable order.
       .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path))
   );
+}
+
+// The solo that is actually in effect for this render. A stored path that
+// names no button shows everything instead — and is left in storage, so the
+// selection returns intact when its directory does (a page load before
+// sessions arrive, a remote daemon briefly unreachable, the last session in
+// the directory ending). That derivation is also why no button has to be
+// invented for a stale entry: a solo can never outlive its button, because a
+// solo with no button is not in effect, and so is never a filter the user
+// cannot see or dismiss.
+export function effectiveSolo(solo: string | null, dirs: DirButton[]): string | null {
+  return solo !== null && dirs.some((d) => d.path === solo) ? solo : null;
 }
 
 // Hidden tiles are dropped and the survivors re-packed through the layout's

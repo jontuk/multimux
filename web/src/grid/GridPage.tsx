@@ -16,7 +16,7 @@ import type { Session, Tool } from "./types";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 import { dirTintStyle } from "./dirColor";
 import DirFilterBar from "./DirFilterBar";
-import { dirButtons, filterLayout, hiddenDirs, setHiddenDirs } from "./dirFilter";
+import { dirButtons, effectiveSolo, filterLayout, setSoloDir, soloDir } from "./dirFilter";
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -146,9 +146,9 @@ export default function GridPage({
   // explicitly after reconnect/remove changes the stored list.
   const [servers, setServers] = useState(() => listServers());
 
-  // Browser-local view filter: which directories' sessions are hidden. Not
-  // persisted server-side and never written into the layout.
-  const [hidden, setHidden] = useState<Set<string>>(() => hiddenDirs());
+  // Browser-local view filter: the one directory shown on its own, or null for
+  // all of them. Not persisted server-side and never written into the layout.
+  const [solo, setSolo] = useState<string | null>(() => soloDir());
 
   // Splitter sizes while a filter is active. Neither axis can round-trip into
   // the stored layout: the filtered grid has fewer rows, and colSizes is one
@@ -156,36 +156,30 @@ export default function GridPage({
   // unrelated row. Held here for the life of the current filter instead.
   const [viewSizes, setViewSizes] = useState<{ rowSizes: number[]; colSizes: number[][] } | null>(null);
 
+  // A click solos that directory; a click on the soloed one shows every
+  // directory again.
   const toggleDir = useCallback((path: string) => {
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(path)) next.add(path);
-      return next;
-    });
+    setSolo((prev) => (prev === path ? null : path));
   }, []);
 
-  // Unconditional un-hide, not a toggle: callers that unhide as a side effect
-  // of another action (attaching/launching into a hidden directory) must not
-  // re-hide it on a stale read of `hidden` — the state updater is the only
-  // place allowed to decide, so this can only ever remove.
-  const unhide = useCallback((path: string) => {
-    setHidden((prev) => {
-      if (!prev.has(path)) return prev;
-      const next = new Set(prev);
-      next.delete(path);
-      return next;
-    });
+  // Show a directory that is not the solo, by clearing the solo rather than
+  // moving it: attaching or launching from an empty tile asks for that tile to
+  // be visible, not for everything else on screen to silently change. Written
+  // as a state updater — the only place allowed to decide — so a stale read of
+  // `solo` in a handler's closure cannot re-solo something.
+  const showDir = useCallback((path: string) => {
+    setSolo((prev) => (prev === null || prev === path ? prev : null));
   }, []);
 
   // The updaters above stay pure — StrictMode runs them twice — so the two
-  // side effects of a changed hidden set live here: persist it to
-  // localStorage, and drop the view-local splitter sizes, which belong to the
-  // shape the previous filter produced. Both are skipped when an updater
-  // returned `prev` unchanged (React bails out, so this does not re-run).
+  // side effects of a changed solo live here: persist it to localStorage, and
+  // drop the view-local splitter sizes, which belong to the shape the previous
+  // filter produced. Both are skipped when an updater returned `prev`
+  // unchanged (React bails out, so this does not re-run).
   useEffect(() => {
-    setHiddenDirs(hidden);
+    setSoloDir(solo);
     setViewSizes(null);
-  }, [hidden]);
+  }, [solo]);
 
   // Mirrors `layout` so edits always build on the newest state, not the state
   // captured when a handler's closure was created.
@@ -321,17 +315,17 @@ export default function GridPage({
   );
   function attachSession(server: Server, sessionId: number) {
     if (placed.has(`${server.id}:${sessionId}`)) return;
-    // Attaching a hidden-directory session — from the empty-tile dropdown or
+    // Attaching a session outside the solo — from the empty-tile dropdown or
     // a quick-add button — would otherwise land the tile and immediately
-    // filter it back out, with no visible way to get it back.
+    // filter it back out, with no sign anything happened.
     const session = (sessionsByServer[server.id] ?? []).find((s) => s.id === sessionId);
-    if (session) unhide(session.dir);
+    if (session) showDir(session.dir);
     persist((l) => addTile(l, { serverId: server.id, sessionId }));
   }
 
   function placeSession(server: Server, session: Session) {
-    // Launching into a hidden directory would look like nothing happened.
-    unhide(session.dir);
+    // Launching outside the solo would look like nothing happened.
+    showDir(session.dir);
     persist((l) => addTile(l, { serverId: server.id, sessionId: session.id }));
     setFocusKey(`${server.id}:${session.id}`);
     refreshSessions();
@@ -342,21 +336,27 @@ export default function GridPage({
     [sessionsByServer],
   );
 
-  // A tile whose session is not known yet (or whose server was removed) has no
-  // directory to judge it by, so it always shows — hiding it would strand it
-  // with no button to bring it back.
+  const dirs = useMemo(() => dirButtons(servers, sessionsByServer), [servers, sessionsByServer]);
+  // A stored solo whose directory has no button is not in effect this render,
+  // so the grid is unfiltered rather than filtered by something the user
+  // cannot see. The stored value stays put and comes back when its button
+  // does.
+  const activeSolo = effectiveSolo(solo, dirs);
+
+  // With a solo in effect a tile shows iff its session's directory is the
+  // solo, whatever the session's status — an ended session in the soloed
+  // directory still needs its dismiss button. A tile whose session is unknown
+  // (server removed, sessions not loaded yet) has no directory to match and so
+  // hides; the soloed directory has a button on screen by construction, so the
+  // way back is always one click.
   const { view: packed, map } = useMemo(
-    () =>
-      filterLayout(layout, (tile) => {
-        const dir = sessionFor(tile)?.dir;
-        return dir === undefined || !hidden.has(dir);
-      }),
-    [layout, hidden, sessionFor],
+    () => filterLayout(layout, (tile) => activeSolo === null || sessionFor(tile)?.dir === activeSolo),
+    [layout, activeSolo, sessionFor],
   );
-  // Derived from what the view actually dropped, not from `hidden.size > 0`:
-  // a hidden directory with no tiles on this grid (its sessions ended, or they
-  // live only on another browser's layout) leaves the view byte-identical to
-  // the layout and `map` an identity. Treating that as "filtering" would send
+  // Derived from what the view actually dropped, not from "a solo is set": a
+  // solo that hides nothing (one directory in use, and it is the soloed one)
+  // leaves the view byte-identical to the layout and `map` an identity.
+  // Treating that as "filtering" would send
   // every splitter drag to `viewSizes` — silently discarding it on reload —
   // while the user sees no filtered-out tile anywhere.
   const filtering = map.length < layout.tiles.filter((t) => t !== null).length;
@@ -390,7 +390,12 @@ export default function GridPage({
   // to a tmux session that no longer exists.
   const unplaced = servers.flatMap((server) =>
     (sessionsByServer[server.id] ?? [])
-      .filter((sess) => sess.status === "running" && !placed.has(`${server.id}:${sess.id}`) && !hidden.has(sess.dir))
+      .filter(
+        (sess) =>
+          sess.status === "running" &&
+          !placed.has(`${server.id}:${sess.id}`) &&
+          (activeSolo === null || sess.dir === activeSolo),
+      )
       .map((sess) => ({ server, sess })),
   );
 
@@ -402,7 +407,7 @@ export default function GridPage({
         rows={layout.shape.rows}
         onChange={(c) => persist((l) => setCols(l, c))}
       />
-      <DirFilterBar dirs={dirButtons(servers, sessionsByServer, hidden)} hidden={hidden} onToggle={toggleDir} />
+      <DirFilterBar dirs={dirs} solo={activeSolo} onSolo={toggleDir} />
       {unplaced.length > 0 && (
         <div className="unplaced-sessions">
           {unplaced.map(({ server, sess }) => (

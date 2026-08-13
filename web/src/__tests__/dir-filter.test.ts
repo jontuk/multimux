@@ -1,4 +1,4 @@
-import { dirButtons, filterLayout, hiddenDirs, leafName, setHiddenDirs } from "../grid/dirFilter";
+import { dirButtons, effectiveSolo, filterLayout, leafName, setSoloDir, soloDir } from "../grid/dirFilter";
 import type { Session } from "../grid/types";
 import { normalize } from "../grid/model";
 
@@ -14,21 +14,29 @@ const sess = (id: number, dir: string, status = "running"): Session => ({
 
 afterEach(() => localStorage.clear());
 
-test("hiddenDirs is empty when nothing is stored", () => {
-  expect(hiddenDirs()).toEqual(new Set());
+test("soloDir is null when nothing is stored", () => {
+  expect(soloDir()).toBeNull();
 });
 
-test("hiddenDirs round-trips through localStorage", () => {
-  setHiddenDirs(new Set(["/b", "/a"]));
-  expect(localStorage.getItem("multimux.hiddenDirs")).toBe('["/a","/b"]');
-  expect(hiddenDirs()).toEqual(new Set(["/a", "/b"]));
+test("soloDir round-trips through localStorage", () => {
+  setSoloDir("/a");
+  expect(localStorage.getItem("multimux.soloDir")).toBe('"/a"');
+  expect(soloDir()).toBe("/a");
+  setSoloDir(null);
+  expect(localStorage.getItem("multimux.soloDir")).toBe("null");
+  expect(soloDir()).toBeNull();
 });
 
-test("hiddenDirs ignores corrupt storage and non-strings", () => {
-  localStorage.setItem("multimux.hiddenDirs", "{oops");
-  expect(hiddenDirs()).toEqual(new Set());
-  localStorage.setItem("multimux.hiddenDirs", '["/a",7,null]');
-  expect(hiddenDirs()).toEqual(new Set(["/a"]));
+test("soloDir ignores corrupt storage and non-strings", () => {
+  localStorage.setItem("multimux.soloDir", "{oops");
+  expect(soloDir()).toBeNull();
+  localStorage.setItem("multimux.soloDir", "7");
+  expect(soloDir()).toBeNull();
+});
+
+test("soloDir ignores a value left by the old hidden-dirs behaviour", () => {
+  localStorage.setItem("multimux.hiddenDirs", '["/a"]');
+  expect(soloDir()).toBeNull();
 });
 
 test("leafName takes the last path segment", () => {
@@ -52,28 +60,30 @@ test("dirButtons skips sessions that are not running", () => {
   expect(dirButtons([server("local")], { local: [sess(1, "/a", "dead")] })).toEqual([]);
 });
 
-test("dirButtons keeps a button for a hidden directory with no running sessions", () => {
-  // Otherwise the last session in a hidden directory ending would take the
-  // button with it and leave no way to unhide.
-  expect(dirButtons([server("local")], { local: [sess(1, "/a", "dead")] }, new Set(["/a"]))).toEqual([
-    { path: "/a", name: "a", count: 0 },
-  ]);
-  // Even with no sessions known at all — a server that is still loading or
-  // unreachable must not make the button disappear.
-  expect(dirButtons([server("local")], {}, new Set(["/gone"]))).toEqual([{ path: "/gone", name: "gone", count: 0 }]);
-});
-
-test("dirButtons still counts running sessions in a hidden directory", () => {
-  expect(dirButtons([server("local")], { local: [sess(1, "/a"), sess(2, "/a")] }, new Set(["/a"]))).toEqual([
-    { path: "/a", name: "a", count: 2 },
-  ]);
-});
-
 test("dirButtons sorts by leaf name, then full path", () => {
   const buttons = dirButtons([server("local")], {
     local: [sess(1, "/z/api"), sess(2, "/a/api"), sess(3, "/a/web")],
   });
   expect(buttons.map((b) => b.path)).toEqual(["/a/api", "/z/api", "/a/web"]);
+});
+
+const button = (path: string) => ({ path, name: leafName(path), count: 1 });
+
+test("effectiveSolo is null when nothing is soloed", () => {
+  expect(effectiveSolo(null, [button("/a")])).toBeNull();
+});
+
+test("effectiveSolo is in effect when the soloed path still has a button", () => {
+  expect(effectiveSolo("/a", [button("/a"), button("/b")])).toBe("/a");
+});
+
+test("effectiveSolo falls back to showing everything when the button is gone", () => {
+  // The stored value is deliberately left alone: the selection returns when
+  // its directory does (sessions still loading, a remote daemon offline).
+  setSoloDir("/a");
+  expect(effectiveSolo("/a", [button("/b")])).toBeNull();
+  expect(effectiveSolo("/a", [])).toBeNull();
+  expect(soloDir()).toBe("/a");
 });
 
 const tile = (id: number) => ({ serverId: "local", sessionId: id });

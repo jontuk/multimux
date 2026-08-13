@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import GridPage from "../grid/GridPage";
 import { dirTint } from "../grid/dirColor";
-import { hiddenDirs } from "../grid/dirFilter";
+import { soloDir } from "../grid/dirFilter";
 import { useEvents } from "../useEvents";
 import { MOBILE_VIEW_QUERY } from "../useMediaQuery";
 import { endReflowHold, isReflowHeld } from "../term/reflowGate";
@@ -48,7 +48,7 @@ const dirs = [
   { id: 2, name: "other", path: "/Users/jon/Repos/other" },
 ];
 
-function mockFetch(layout: unknown) {
+function mockFetch(layout: unknown, sessionList: unknown[] = sessions) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -61,7 +61,7 @@ function mockFetch(layout: unknown) {
       return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
         status: 201,
       });
-    if (url.includes("/api/sessions")) return new Response(JSON.stringify(sessions));
+    if (url.includes("/api/sessions")) return new Response(JSON.stringify(sessionList));
     if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(dirs));
     return new Response("[]");
@@ -1144,31 +1144,67 @@ test("the reflow gate is released when GridDividers unmounts mid-drag", async ()
   unmount();
 });
 
-test("clicking a dir button hides that directory's tiles and quick-add buttons", async () => {
+test("clicking a dir button solos that directory's tiles and quick-add buttons", async () => {
   mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
   render(<GridPage />);
   // Session 1 (/a) is tiled; sessions 2 (/b) and 5 (/d) are unplaced.
   await screen.findByTestId("term-1");
   expect(screen.getByRole("button", { name: /add to grid — \/b/ })).toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
-  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
-  expect(hiddenDirs()).toEqual(new Set(["/a"]));
-
-  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/b/ }));
+  // Solo /a: its tile stays, every other directory's quick-add goes.
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
   await waitFor(() => expect(screen.queryByRole("button", { name: /add to grid — \/b/ })).not.toBeInTheDocument());
-  // Another directory's quick-add button is untouched.
-  expect(screen.getByRole("button", { name: /add to grid — \/d/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /add to grid — \/d/ })).not.toBeInTheDocument();
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(soloDir()).toBe("/a");
 
-  await userEvent.click(screen.getByRole("button", { name: /show sessions in \/a/ }));
+  // Clicking a different button moves the solo rather than adding to it.
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /add to grid — \/b/ })).toBeInTheDocument();
+  expect(soloDir()).toBe("/b");
+
+  // Clicking the soloed button goes back to showing everything.
+  await userEvent.click(screen.getByRole("button", { name: /show all directories/ }));
   await screen.findByTestId("term-1");
+  expect(screen.getByRole("button", { name: /add to grid — \/d/ })).toBeInTheDocument();
+  expect(soloDir()).toBeNull();
 });
 
-test("hidden dirs are read back from storage on mount", async () => {
-  localStorage.setItem("multimux.hiddenDirs", '["/a"]');
+test("a solo shows its ended sessions and hides tiles with no known session", async () => {
+  mockFetch(
+    {
+      shape: { rows: 2, cols: 2 },
+      tiles: [
+        { serverId: "local", sessionId: 1 },
+        { serverId: "local", sessionId: 4 },
+        { serverId: "local", sessionId: 99 },
+        null,
+      ],
+    },
+    // Session 4 is dead, and in the same directory as running session 1.
+    sessions.map((s) => (s.id === 4 ? { ...s, dir: "/a" } : s)),
+  );
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  expect(screen.getByText("session ended")).toBeInTheDocument();
+  expect(screen.getByTestId("term-99")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+
+  // A tile whose session is unknown has no directory to match, so it hides…
+  await waitFor(() => expect(screen.queryByTestId("term-99")).not.toBeInTheDocument());
+  // …while visibility follows the directory whatever the status, so the ended
+  // session in the soloed directory keeps its dismiss button.
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(screen.getByText("session ended")).toBeInTheDocument();
+});
+
+test("the solo is read back from storage on mount", async () => {
+  localStorage.setItem("multimux.soloDir", '"/b"');
   mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
   render(<GridPage />);
-  await screen.findByRole("button", { name: /show sessions in \/a/ });
+  await screen.findByRole("button", { name: /show all directories/ });
   expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
 });
 
@@ -1182,8 +1218,8 @@ test("removing a tile while filtered removes the right session", async () => {
   });
   render(<GridPage />);
   await screen.findByTestId("term-2");
-  // Hide /a, so session 2 is the only tile on screen and sits at view index 0.
-  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
+  // Solo /b, so session 2 is the only tile on screen and sits at view index 0.
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
   await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
 
   await userEvent.click(screen.getByRole("button", { name: /remove session 2 from grid/ }));
@@ -1197,20 +1233,24 @@ test("removing a tile while filtered removes the right session", async () => {
 });
 
 test("drag-swapping tiles while filtered swaps the right stored tiles", async () => {
-  const fetchMock = mockFetch({
-    shape: { rows: 2, cols: 2 },
-    tiles: [
-      { serverId: "local", sessionId: 1 },
-      { serverId: "local", sessionId: 2 },
-      { serverId: "local", sessionId: 5 },
-      null,
-    ],
-  });
+  const fetchMock = mockFetch(
+    {
+      shape: { rows: 2, cols: 2 },
+      tiles: [
+        { serverId: "local", sessionId: 1 },
+        { serverId: "local", sessionId: 2 },
+        { serverId: "local", sessionId: 5 },
+        null,
+      ],
+    },
+    // Sessions 2 and 5 share a directory, so one solo leaves two tiles.
+    sessions.map((s) => (s.id === 5 ? { ...s, dir: "/b" } : s)),
+  );
   render(<GridPage />);
   await screen.findByTestId("term-5");
-  // Hide /a: sessions 2 and 5 repack into view indices 0 and 1, while the
+  // Solo /b: sessions 2 and 5 repack into view indices 0 and 1, while the
   // hidden session 1 still sits at real index 0.
-  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
   await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
 
   const tiles = document.querySelectorAll(".tile");
@@ -1239,12 +1279,12 @@ test("drag-swapping tiles while filtered swaps the right stored tiles", async ()
   });
 });
 
-test("a hidden directory with no running sessions keeps a button and does not disable persistence", async () => {
-  // The last session in a hidden directory can end from anywhere (tmux exit,
-  // another tab, the CLI). The hidden set is never pruned, so the button must
-  // survive on its own — otherwise there is no in-app way to unhide — and the
-  // now-empty filter must not keep splitter drags out of the daemon.
-  localStorage.setItem("multimux.hiddenDirs", '["/gone"]');
+test("a stored solo with no button shows everything and does not disable persistence", async () => {
+  // The last session in the soloed directory can end from anywhere (tmux exit,
+  // another tab, the CLI). The stored solo is never pruned, but a solo with no
+  // button is not in effect — so nothing is filtered out unseeably, and
+  // splitter drags still reach the daemon.
+  localStorage.setItem("multimux.soloDir", '"/gone"');
   const fetchMock = mockFetch({
     shape: { rows: 2, cols: 2 },
     tiles: [
@@ -1258,8 +1298,10 @@ test("a hidden directory with no running sessions keeps a button and does not di
   render(<GridPage />);
   await screen.findByTestId("term-1");
 
-  const button = await screen.findByRole("button", { name: /show sessions in \/gone/ });
-  expect(button).toHaveTextContent("0");
+  // No button for the stale path, and every tile is on screen.
+  expect(screen.queryByRole("button", { name: /sessions in \/gone/ })).not.toBeInTheDocument();
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+  expect(screen.getByTestId("term-5")).toBeInTheDocument();
 
   const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
   fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
@@ -1274,42 +1316,46 @@ test("a hidden directory with no running sessions keeps a button and does not di
     expect(JSON.parse(puts[puts.length - 1][1]?.body as string).rowSizes[0]).toBeCloseTo(0.3, 6);
   });
 
-  // Clicking it self-cleans the stale entry.
-  await userEvent.click(button);
-  await waitFor(() => expect(hiddenDirs()).toEqual(new Set()));
+  // The stale value is left in storage, ready for its directory to come back.
+  expect(soloDir()).toBe("/gone");
 });
 
-test("attaching a hidden-directory session from an empty tile's dropdown unhides that directory", async () => {
+test("attaching a session outside the solo from an empty tile's dropdown clears the solo", async () => {
   mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
   render(<GridPage />);
   await screen.findByTestId("term-1");
 
-  // Hide /b — session 2 stays offered in the empty tile's attach dropdown
-  // (EmptyTile does not filter by hidden dirs), but attaching it must not
-  // land a tile that the filter immediately hides again.
-  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/b/ }));
-  await waitFor(() => expect(screen.queryByRole("button", { name: /add to grid — \/b/ })).not.toBeInTheDocument());
+  // Solo /a — session 2 (/b) stays offered in the empty tile's attach dropdown
+  // (EmptyTile does not filter by directory), but attaching it must not land a
+  // tile that the filter immediately hides again.
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: /add to grid — \/d/ })).not.toBeInTheDocument());
 
   const attach = screen.getAllByRole("combobox").find((b) => b.textContent?.includes("attach session on local"))!;
   await userEvent.selectOptions(attach, "2");
 
   await screen.findByTestId("term-2");
-  expect(screen.getByRole("button", { name: /hide sessions in \/b/ })).toBeInTheDocument();
+  // The solo is cleared, not moved: session 1 is still on screen.
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(soloDir()).toBeNull();
 });
 
 test("splitter drags while filtered resize the view without persisting", async () => {
-  const fetchMock = mockFetch({
-    shape: { rows: 2, cols: 2 },
-    tiles: [
-      { serverId: "local", sessionId: 1 },
-      { serverId: "local", sessionId: 2 },
-      { serverId: "local", sessionId: 5 },
-      null,
-    ],
-  });
+  const fetchMock = mockFetch(
+    {
+      shape: { rows: 2, cols: 2 },
+      tiles: [
+        { serverId: "local", sessionId: 1 },
+        { serverId: "local", sessionId: 2 },
+        { serverId: "local", sessionId: 5 },
+        null,
+      ],
+    },
+    sessions.map((s) => (s.id === 5 ? { ...s, dir: "/b" } : s)),
+  );
   const { container } = render(<GridPage />);
   await screen.findByTestId("term-5");
-  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
   await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
 
   const putsBefore = fetchMock.mock.calls.filter(
@@ -1355,9 +1401,9 @@ test("clearing the filter restores the stored sizes", async () => {
   });
   const { container } = render(<GridPage />);
   await screen.findByTestId("term-2");
-  await userEvent.click(screen.getByRole("button", { name: /hide sessions in \/a/ }));
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
   await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
-  await userEvent.click(screen.getByRole("button", { name: /show sessions in \/a/ }));
+  await userEvent.click(screen.getByRole("button", { name: /show all directories/ }));
   await screen.findByTestId("term-1");
   expect(container.querySelector('[data-divider="col-0-0"]')).toHaveStyle({ left: "30%" });
 });
