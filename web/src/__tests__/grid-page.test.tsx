@@ -1269,7 +1269,7 @@ test("removing a tile while filtered removes the right session", async () => {
   });
 });
 
-test("drag-swapping tiles while filtered swaps the right stored tiles", async () => {
+test("drag-swapping tiles while soloed reorders the overlay, not the stored layout", async () => {
   const fetchMock = mockFetch(
     {
       shape: { rows: 2, cols: 2 },
@@ -1285,35 +1285,28 @@ test("drag-swapping tiles while filtered swaps the right stored tiles", async ()
   );
   render(<GridPage />);
   await screen.findByTestId("term-5");
-  // Solo /b: sessions 2 and 5 repack into view indices 0 and 1, while the
-  // hidden session 1 still sits at real index 0.
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
   await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  const putsBefore = fetchMock.mock.calls.filter(
+    ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+  ).length;
 
   const tiles = document.querySelectorAll(".tile");
   const dt = makeDataTransfer();
   fireEvent.dragStart(tiles[0], { dataTransfer: dt });
   fireEvent.drop(tiles[1], { dataTransfer: dt });
 
-  // On screen, the two visible tiles traded places…
+  // On screen the two visible tiles traded places…
   await waitFor(() => {
     const after = document.querySelectorAll(".tile");
     expect(after[0].querySelector("[data-testid=term-5]")).not.toBeNull();
     expect(after[1].querySelector("[data-testid=term-2]")).not.toBeNull();
   });
-  // …and the stored layout swapped real indices 1 and 2, leaving the hidden
-  // session 1 exactly where it was.
-  await waitFor(() => {
-    const puts = fetchMock.mock.calls.filter(
-      ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
-    );
-    expect(JSON.parse(puts[puts.length - 1][1]?.body as string).tiles).toEqual([
-      { serverId: "local", sessionId: 1 },
-      { serverId: "local", sessionId: 5 },
-      { serverId: "local", sessionId: 2 },
-      null,
-    ]);
-  });
+  // …and only /b's overlay records it.
+  expect(JSON.parse(localStorage.getItem("multimux.viewLayout")!)["/b"].order).toEqual(["local:5", "local:2"]);
+  expect(
+    fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT").length,
+  ).toBe(putsBefore);
 });
 
 test("a stored solo with no button shows everything and does not disable persistence", async () => {
@@ -1504,4 +1497,114 @@ test("a soloed directory outranks the focused tile", async () => {
   await userEvent.click(screen.getByRole("button", { name: /^multimux 1/ }));
   await waitFor(() => expect(dirSelect.value).toBe("1"));
   expect(screen.getByLabelText<HTMLInputElement>("subdirectory").value).toBe("");
+});
+
+test("a soloed directory keeps its columns and order across a switch away and back", async () => {
+  const fetchMock = mockFetch(
+    {
+      shape: { rows: 2, cols: 2 },
+      tiles: [
+        { serverId: "local", sessionId: 1 },
+        { serverId: "local", sessionId: 2 },
+        { serverId: "local", sessionId: 5 },
+        null,
+      ],
+    },
+    sessions.map((s) => (s.id === 5 ? { ...s, dir: "/b" } : s)),
+  );
+  render(<GridPage />);
+  await screen.findByTestId("term-5");
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+
+  // One column, and the two tiles swapped.
+  await userEvent.click(screen.getByLabelText("fewer columns"));
+  const tiles = document.querySelectorAll(".tile");
+  const dt = makeDataTransfer();
+  fireEvent.dragStart(tiles[0], { dataTransfer: dt });
+  fireEvent.drop(tiles[1], { dataTransfer: dt });
+  await waitFor(() => {
+    const after = document.querySelectorAll(".tile");
+    expect(after[0].querySelector("[data-testid=term-5]")).not.toBeNull();
+  });
+
+  // Out to /a, whose own view is untouched by any of that…
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+  await screen.findByTestId("term-1");
+  // …and back to /b, which is exactly as it was left.
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
+  await waitFor(() => {
+    const after = document.querySelectorAll(".tile");
+    expect(after[0].querySelector("[data-testid=term-5]")).not.toBeNull();
+    expect(after[1].querySelector("[data-testid=term-2]")).not.toBeNull();
+  });
+  expect(screen.getByLabelText("fewer columns")).toBeDisabled();
+
+  // The stored layout never saw any of it.
+  const puts = fetchMock.mock.calls.filter(
+    ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
+  );
+  expect(puts).toHaveLength(0);
+});
+
+test("a stored overlay is applied on mount and the unfiltered grid ignores it", async () => {
+  localStorage.setItem("multimux.soloDir", '"/b"');
+  localStorage.setItem(
+    "multimux.viewLayout",
+    JSON.stringify({ "/b": { cols: 1, order: ["local:5", "local:2"], rowSizes: [], colSizes: [] } }),
+  );
+  mockFetch(
+    {
+      shape: { rows: 2, cols: 2 },
+      tiles: [
+        { serverId: "local", sessionId: 1 },
+        { serverId: "local", sessionId: 2 },
+        { serverId: "local", sessionId: 5 },
+        null,
+      ],
+    },
+    sessions.map((s) => (s.id === 5 ? { ...s, dir: "/b" } : s)),
+  );
+  render(<GridPage />);
+  await screen.findByTestId("term-5");
+
+  await waitFor(() => {
+    const tiles = document.querySelectorAll(".tile");
+    expect(tiles[0].querySelector("[data-testid=term-5]")).not.toBeNull();
+    expect(tiles[1].querySelector("[data-testid=term-2]")).not.toBeNull();
+  });
+
+  // Clearing the solo restores the stored layout's own order and columns.
+  await userEvent.click(screen.getByRole("button", { name: /show all directories/ }));
+  await screen.findByTestId("term-1");
+  await waitFor(() => {
+    const tiles = document.querySelectorAll(".tile");
+    expect(tiles[0].querySelector("[data-testid=term-1]")).not.toBeNull();
+    expect(tiles[1].querySelector("[data-testid=term-2]")).not.toBeNull();
+    expect(tiles[2].querySelector("[data-testid=term-5]")).not.toBeNull();
+  });
+});
+
+test("a session launched into a soloed directory lands at the end of its view", async () => {
+  // mockFetch's session POST returns session 3 in /a, so solo /a first; the
+  // session list carries it too, or the new tile would filter straight out.
+  mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] }, [
+    ...sessions,
+    { id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" },
+  ]);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+  // Give /a an overlay by dropping to one column, so the append rule is
+  // exercised against a real overlay rather than the no-overlay path.
+  await userEvent.click(screen.getByLabelText("fewer columns"));
+
+  // "+ New" is the launch button itself — one click.
+  await userEvent.click(screen.getByText("+ New"));
+
+  await waitFor(() => {
+    const tiles = document.querySelectorAll(".tile");
+    expect(tiles[0].querySelector("[data-testid=term-1]")).not.toBeNull();
+    expect(tiles[1].querySelector("[data-testid=term-3]")).not.toBeNull();
+  });
 });

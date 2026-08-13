@@ -7,6 +7,7 @@ import {
   setColSizes,
   setRowSizes,
   swapTiles,
+  tileKey,
   MAX_COLS,
   MIN_COLS,
 } from "../grid/model";
@@ -168,4 +169,9 @@ test("setColSizes only touches the row it names", () => {
     [0.5, 0.5],
     [0.9, 0.1],
   ]);
+});
+
+test("tileKey joins server and session id", () => {
+  expect(tileKey({ serverId: "local", sessionId: 3 })).toBe("local:3");
+  expect(tileKey({ serverId: "https://box:8686", sessionId: 1 })).toBe("https://box:8686:1");
 });

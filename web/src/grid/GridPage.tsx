@@ -2,7 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { del, getJSON, putJSON } from "../api";
 import { connectServer, listServers, localServer, removeServer, type Server } from "../servers";
-import { addTile, emptyLayout, normalize, removeTile, setCols, swapTiles, type Layout, type Tile } from "./model";
+import {
+  addTile,
+  emptyLayout,
+  normalize,
+  removeTile,
+  setCols,
+  swapTiles,
+  tileKey,
+  type Layout,
+  type Tile,
+} from "./model";
 import { tileRect } from "./sizes";
 import ColumnStepper from "./ColumnStepper";
 import GridDividers from "./GridDividers";
@@ -17,6 +27,7 @@ import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 import { dirTintStyle } from "./dirColor";
 import DirFilterBar from "./DirFilterBar";
 import { cycleSolo, dirButtons, effectiveSolo, filterLayout, setSoloDir, soloDir } from "./dirFilter";
+import { applyOverlay, orderOf, seedOverlay, setViewOverlay, swapOrder, viewOverlay, type Overlay } from "./viewLayout";
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -50,10 +61,6 @@ function GitHubIcon() {
       <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
     </svg>
   );
-}
-
-function tileKey(t: NonNullable<Tile>): string {
-  return `${t.serverId}:${t.sessionId}`;
 }
 
 // The tile title, double-click-to-rename. The tile header's own double-click
@@ -155,11 +162,11 @@ export default function GridPage({
   // all of them. Not persisted server-side and never written into the layout.
   const [solo, setSolo] = useState<string | null>(() => soloDir());
 
-  // Splitter sizes while a filter is active. Neither axis can round-trip into
-  // the stored layout: the filtered grid has fewer rows, and colSizes is one
-  // width array per row *indexed by row*, so a filtered drag would land on an
-  // unrelated row. Held here for the life of the current filter instead.
-  const [viewSizes, setViewSizes] = useState<{ rowSizes: number[]; colSizes: number[][] } | null>(null);
+  // The soloed directory's own arrangement — columns, splitter sizes and tile
+  // order. Mirrors localStorage so a re-render does not re-read it; null means
+  // no solo is in effect, or the soloed directory has not been arranged yet
+  // and renders exactly as the stored layout does.
+  const [overlay, setOverlay] = useState<Overlay | null>(null);
 
   // A click solos that directory; a click on the soloed one shows every
   // directory again.
@@ -176,14 +183,12 @@ export default function GridPage({
     setSolo((prev) => (prev === null || prev === path ? prev : null));
   }, []);
 
-  // The updaters above stay pure — StrictMode runs them twice — so the two
-  // side effects of a changed solo live here: persist it to localStorage, and
-  // drop the view-local splitter sizes, which belong to the shape the previous
-  // filter produced. Both are skipped when an updater returned `prev`
-  // unchanged (React bails out, so this does not re-run).
+  // The updaters above stay pure — StrictMode runs them twice — so the side
+  // effect of a changed solo lives here: persist the selection. The overlay is
+  // loaded from `activeSolo` below, not here, because a stored solo whose
+  // directory has no button is not in effect and must not load an arrangement.
   useEffect(() => {
     setSoloDir(solo);
-    setViewSizes(null);
   }, [solo]);
 
   // Mirrors `layout` so edits always build on the newest state, not the state
@@ -351,6 +356,12 @@ export default function GridPage({
   // does.
   const activeSolo = effectiveSolo(solo, dirs);
 
+  // Load the arrangement for whichever directory is soloed. A directory with
+  // no stored overlay reads null and renders as the stored layout does.
+  useEffect(() => {
+    setOverlay(activeSolo === null ? null : viewOverlay(activeSolo));
+  }, [activeSolo]);
+
   // Where "+ New" should aim. A solo wins: it is the standing statement of
   // which directory the user is working in, and it is server-agnostic — the
   // filter bar counts a directory across every daemon — so any server whose
@@ -400,30 +411,30 @@ export default function GridPage({
   // (server removed, sessions not loaded yet) has no directory to match and so
   // hides; the soloed directory has a button on screen by construction, so the
   // way back is always one click.
-  const { view: packed, map } = useMemo(
+  const { view: packed, map: packedMap } = useMemo(
     () => filterLayout(layout, (tile) => activeSolo === null || sessionFor(tile)?.dir === activeSolo),
     [layout, activeSolo, sessionFor],
   );
-  // Derived from what the view actually dropped, not from "a solo is set": a
-  // solo that hides nothing (one directory in use, and it is the soloed one)
-  // leaves the view byte-identical to the layout and `map` an identity.
-  // Treating that as "filtering" would send
-  // every splitter drag to `viewSizes` — silently discarding it on reload —
-  // while the user sees no filtered-out tile anywhere.
-  const filtering = map.length < layout.tiles.filter((t) => t !== null).length;
-  // normalizeSizes (inside normalize) drops any track array whose count no
-  // longer matches, so a stale drag from a differently shaped view cannot
-  // survive into this one.
-  const view = useMemo(
-    () =>
-      filtering && viewSizes
-        ? normalize(packed.tiles, packed.shape.cols, viewSizes.rowSizes, viewSizes.colSizes)
-        : packed,
-    [filtering, viewSizes, packed],
-  );
+  // A soloed directory renders through its overlay: tiles reordered, columns
+  // and sizes taken from the overlay, and `map` rebuilt to follow the tiles.
+  // normalize (inside applyOverlay) drops any track array whose count no
+  // longer matches, so a session arriving or leaving heals the sizes.
+  const { view, map } = useMemo(() => applyOverlay(packed, packedMap, overlay), [packed, packedMap, overlay]);
   // Index in the stored layout for a slot on screen. Empty view slots have no
-  // counterpart while filtering, so drops onto them are ignored below.
-  const realIndex = (i: number): number | undefined => (filtering ? map[i] : i);
+  // counterpart while soloed, so drops onto them are ignored below.
+  const realIndex = (i: number): number | undefined => (activeSolo !== null ? map[i] : i);
+
+  // Presentation edits made under a solo belong to that directory, not to the
+  // stored layout — that is what keeps the unfiltered grid from being
+  // rearranged by an edit the user made inside a filtered view. The first such
+  // edit seeds an overlay from what is on screen. `persist` is false for a
+  // drag in progress: only the committed value is worth writing to storage.
+  const editOverlay = (update: (o: Overlay) => Overlay, persistEdit = true) => {
+    if (activeSolo === null) return;
+    const next = update(overlay ?? seedOverlay(view));
+    if (persistEdit) setViewOverlay(activeSolo, next);
+    setOverlay(next);
+  };
 
   async function terminateSession(server: Server, sessionId: number, tileIndex: number) {
     if (confirmTerminate && !window.confirm(`Terminate session #${sessionId}?`)) return;
@@ -459,10 +470,15 @@ export default function GridPage({
         onLaunched={placeSession}
       />
       {/* Shows the grid on screen, so under a dir filter it counts the visible
-          tiles, not the hidden ones. Columns are still a property of the stored
-          layout, so the change is persisted there and the filtered view
-          re-derives its rows from it. */}
-      <ColumnStepper cols={view.shape.cols} rows={view.shape.rows} onChange={(c) => persist((l) => setCols(l, c))} />
+          tiles. Under a solo the count belongs to that directory's overlay;
+          otherwise it is a property of the stored layout. */}
+      <ColumnStepper
+        cols={view.shape.cols}
+        rows={view.shape.rows}
+        onChange={(c) =>
+          activeSolo !== null ? editOverlay((o) => ({ ...o, cols: c })) : persist((l) => setCols(l, c))
+        }
+      />
       <DirFilterBar dirs={dirs} solo={activeSolo} onSolo={toggleDir} />
       {unplaced.length > 0 && (
         <div className="unplaced-sessions">
@@ -598,6 +614,16 @@ export default function GridPage({
                     if (!/^\d+$/.test(raw)) return;
                     const rawFrom = Number(raw);
                     if (rawFrom >= view.tiles.length) return;
+                    // Under a solo the drag reorders that directory's overlay
+                    // and the stored layout is left alone; the two views hold
+                    // their own arrangements. Empty slots are not draggable
+                    // targets either way.
+                    if (activeSolo !== null) {
+                      const keys = orderOf(view);
+                      if (rawFrom >= keys.length || i >= keys.length || rawFrom === i) return;
+                      editOverlay((o) => ({ ...o, order: swapOrder(keys, rawFrom, i) }));
+                      return;
+                    }
                     const from = realIndex(rawFrom);
                     const to = realIndex(i);
                     // A drop onto an empty slot while filtering has no index in
@@ -726,10 +752,14 @@ export default function GridPage({
               layout={view}
               containerRef={gridRef}
               onPreview={(next) =>
-                filtering ? setViewSizes({ rowSizes: next.rowSizes!, colSizes: next.colSizes! }) : adoptLayout(next)
+                activeSolo !== null
+                  ? editOverlay((o) => ({ ...o, rowSizes: next.rowSizes!, colSizes: next.colSizes! }), false)
+                  : adoptLayout(next)
               }
               onCommit={(next) =>
-                filtering ? setViewSizes({ rowSizes: next.rowSizes!, colSizes: next.colSizes! }) : persist(() => next)
+                activeSolo !== null
+                  ? editOverlay((o) => ({ ...o, rowSizes: next.rowSizes!, colSizes: next.colSizes! }))
+                  : persist(() => next)
               }
             />
           </div>
