@@ -276,17 +276,23 @@ instead of needing one entry per project; the subdirectory must already exist
 and must stay inside the chosen directory. With more than one server configured,
 a server picker appears first.
 
+The launcher follows the grid: it aims itself at the directory you are working
+in — the soloed directory, or the working directory of the tile you last
+focused — and fills the subdir field to match, so **+ New** opens another
+session where you already are. Only the directory moves; the tool stays
+whatever you picked. A target belonging to another server is ignored, because
+the same path on another daemon is a different machine's directory.
+
 **The grid.** Tiles are laid out in a column count you set with the header
 stepper; rows follow, and row/column boundaries can be dragged to resize the
-tiles around them. Each tile header shows the session id, tool name,
-directory, the git branch with a colour dot (clean / modified / untracked), and
-a GitHub link when the directory is a GitHub checkout. Double-click a tile's
-title to rename the session; the name is a display label only — the tmux
-session keeps its `mm-{id}` name — and clearing it restores the tool name.
-Directory buttons in the header show one directory's sessions on their own;
-clicking the soloed button shows every directory again. `Ctrl+Alt+←`/`→`
-rotates through the buttons (passing back through "show all" at each end) and
-`Ctrl+Alt+0` shows every directory. The filter is browser-local.
+tiles around them. The stepper acts on the grid on screen, so under a directory
+filter it arranges the visible tiles. Each tile header shows the session id,
+tool name, directory, the git branch with a colour dot (clean / modified /
+untracked), and a GitHub link when the directory is a GitHub checkout; the
+header is washed with a colour derived from the working directory, so sessions
+sharing a directory are recognisable at a glance. Double-click a tile's title
+to rename the session; the name is a display label only — the tmux session
+keeps its `mm-{id}` name — and clearing it restores the tool name.
 
 | Action | How |
 | --- | --- |
@@ -300,6 +306,24 @@ rotates through the buttons (passing back through "show all" at each end) and
 
 A session can only occupy one tile at a time. Removing a tile leaves the session
 running; it reappears in the header's unplaced list.
+
+**Filtering by directory.** A row of buttons in the header — one per directory
+with a running session, wearing that directory's tint and its session count —
+shows one directory's sessions on their own, hiding both the other tiles and the
+other unplaced `+ #id` buttons. The soloed button is highlighted; clicking it
+shows every directory again. `Ctrl+Alt+←`/`→` rotates through the buttons
+(passing back through "show all" at each end) and `Ctrl+Alt+0` shows every
+directory.
+
+Each soloed directory keeps its own arrangement — column count, tile order, and
+splitter positions — so leaving a directory and coming back restores the way you
+had it, and rearranging a filtered view never disturbs the unfiltered grid.
+*Which* sessions are in the grid stays shared, because the daemon stores it: a
+second tab or a phone sees the same tiles, and terminating or removing one drops
+it from every view. A session launched or attached in the soloed directory is
+appended to the end of that view; one from any other directory clears the
+filter, so the new tile is never hidden. The filter itself and the
+per-directory arrangements are browser-local, in `localStorage`.
 
 **Mobile session view.** At a viewport width of **560 CSS pixels or less**,
 multimux switches to a portrait-first, read-only session switcher. It shows all
