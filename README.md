@@ -192,8 +192,13 @@ download only on a LAN, VPN, or tailnet you control:
    with the value printed in the daemon's own console or service log. The
    initially untrusted web page is not an authenticated reference. **Stop and
    remove the certificate if the fingerprints do not match.**
-5. Return to Chrome and tap **Reload and check trust**. Once the page reports
-   that Android trusts the daemon, continue to the original setup or login URL.
+5. Return to Chrome and tap **Reload and check trust**. A reload alone often is
+   not enough — Chrome caches the failed TLS handshake for the origin, so the
+   page keeps reporting the daemon as untrusted after the CA is correctly
+   installed. Force stop Chrome (**Settings → Apps → Chrome → Force stop**, or
+   swipe it away from the recents screen), reopen it, and load the URL again.
+   Once the page reports that Android trusts the daemon, continue to the
+   original setup or login URL.
 
 The `/ca.crt` and `/ca/info` routes are intentionally public so a phone can
 bootstrap trust. They expose only the public certificate; the private
