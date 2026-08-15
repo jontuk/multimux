@@ -11,8 +11,8 @@ probe recipe at the end.
 ## 1. What exists today
 
 `web/src/grid/MobileSessionView.tsx` is the whole mobile surface. Below 560 CSS px, or on any
-coarse-pointer/no-hover device (`MOBILE_VIEW_QUERY`, `web/src/useMediaQuery.ts:8`, mirrored in
-`web/src/index.css:1245`), the grid is replaced by a single full-bleed `TerminalTile` plus a compact
+coarse-pointer/no-hover device (`MOBILE_VIEW_QUERY`, `web/src/useMediaQuery.ts`, mirrored in
+`web/src/index.css`), the grid is replaced by a single full-bleed `TerminalTile` plus a compact
 header. Horizontal swipe on that header moves between sessions. Only the selected terminal is
 mounted.
 
@@ -27,13 +27,13 @@ desktop terminal at a desktop font with a desktop input model.
 | **grid** | **49 cols × 51 rows** | **106 cols × 20 rows** |
 | chrome above terminal | 71 px (app header 44 + session header 28) | 71 px — **18% of the short side** |
 
-Cell size is 7.84 × 15 px at the hardcoded `fontSize: 13` (`web/src/term/TerminalTile.tsx:63`).
+Cell size is 7.84 × 15 px at the hardcoded `fontSize: 13` (`web/src/term/TerminalTile.tsx`).
 
 - **49 columns** is the core reading problem. Anything assuming 80 wraps: `git status` hints, `ls -l`,
   test output, Claude Code's TUI. The screenshot of `fatal: not a git repository (or any of the
   parent directories): .git` wraps mid-word in portrait.
-- **`scrollback: 0`** (`TerminalTile.tsx:61`) is correct — tmux owns history (`history-limit 50000`,
-  `internal/tmuxmgr/manager.go:64`) — but it means **there is no way to scroll back on a phone at
+- **`scrollback: 0`** (`TerminalTile.tsx`) is correct — tmux owns history (`history-limit 50000`,
+  `internal/tmuxmgr/manager.go`) — but it means **there is no way to scroll back on a phone at
   all**. tmux copy-mode is reachable only via the prefix key, and there is no key on the iOS keyboard
   that produces `Ctrl`.
 - **No modifier keys.** No Esc, Tab, Ctrl, Alt, arrows, `|`, `~`, `/`. That rules out vim, `Ctrl-C`,
@@ -45,7 +45,7 @@ Cell size is 7.84 × 15 px at the hardcoded `fontSize: 13` (`web/src/term/Termin
 ### Two structural gotchas found while measuring
 
 **(a) The soft keyboard resizes the *shared* tmux window.**
-`window-size manual` (`manager.go:79`) plus the arbiter (`internal/tmuxmgr/arbiter.go`) means the
+`window-size manual` (`manager.go`) plus the arbiter (`internal/tmuxmgr/arbiter.go`) means the
 connection that most recently typed owns the window size. On Android, opening the keyboard shrinks
 the layout viewport → `ResizeObserver` → `fit()` → resize frame. Simulated by shrinking the viewport
 to 393×516 after one keystroke from the phone tab:
@@ -60,8 +60,15 @@ fails the other way: Safari does not shrink `dvh` or `innerHeight` for the keybo
 `visualViewport`), nothing in `web/src` listens to `visualViewport`, so the terminal keeps rendering
 51 rows and the prompt sits **behind** the keyboard.
 
+`web/src/term/reflowGate.ts` does *not* help here, despite looking like it should: it suppresses
+per-frame refits only while a grid splitter is being dragged, and the mobile view has no splitter.
+A keyboard-driven viewport change still runs the full `ResizeObserver` → `fit()` → resize-frame
+path. It is the right place to hang a suppression if R4/R5/R7 need one — the hold/release plus
+`onReflowRelease` shape already matches "defer, then refit once" — but that wiring does not exist
+today.
+
 **(b) `env(safe-area-inset-*)` is currently dead code.**
-`index.css:1261` and `:1290` pad for the notch and home indicator, but `web/index.html:5` is
+`index.css` pads for the notch and home indicator, but `web/index.html` is
 `width=device-width, initial-scale=1.0` — without `viewport-fit=cover` those insets resolve to `0px`
 on iOS, and the page is letterboxed inside the safe area instead of using the full screen. Fixing
 this is worth ~1 row portrait and a chunk of width in landscape.
@@ -71,11 +78,11 @@ this is worth ~1 row portrait and a chunk of width in landscape.
 ## 2. Two capabilities verified over the wire
 
 Both matter because they mean the interesting work is **frontend-only**. `internal/server/ws.go`
-already forwards every binary frame straight to the PTY (`ws.go:154`); text frames are resize JSON
+already forwards every binary frame straight to the PTY (`ws.go`); text frames are resize JSON
 and nothing else. No new protocol, no new endpoint.
 
 **Touch-drag scrollback works via synthesized mouse-wheel escapes.** tmux mouse mode is on
-(`manager.go:85`), and its default wheel binding enters copy-mode. Sending SGR wheel bytes down the
+(`manager.go`), and its default wheel binding enters copy-mode. Sending SGR wheel bytes down the
 existing PTY socket from page JS:
 
 ```js
@@ -131,7 +138,7 @@ inertia. Notes:
 - tmux mouse mode owns click-drag, so today a tap already sends press+release to tmux. Decide a
   policy: plain drag = scroll, long-press-then-drag = pass mouse through (selection). Whatever is
   chosen, it must be one rule, documented next to the `shiftDragCapture` comment in
-  `TerminalTile.tsx:150`.
+  `TerminalTile.tsx`.
 - Add an on-screen affordance for "you are in copy-mode" — tmux shows nothing with `status off`.
 
 **R3 — Reclaim vertical chrome.**
@@ -147,7 +154,7 @@ hiding the prompt behind the keyboard. Small diff, fixes the worst iOS symptom. 
 
 **R5 — Stop the phone hijacking the shared window.**
 A "don't resize the shared session from this device" toggle: keep sending `active: false` so the
-arbiter never grants ownership (`arbiter.go:80`). Caveat found while reading `attach.go:40`: with
+arbiter never grants ownership (`arbiter.go`). Caveat found while reading `attach.go`: with
 `window-size manual`, a non-owner client smaller than the window gets a **cropped** view — tmux will
 not pan. So this toggle is only usable in combination with R1, i.e. when the phone's font is small
 enough that its column count already meets or exceeds the desktop's. Worth having; not worth having
@@ -170,9 +177,9 @@ Re-fit to the *visual* viewport so the prompt is the bottom line, and keep the l
   tmux-level (copy-mode, pane switching) should go through mouse sequences or an explicit API, never
   a guessed prefix.
 - Sticky modifiers (tap Ctrl, then a letter) beat chording on a touchscreen.
-- `extended-keys on` and `xterm*:extkeys` are already set (`manager.go:87`), so CSI-u encodings are
+- `extended-keys on` and `xterm*:extkeys` are already set (`manager.go`), so CSI-u encodings are
   available for the awkward combinations, the same route `Shift+Enter` already takes
-  (`TerminalTile.tsx:144`).
+  (`TerminalTile.tsx`).
 
 **W2 — Compose bar.** A multi-line textarea with **Send** and **Send + Enter**, delivered via
 `term.paste()` (bracketed paste, verified above). This is the single highest-value item for writing
@@ -182,7 +189,7 @@ dictation (D1).
 
 **W3 — Explicit Paste button** using `navigator.clipboard.readText()` inside the tap gesture. Long-
 press paste over xterm's 1-character-wide hidden textarea is unreliable on both platforms today. The
-copy direction is already handled (OSC 52 + `ClipboardAddon`, `manager.go:91`).
+copy direction is already handled (OSC 52 + `ClipboardAddon`, `manager.go`).
 
 **W4 — Touch selection.** Give copy-mode yank a touch path (see R2's long-press policy); OSC 52 then
 puts the result on the system clipboard with no further work.
@@ -247,9 +254,9 @@ phones:
 ## 6. Consistency notes if any of this ships
 
 - README currently lists "sustained phone-first terminal work" as an explicit **non-goal**
-  (~line 506). Anything past R3/R4 contradicts it — update that paragraph rather than leaving it
+  (in the security section). Anything past R3/R4 contradicts it — update that paragraph rather than leaving it
   stale.
-- `MOBILE_VIEW_QUERY` is duplicated in `web/src/useMediaQuery.ts:8` and `web/src/index.css:1245`;
+- `MOBILE_VIEW_QUERY` is duplicated in `web/src/useMediaQuery.ts` and `web/src/index.css`;
   any new mobile-only CSS has to respect that pairing.
 - Per-device settings belong in `localStorage` next to `web/src/servers.ts`. Only genuinely
   daemon-wide behaviour belongs in `internal/config`.
