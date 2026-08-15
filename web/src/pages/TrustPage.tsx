@@ -86,7 +86,10 @@ export default function TrustPage() {
               certificate → CA certificate.
             </li>
             <li>Select the downloaded file and approve Android's CA warning.</li>
-            <li>Return to Chrome, then reload this page.</li>
+            <li>
+              Return to Chrome, then reload this page. If it still reports the daemon as untrusted, force stop Chrome
+              (Settings → Apps → Chrome → Force stop, or swipe it away from recents) and open this page again.
+            </li>
           </ol>
           <p>
             On Samsung and some other devices, wording differs. Use Security and privacy → More security settings →
@@ -123,7 +126,14 @@ export default function TrustPage() {
             </a>
           </section>
         ) : (
-          <button onClick={() => window.location.reload()}>Reload and check trust</button>
+          <section>
+            <button onClick={() => window.location.reload()}>Reload and check trust</button>
+            <p>
+              Chrome caches the failed TLS handshake for this origin, so a reload alone often keeps showing the daemon
+              as untrusted even after the CA is installed correctly. Force stop Chrome and reopen this page if that
+              happens.
+            </p>
+          </section>
         )}
       </article>
     </main>
