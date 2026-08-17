@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
+import { FitAddon } from "@xterm/addon-fit";
 import TerminalTile from "../term/TerminalTile";
 import { beginReflowHold, endReflowHold, isReflowHeld } from "../term/reflowGate";
 
@@ -303,4 +304,31 @@ test("selection is copied to the clipboard once the drag settles", async () => {
 test("loads WebLinksAddon on terminal mount", () => {
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
   expect(loadedAddons.some((addon) => addon?.constructor?.name === "WebLinksAddon")).toBe(true);
+});
+
+// A tile the dir filter has hidden has no box at all. Fitting to it would size
+// the terminal — and this connection's PTY — to nothing, and that size would
+// still be there when the tile came back.
+test("a tile with no box does not reflow", async () => {
+  mockSessions(async () => new Response(JSON.stringify([session("running")])));
+  const fitSpy = vi.spyOn(FitAddon.prototype, "fit");
+  const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  const box = container.querySelector(".terminal-tile > div") as HTMLElement;
+
+  const setBox = (w: number, h: number) => {
+    Object.defineProperty(box, "clientWidth", { configurable: true, value: w });
+    Object.defineProperty(box, "clientHeight", { configurable: true, value: h });
+  };
+
+  setBox(0, 0);
+  act(() => ws.onopen?.());
+  act(() => FakeResizeObserver.instances[0].cb());
+  expect(fitSpy).not.toHaveBeenCalled();
+
+  // Back on screen: the observer fires with a real box and the terminal refits.
+  setBox(800, 600);
+  act(() => FakeResizeObserver.instances[0].cb());
+  expect(fitSpy).toHaveBeenCalled();
 });

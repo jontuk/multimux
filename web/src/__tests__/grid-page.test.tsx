@@ -1160,7 +1160,7 @@ test("clicking a dir button solos that directory's tiles and quick-add buttons",
 
   // Clicking a different button moves the solo rather than adding to it.
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
-  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("term-1")).not.toBeVisible());
   expect(screen.getByRole("button", { name: /add to grid — \/b/ })).toBeInTheDocument();
   expect(soloDir()).toBe("/b");
 
@@ -1230,7 +1230,7 @@ test("a solo shows its ended sessions and hides tiles with no known session", as
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
 
   // A tile whose session is unknown has no directory to match, so it hides…
-  await waitFor(() => expect(screen.queryByTestId("term-99")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("term-99")).not.toBeVisible());
   // …while visibility follows the directory whatever the status, so the ended
   // session in the soloed directory keeps its dismiss button.
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
@@ -1242,7 +1242,7 @@ test("the solo is read back from storage on mount", async () => {
   mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
   render(<GridPage />);
   await screen.findByRole("button", { name: /show all directories/ });
-  expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
+  expect(screen.getByTestId("term-1")).not.toBeVisible();
 });
 
 test("removing a tile while filtered removes the right session", async () => {
@@ -1257,7 +1257,7 @@ test("removing a tile while filtered removes the right session", async () => {
   await screen.findByTestId("term-2");
   // Solo /b, so session 2 is the only tile on screen and sits at view index 0.
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
-  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("term-1")).not.toBeVisible());
 
   await userEvent.click(screen.getByRole("button", { name: /remove session 2 from grid/ }));
   await waitFor(() => {
@@ -1286,7 +1286,7 @@ test("drag-swapping tiles while soloed reorders the overlay, not the stored layo
   render(<GridPage />);
   await screen.findByTestId("term-5");
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
-  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("term-1")).not.toBeVisible());
   const putsBefore = fetchMock.mock.calls.filter(
     ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
   ).length;
@@ -1386,7 +1386,7 @@ test("splitter drags while filtered resize the view without persisting", async (
   const { container } = render(<GridPage />);
   await screen.findByTestId("term-5");
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
-  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("term-1")).not.toBeVisible());
 
   const putsBefore = fetchMock.mock.calls.filter(
     ([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT",
@@ -1432,7 +1432,7 @@ test("clearing the filter restores the stored sizes", async () => {
   const { container } = render(<GridPage />);
   await screen.findByTestId("term-2");
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
-  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("term-1")).not.toBeVisible());
   await userEvent.click(screen.getByRole("button", { name: /show all directories/ }));
   await screen.findByTestId("term-1");
   expect(container.querySelector('[data-divider="col-0-0"]')).toHaveStyle({ left: "30%" });
@@ -1515,7 +1515,7 @@ test("a soloed directory keeps its columns and order across a switch away and ba
   render(<GridPage />);
   await screen.findByTestId("term-5");
   await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
-  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("term-1")).not.toBeVisible());
 
   // One column, and the two tiles swapped.
   await userEvent.click(screen.getByLabelText("fewer columns"));
@@ -1607,4 +1607,77 @@ test("a session launched into a soloed directory lands at the end of its view", 
     expect(tiles[0].querySelector("[data-testid=term-1]")).not.toBeNull();
     expect(tiles[1].querySelector("[data-testid=term-3]")).not.toBeNull();
   });
+});
+
+test("a failed session refresh keeps the dir buttons and the solo", async () => {
+  // The pills are derived from the session lists, so a refresh that fails —
+  // a sleeping PWA, a phone changing networks — must not be mistaken for
+  // "this daemon has no sessions". Losing them silently drops the solo too.
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  const fetchMock = mockFetch(layout);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+
+  const reachable = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/api/sessions")) throw new TypeError("Failed to fetch");
+    return reachable(input, init);
+  });
+
+  const calls = vi.mocked(useEvents).mock.calls;
+  const onEvent = calls[calls.length - 1][1];
+  await act(async () => onEvent("git_changed"));
+
+  expect(screen.getByRole("button", { name: /show all directories/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /show only sessions in \/b/ })).toBeInTheDocument();
+  expect(soloDir()).toBe("/a");
+});
+
+test("returning to the tab resyncs sessions and layout", async () => {
+  // The events socket is the only thing that refetches, so a tab that missed
+  // events while it was hidden (or whose socket died there) would otherwise
+  // render stale sessions — no dir buttons, no quick-adds — until a reload.
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = mockFetch(layout);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  const gets = (path: string) =>
+    fetchMock.mock.calls.filter(([input, init]) => String(input).includes(path) && (init?.method ?? "GET") === "GET")
+      .length;
+  const sessionsBefore = gets("/api/sessions");
+  const layoutBefore = gets("/api/layout");
+
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  await waitFor(() => expect(gets("/api/sessions")).toBeGreaterThan(sessionsBefore));
+  await waitFor(() => expect(gets("/api/layout")).toBeGreaterThan(layoutBefore));
+});
+
+test("a filtered-out tile stays mounted so switching back does not rebuild it", async () => {
+  // Unmounting a tile disposes xterm and kills the session's `tmux
+  // attach-session`, so every solo switch would respawn and redraw whatever it
+  // lands on. The node must survive, out of view.
+  mockFetch({
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  });
+  render(<GridPage />);
+  const b = await screen.findByTestId("term-2"); // session 2 lives in /b
+
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+  await waitFor(() => expect(screen.getByTestId("term-2")).not.toBeVisible());
+  expect(screen.getByTestId("term-2")).toBe(b);
+  expect(screen.getByTestId("term-1")).toBeVisible();
+
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/b/ }));
+  await waitFor(() => expect(screen.getByTestId("term-2")).toBeVisible());
+  expect(screen.getByTestId("term-2")).toBe(b);
+  expect(screen.getByTestId("term-1")).not.toBeVisible();
 });

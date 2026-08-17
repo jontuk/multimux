@@ -10,6 +10,15 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// keepaliveInterval paces both the events socket's ping and its keepalive
+// event. A var only so tests need not wait out a real interval; production
+// never changes it.
+var keepaliveInterval = pingInterval
+
+// The heartbeat clients can actually see. Pre-marshalled: it is identical for
+// every connection and every tick.
+var keepaliveFrame = []byte(`{"type":"keepalive"}`)
+
 // Hub fans session/layout events out to every connected events WebSocket so
 // multiple open tabs stay consistent.
 type Hub struct {
@@ -83,7 +92,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	ping := time.NewTicker(pingInterval)
+	ping := time.NewTicker(keepaliveInterval)
 	defer ping.Stop()
 	for {
 		select {
@@ -93,6 +102,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-ping.C:
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+			// The ping keeps proxies and NAT from timing the socket out, but a
+			// browser cannot observe ping frames at all: to a page, an idle
+			// socket and one whose network died without a close look identical,
+			// and the page then stops resyncing while believing it is
+			// connected. The keepalive is the same heartbeat made visible to
+			// JS. Clients that don't know the type ignore it, as they do any
+			// other unknown event.
+			if err := conn.WriteMessage(websocket.TextMessage, keepaliveFrame); err != nil {
 				return
 			}
 		case <-closed:

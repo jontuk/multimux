@@ -97,6 +97,17 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       }
     }
 
+    // A tile the dir filter has hidden is display:none, so it has no box to
+    // measure. Fitting to it would size the terminal — and, through
+    // sendResize, this connection's PTY — to nothing, and that size would
+    // still be there when the tile came back. The ResizeObserver fires again
+    // the moment it does, which is when the refit belongs.
+    function fitToBox() {
+      const el = containerRef.current;
+      if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
+      fit.fit();
+    }
+
     function connect() {
       if (closed) return;
       setState("connecting");
@@ -105,7 +116,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       ws.onopen = () => {
         setState("open");
         backoff = 500;
-        fit.fit();
+        fitToBox();
         sendResize();
       };
       ws.onmessage = (ev) => {
@@ -201,7 +212,7 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     // catch-up call is a passive sendResize(), so ownership is unaffected.
     let reflowPending = false;
     const reflow = () => {
-      fit.fit();
+      fitToBox();
       sendResize();
     };
     const ro = new ResizeObserver(() => {

@@ -180,3 +180,46 @@ func TestExpiredAuthSessionSweepLogsOnlyWhenRowsChange(t *testing.T) {
 		}
 	}
 }
+
+// A browser cannot see WS ping frames, so an idle events socket gives the page
+// no way to tell a live connection from one a sleeping phone's network killed
+// without a close — the state where the grid quietly stops resyncing. The
+// keepalive event is that signal, and it must be plain enough that a client
+// which does not know the type can ignore it.
+func TestEventsSendsKeepalive(t *testing.T) {
+	old := keepaliveInterval
+	keepaliveInterval = 10 * time.Millisecond
+	t.Cleanup(func() { keepaliveInterval = old })
+
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/events?token=" + token
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial events: %v", err)
+	}
+	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := conn.ReadMessage(); err != nil { // hello
+		t.Fatalf("read hello: %v", err)
+	}
+
+	var ev struct {
+		Type string `json:"type"`
+	}
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read keepalive: %v", err)
+		}
+		if err := json.Unmarshal(raw, &ev); err != nil {
+			t.Fatalf("keepalive frame %s: %v", raw, err)
+		}
+		if ev.Type == "keepalive" {
+			return
+		}
+	}
+}
