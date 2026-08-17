@@ -54,8 +54,15 @@ export function removeTile(layout: Layout, index: number): Layout {
   return normalize(tiles, Math.min(layout.shape.cols, Math.max(1, count)), layout.rowSizes, layout.colSizes);
 }
 
+// The mirror of removeTile's shrink: dropping to one session narrows the grid
+// to a single column, so the second session added back would stack under it
+// rather than beside it. A lone session is never a column count the user
+// chose — it is what removeTile left behind — so widen to two and put the pair
+// side by side. Only this one step: beyond two, the stored column count stands.
 export function addTile(layout: Layout, tile: NonNullable<Tile>): Layout {
-  return normalize([...layout.tiles, tile], layout.shape.cols, layout.rowSizes, layout.colSizes);
+  const count = layout.tiles.filter((t) => t !== null).length;
+  const cols = count === 1 && layout.shape.cols === 1 ? 2 : layout.shape.cols;
+  return normalize([...layout.tiles, tile], cols, layout.rowSizes, layout.colSizes);
 }
 
 export function swapTiles(layout: Layout, a: number, b: number): Layout {

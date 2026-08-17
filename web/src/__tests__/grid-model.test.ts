@@ -57,6 +57,34 @@ test("addTile appends a new row when the grid is full", () => {
   expect(l.tiles).toEqual([sess(1), sess(2), sess(3), null]);
 });
 
+test("addTile widens a single-column grid so the second session lands beside the first", () => {
+  let l = normalize([sess(1)], 1);
+  expect(l.shape).toEqual({ rows: 1, cols: 1 });
+  l = addTile(l, sess(2));
+  expect(l.shape).toEqual({ rows: 1, cols: 2 });
+  expect(l.tiles).toEqual([sess(1), sess(2)]);
+});
+
+test("addTile widens only the first step out of one column", () => {
+  let l = addTile(normalize([sess(1)], 1), sess(2));
+  l = addTile(l, sess(3));
+  expect(l.shape).toEqual({ rows: 2, cols: 2 });
+});
+
+test("addTile leaves an empty single-column grid alone", () => {
+  const l = addTile(normalize([], 1), sess(1));
+  expect(l.shape).toEqual({ rows: 1, cols: 1 });
+});
+
+test("remove then add round-trips back to a side-by-side pair", () => {
+  let l = normalize([sess(1), sess(2)], 2);
+  l = removeTile(l, 1);
+  expect(l.shape).toEqual({ rows: 1, cols: 1 });
+  l = addTile(l, sess(3));
+  expect(l.shape).toEqual({ rows: 1, cols: 2 });
+  expect(l.tiles).toEqual([sess(1), sess(3)]);
+});
+
 test("removeTile drops a session and shrinks rows", () => {
   let l = normalize([sess(1), sess(2), sess(3)], 2);
   expect(l.shape.rows).toBe(2);

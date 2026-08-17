@@ -263,7 +263,8 @@ test("launching when grid is full grows the grid instead of blocking", async () 
 
   const put = fetchMock.mock.calls.findLast(([, init]) => init?.method === "PUT");
   const saved = JSON.parse(String(put?.[1]?.body));
-  expect(saved.shape).toEqual({ rows: 2, cols: 1 });
+  // A full one-column grid widens rather than stacking, so the pair sits side by side.
+  expect(saved.shape).toEqual({ rows: 1, cols: 2 });
 });
 
 test("tile header shows session id, tool, dir, and remove-from-grid keeps the session alive", async () => {
