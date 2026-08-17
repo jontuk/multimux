@@ -111,47 +111,84 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	sess, err := s.cfg.Store.CreateSession(tool.ID, workdir)
-	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
-		return
-	}
-	// A tmux session may already hold this name without a backing DB row —
-	// left over from a wiped DB or a failed kill. No row means it is
-	// unreachable from the UI, so replace it rather than fail on the name.
-	replacedOrphan := false
-	if s.cfg.Tmux.IsAlive(sess.TmuxName) {
-		if err := s.cfg.Tmux.KillSession(sess.TmuxName); err != nil {
+	// A tool is a group when its command carries the separator: one launch,
+	// one session per command. An ordinary tool yields a single command and
+	// takes exactly the path it always did.
+	commands := store.SplitCommand(tool.Command)
+	created := make([]store.Session, 0, len(commands))
+	// Reported only once the whole group is up: a launch that fails later is
+	// rolled back, and a rolled-back launch replaced nothing.
+	var replacedOrphans []string
+	// A group is all-or-nothing. Anything already started is undone before the
+	// error is returned, so a failure halfway through never leaves the user
+	// with half a group to clean up.
+	rollback := func() {
+		for _, sess := range created {
+			_ = s.cfg.Tmux.KillSession(sess.TmuxName)
 			_ = s.cfg.Store.DeleteSession(sess.ID)
+		}
+	}
+	for _, command := range commands {
+		sess, err := s.cfg.Store.CreateSession(tool.ID, workdir)
+		if err != nil {
+			rollback()
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		replacedOrphan = true
-	}
-	if err := s.cfg.Tmux.CreateSession(sess.TmuxName, workdir, tool.Command); err != nil {
-		// No orphan rows: roll the DB back when tmux fails.
-		_ = s.cfg.Store.DeleteSession(sess.ID)
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
-		return
+		// Sessions record a tool, not a command, so every tile of a group would
+		// otherwise read the same. A single-command tool is left unlabelled:
+		// there is nothing to tell apart, and the label belongs to the user.
+		if len(commands) > 1 {
+			label := store.CommandLabel(command)
+			if err := s.cfg.Store.SetSessionLabel(sess.ID, label); err != nil {
+				_ = s.cfg.Store.DeleteSession(sess.ID)
+				rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			sess.Label = label
+		}
+		// A tmux session may already hold this name without a backing DB row —
+		// left over from a wiped DB or a failed kill. No row means it is
+		// unreachable from the UI, so replace it rather than fail on the name.
+		if s.cfg.Tmux.IsAlive(sess.TmuxName) {
+			if err := s.cfg.Tmux.KillSession(sess.TmuxName); err != nil {
+				_ = s.cfg.Store.DeleteSession(sess.ID)
+				rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			replacedOrphans = append(replacedOrphans, sess.TmuxName)
+		}
+		if err := s.cfg.Tmux.CreateSession(sess.TmuxName, workdir, command); err != nil {
+			// No orphan rows: roll the DB back when tmux fails.
+			_ = s.cfg.Store.DeleteSession(sess.ID)
+			rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		created = append(created, sess)
 	}
 	// Recorded only here, once tmux has really started: resolveSubdir rejects
-	// bad subdirs above and a tmux failure rolls the row back, so anything that
+	// bad subdirs above and a tmux failure rolls the rows back, so anything that
 	// reaches this line is a subdir worth suggesting again. A failed history
-	// write is logged and dropped — the session exists and the response is
+	// write is logged and dropped — the sessions exist and the response is
 	// already a success.
 	if err := s.cfg.Store.RecordSubdir(dir.ID, in.Subdir); err != nil {
 		slog.Warn("subdir history not recorded", "directory_id", dir.ID, "error", err)
 	}
-	if replacedOrphan {
-		slog.Info("orphan tmux session replaced", "tmux_name", sess.TmuxName)
+	for _, name := range replacedOrphans {
+		slog.Info("orphan tmux session replaced", "tmux_name", name)
 	}
-	slog.Info("session created",
-		"session_id", sess.ID,
-		"tmux_name", sess.TmuxName,
-		"tool_id", tool.ID,
-		"directory_id", dir.ID)
-	s.broadcast("session_created", sess)
-	writeJSON(w, 201, sess)
+	for _, sess := range created {
+		slog.Info("session created",
+			"session_id", sess.ID,
+			"tmux_name", sess.TmuxName,
+			"tool_id", tool.ID,
+			"directory_id", dir.ID)
+		s.broadcast("session_created", sess)
+	}
+	writeJSON(w, 201, created)
 }
 
 // resolveSubdir extends a configured directory with a client-supplied relative

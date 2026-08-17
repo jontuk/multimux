@@ -102,6 +102,10 @@ export default function ToolsPanel() {
           Add tool
         </button>
       </div>
+      <p className="settings-hint">
+        Separate commands with <code>;;</code> to make a tool group: <code>zsh ;; claude</code> launches one session per
+        command. Write <code>\;;</code> for a literal <code>;;</code>.
+      </p>
     </section>
   );
 }

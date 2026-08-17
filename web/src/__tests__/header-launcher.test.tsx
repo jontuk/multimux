@@ -25,7 +25,7 @@ function mockLocalDaemon() {
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
     if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
       return new Response(
-        JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/repos/multimux/web", status: "running" }),
+        JSON.stringify([{ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/repos/multimux/web", status: "running" }]),
         { status: 201 },
       );
     return new Response("[]");
@@ -79,7 +79,7 @@ test("switching servers clears the previous daemon's tools and dirs until the ne
     if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
     if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
-      return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
+      return new Response(JSON.stringify([{ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }]), {
         status: 201,
       });
     return new Response("[]");
@@ -131,7 +131,7 @@ test("failed launch displays error and leaves + New enabled so user can edit inp
         return new Response(JSON.stringify({ error: "directory invalid/path does not exist" }), { status: 400 });
       }
       return new Response(
-        JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/repos/multimux/web", status: "running" }),
+        JSON.stringify([{ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/repos/multimux/web", status: "running" }]),
         { status: 201 },
       );
     }
@@ -179,7 +179,7 @@ function mockDaemonWithHistory(history: Record<number, string[]>) {
     if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(twoDirs));
     if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
-      return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
+      return new Response(JSON.stringify([{ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }]), {
         status: 201,
       });
     return new Response("[]");
@@ -197,7 +197,7 @@ function mockDaemonWithChildren(children: Record<string, string[]>, history: str
     if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
     if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
-      return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
+      return new Response(JSON.stringify([{ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }]), {
         status: 201,
       });
     return new Response("[]");
@@ -519,4 +519,30 @@ test("Escape closes the history without clearing the field", async () => {
   fireEvent.keyDown(subdir, { key: "Escape" });
   expect(screen.queryByText("web/src")).toBeNull();
   expect(subdir.value).toBe("web");
+});
+
+// A tool whose command carries the group separator answers one launch with
+// several sessions; every one of them has to reach the grid.
+test("a group launch places every session it started", async () => {
+  const group = [
+    { id: 3, tmuxName: "mm-3", toolId: 1, dir: "/repos/multimux", status: "running", label: "zsh" },
+    { id: 4, tmuxName: "mm-4", toolId: 1, dir: "/repos/multimux", status: "running", label: "claude" },
+  ];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("/children")) return new Response("[]");
+    if (url.includes("/subdirs")) return new Response("[]");
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(localTools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(localDirs));
+    if (url.includes("/api/sessions") && (init?.method ?? "GET") === "POST")
+      return new Response(JSON.stringify(group), { status: 201 });
+    return new Response("[]");
+  });
+  const onLaunched = vi.fn();
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={onLaunched} />);
+
+  fireEvent.click(await screen.findByText("+ New"));
+
+  await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(2));
+  expect(onLaunched.mock.calls.map(([, sess]) => sess.id)).toEqual([3, 4]);
 });

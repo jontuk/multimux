@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,8 +40,7 @@ func TestSessionCreateKillDismiss(t *testing.T) {
 	if w.Code != 201 {
 		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
 	}
-	var sess store.Session
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 	if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
 		t.Fatal("tmux session not created")
 	}
@@ -100,8 +100,7 @@ func TestCreateSessionSubdir(t *testing.T) {
 	if w.Code != 201 {
 		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
 	}
-	var sess store.Session
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 	// EvalSymlinks resolves the temp dir (/var → /private/var on macOS), so
 	// compare against the resolved base rather than the raw one.
 	realBase, err := filepath.EvalSymlinks(base)
@@ -161,8 +160,7 @@ func TestCreateSessionReplacesOrphanTmuxSession(t *testing.T) {
 	if w.Code != 201 {
 		t.Fatalf("create with orphan = %d: %s", w.Code, w.Body.String())
 	}
-	var sess store.Session
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 	if sess.TmuxName != orphan {
 		t.Fatalf("tmux name = %q, want %q", sess.TmuxName, orphan)
 	}
@@ -557,8 +555,7 @@ func TestSessionRename(t *testing.T) {
 	if w.Code != 201 {
 		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
 	}
-	var sess store.Session
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 	path := fmt.Sprintf("/api/sessions/%d/label", sess.ID)
 
 	// Rename → 200 with the updated session, and the list agrees.
@@ -602,8 +599,7 @@ func TestSessionRenameValidation(t *testing.T) {
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	dir, _ := st.CreateDir("tmp", t.TempDir())
 	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
-	var sess store.Session
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 	path := fmt.Sprintf("/api/sessions/%d/label", sess.ID)
 
 	// 64 runes of a multi-byte character: the cap counts runes, not bytes.
@@ -645,8 +641,7 @@ func TestSessionRenameBroadcasts(t *testing.T) {
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	dir, _ := st.CreateDir("tmp", t.TempDir())
 	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
-	var sess store.Session
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 
 	ch := s.hub.Subscribe()
 	defer s.hub.Unsubscribe(ch)
@@ -713,4 +708,129 @@ func TestRejectedAndEmptySubdirsAreNotRecorded(t *testing.T) {
 	if got, _ := st.ListSubdirs(dir.ID); len(got) != 0 {
 		t.Fatalf("history = %v, want empty", got)
 	}
+}
+
+// A tool whose command carries the group separator launches one session per
+// command, each labelled with the program it runs — sessions record a tool,
+// not a command, so without the label every tile in the group reads the same.
+func TestSessionGroupLaunch(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("dev", "sleep 60 ;; cat")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	if w.Code != 201 {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+	var sessions []store.Session
+	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, w.Body.String())
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want 2: %+v", len(sessions), sessions)
+	}
+	wantLabels := []string{"sleep", "cat"}
+	for i, sess := range sessions {
+		if sess.Label != wantLabels[i] {
+			t.Fatalf("session %d label = %q, want %q", i, sess.Label, wantLabels[i])
+		}
+		if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
+			t.Fatalf("tmux session %s not created", sess.TmuxName)
+		}
+	}
+	if sessions[0].ID == sessions[1].ID {
+		t.Fatal("group returned the same session twice")
+	}
+	rows, _ := st.ListSessions()
+	if len(rows) != 2 {
+		t.Fatalf("stored %d rows, want 2", len(rows))
+	}
+}
+
+// An ordinary tool is still one session, and it keeps an empty label so the
+// user's own name for it is the only one a tile ever shows.
+func TestSessionSingleLaunchIsUnlabelled(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	if w.Code != 201 {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+	var sessions []store.Session
+	json.Unmarshal(w.Body.Bytes(), &sessions)
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].Label != "" {
+		t.Fatalf("label = %q, want empty for a single-command tool", sessions[0].Label)
+	}
+}
+
+// Each session of a group must run its own command, not the group's text.
+func TestSessionGroupRunsEachCommand(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	workdir := t.TempDir()
+	tool, _ := st.CreateTool("dev", "touch one; sleep 60 ;; touch two; sleep 60")
+	dir, _ := st.CreateDir("tmp", workdir)
+
+	if w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID)); w.Code != 201 {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for _, name := range []string{"one", "two"} {
+		for {
+			if _, err := os.Stat(filepath.Join(workdir, name)); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s never created: command did not run in its own session", name)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
+// A group is all-or-nothing: a session that fails halfway through takes the
+// ones already started with it, so the user never has to clean up half a
+// group by hand.
+func TestSessionGroupRollsBackOnFailure(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	s.cfg.Tmux = tmuxmgr.New("mm", "unused")
+	token, _ := am.CreateSession("UA")
+	tool, _ := st.CreateTool("dev", "sleep 60 ;; sleep 61")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+
+	log := fakeTmux(t, `case "$*" in
+  *"new-session -d -s mm-2"*) echo 'boom' >&2; exit 2 ;;
+  *has-session*) exit 1 ;;
+  *) exit 0 ;;
+esac
+`)
+	if w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID)); w.Code != 500 {
+		t.Fatalf("create with failing tmux = %d, want 500", w.Code)
+	}
+	rows, _ := st.ListSessions()
+	if len(rows) != 0 {
+		t.Fatalf("rows = %+v, want none after a rolled-back group", rows)
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "kill-session") {
+		t.Fatalf("the session that did start was not killed; tmux calls:\n%s", calls)
+	}
+}
+
+// onlySession decodes a launch that was expected to start exactly one session.
+// Every launch answers with a list, because a tool may be a group.
+func onlySession(t *testing.T, w *httptest.ResponseRecorder) store.Session {
+	t.Helper()
+	var sessions []store.Session
+	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("decode sessions: %v (body %s)", err, w.Body.String())
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1: %+v", len(sessions), sessions)
+	}
+	return sessions[0]
 }

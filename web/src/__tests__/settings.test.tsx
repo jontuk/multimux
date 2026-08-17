@@ -248,3 +248,17 @@ test("a failed daemon-settings fetch reports the error instead of spinning forev
   expect(screen.queryByText("Save")).toBeNull();
   fetchMock.mockRestore();
 });
+
+// The separator is the only way to discover tool groups, so the panel that
+// edits commands has to say it exists.
+test("the tools panel explains the group separator", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify([{ id: 1, name: "zsh", command: "zsh" }])),
+  );
+
+  render(<ToolsPanel />);
+
+  const hint = await screen.findByText(/Separate commands with/);
+  expect(hint.textContent).toContain(";;");
+  expect(hint.textContent).toMatch(/one session per command/i);
+});

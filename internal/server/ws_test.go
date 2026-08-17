@@ -35,8 +35,7 @@ func TestPTYBridgeEcho(t *testing.T) {
 	tool, _ := st.CreateTool("sh", "sh")
 	dir, _ := st.CreateDir("tmp", t.TempDir())
 	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
-	var sess struct{ ID int64 }
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 
 	conn := dialPTY(t, ts, sess.ID, token) // token auth → any Origin OK
 	resize, _ := json.Marshal(map[string]any{"type": "resize", "cols": 100, "rows": 30})
@@ -75,8 +74,7 @@ func TestPTYClosesOnSessionExit(t *testing.T) {
 	tool, _ := st.CreateTool("sh", "sh")
 	dir, _ := st.CreateDir("tmp", t.TempDir())
 	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
-	var sess struct{ ID int64 }
-	json.Unmarshal(w.Body.Bytes(), &sess)
+	sess := onlySession(t, w)
 
 	conn := dialPTY(t, ts, sess.ID, token)
 	// Deliberately never call conn.Close() ourselves: we want to observe the

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -19,6 +20,63 @@ type Dir struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 	Path string `json:"path"`
+}
+
+// commandSep separates the commands of a tool group: one launch of
+// `zsh ;; claude` opens two sessions. It is deliberately not a comma or a
+// pipe — both appear in real command lines (`--allowed-tools Read,Edit`,
+// `tail -f log | grep x`), and a separator that collides with ordinary syntax
+// turns one session into two without the user asking. `;;` is only valid shell
+// inside a case statement, so a tool command is very unlikely to contain one by
+// accident; `\;;` escapes it for the cases that do.
+const commandSep = ";;"
+
+// SplitCommand splits a tool's command into the commands of its group, one per
+// session to launch. A command with no separator yields itself, so an ordinary
+// tool still launches exactly one session. Blank segments are dropped — a
+// stray separator is a typo, not a session — but a command that is blank all
+// the way through stays one empty segment, because an empty command field
+// meant "launch with no command" before groups existed and still does.
+func SplitCommand(cmd string) []string {
+	var out []string
+	var cur strings.Builder
+	for i := 0; i < len(cmd); {
+		switch {
+		case strings.HasPrefix(cmd[i:], `\`+commandSep):
+			cur.WriteString(commandSep)
+			i += 1 + len(commandSep)
+		case strings.HasPrefix(cmd[i:], commandSep):
+			out = append(out, strings.TrimSpace(cur.String()))
+			cur.Reset()
+			i += len(commandSep)
+		default:
+			cur.WriteByte(cmd[i])
+			i++
+		}
+	}
+	out = append(out, strings.TrimSpace(cur.String()))
+
+	kept := make([]string, 0, len(out))
+	for _, seg := range out {
+		if seg != "" {
+			kept = append(kept, seg)
+		}
+	}
+	if len(kept) == 0 {
+		return []string{""}
+	}
+	return kept
+}
+
+// CommandLabel names one command of a group for display: the program it runs,
+// without its arguments or its path. Sessions record a tool, not a command, so
+// without this every tile in a group would carry the group's name.
+func CommandLabel(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
 }
 
 // Rows carry a position column, but it never reaches clients: list order is

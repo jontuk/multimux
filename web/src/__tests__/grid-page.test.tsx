@@ -58,7 +58,7 @@ function mockFetch(layout: unknown, sessionList: unknown[] = sessions) {
     if (url.includes("/label") && method === "PUT")
       return new Response(JSON.stringify({ id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running" }));
     if (url.includes("/api/sessions") && method === "POST")
-      return new Response(JSON.stringify({ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }), {
+      return new Response(JSON.stringify([{ id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" }]), {
         status: 201,
       });
     if (url.includes("/api/sessions")) return new Response(JSON.stringify(sessionList));

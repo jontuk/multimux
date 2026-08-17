@@ -265,8 +265,10 @@ export default function HeaderLauncher({
     setBusy(true);
     setError("");
     try {
-      const sess = await postJSON<Session>(server, "/api/sessions", { toolId, dirId, subdir });
-      onLaunched(server, sess);
+      // A launch answers with a list: a tool whose command carries the group
+      // separator starts one session per command, and each of them is a tile.
+      const started = await postJSON<Session[]>(server, "/api/sessions", { toolId, dirId, subdir });
+      for (const sess of started) onLaunched(server, sess);
       // The daemon has recorded this too; updating locally keeps the dropdown
       // right without a second round trip. But if the user has since picked
       // a different directory or server, that dropdown belongs to someone

@@ -311,3 +311,52 @@ func TestSubdirHistoryDiesWithItsDirectory(t *testing.T) {
 		t.Fatalf("history survived its directory: %v", got)
 	}
 }
+
+func TestSplitCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"plain command is one segment", "zsh", []string{"zsh"}},
+		{"separator splits", "zsh ;; claude", []string{"zsh", "claude"}},
+		{"separator needs no spaces", "zsh;;claude", []string{"zsh", "claude"}},
+		{"three segments", "zsh ;; claude ;; codex --model gpt", []string{"zsh", "claude", "codex --model gpt"}},
+		{"escaped separator stays literal", `echo a\;;b`, []string{"echo a;;b"}},
+		{"escape only applies to the separator", `echo a\b`, []string{`echo a\b`}},
+		{"blank segments are dropped", "zsh ;;  ;; claude", []string{"zsh", "claude"}},
+		// An empty command field is not a group; it stays one segment so a
+		// launch behaves exactly as it did before groups existed.
+		{"empty command is one empty segment", "", []string{""}},
+		{"whitespace-only command is one empty segment", "   ", []string{""}},
+		{"separators only", " ;; ;; ", []string{""}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := SplitCommand(c.in)
+			if len(got) != len(c.want) {
+				t.Fatalf("SplitCommand(%q) = %q, want %q", c.in, got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("SplitCommand(%q) = %q, want %q", c.in, got, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestCommandLabel(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"claude", "claude"},
+		{"claude --resume", "claude"},
+		{"/usr/local/bin/zsh -l", "zsh"},
+		{"  codex   --model gpt  ", "codex"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := CommandLabel(c.in); got != c.want {
+			t.Fatalf("CommandLabel(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
