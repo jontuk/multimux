@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { apiFetch, wsURL } from "../api";
 import type { Server } from "../servers";
@@ -10,6 +9,8 @@ import type { Session } from "../grid/types";
 import { clientId } from "../clientId";
 import { encodeResize, parseServerText } from "./protocol";
 import { isReflowHeld, onReflowRelease } from "./reflowGate";
+import { wrapAwareLinkProvider } from "./links";
+import { selectedText } from "./wrap";
 
 type Props = { server: Server; sessionId: number; onClose: () => void; autoFocus?: boolean };
 
@@ -72,7 +73,9 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new ClipboardAddon()); // OSC 52: tmux copy-mode yank → system clipboard
-    term.loadAddon(new WebLinksAddon());
+    // Our own provider, not WebLinksAddon: it joins rows the way tmux wraps
+    // them, which the addon can't see (see wrap.ts).
+    const linkProvider = term.registerLinkProvider(wrapAwareLinkProvider(term));
     term.open(containerRef.current!);
     if (autoFocusRef.current && !didAutoFocus.current) {
       didAutoFocus.current = true;
@@ -188,11 +191,22 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     const selectionSub = term.onSelectionChange(() => {
       if (copyTimeoutId) clearTimeout(copyTimeoutId);
       copyTimeoutId = setTimeout(() => {
-        const text = term.getSelection();
+        const text = selectedText(term);
         // Insecure contexts (plain-http dev on a phone) have no clipboard API.
         if (text) void navigator.clipboard?.writeText(text).catch(() => {});
       }, 150);
     });
+
+    // Cmd/Ctrl+C copies xterm's own serialization of the selection, which
+    // breaks a tmux-wrapped line at every row edge. Same rewrite as above,
+    // applied before the browser reads the clipboard.
+    const copyCapture = (e: ClipboardEvent) => {
+      const text = selectedText(term);
+      if (!text) return;
+      e.clipboardData?.setData("text/plain", text);
+      e.preventDefault();
+    };
+    captureContainer.addEventListener("copy", copyCapture, true);
 
     // Focusing this terminal claims the window size at our dims — the cheap way
     // to reclaim a window some other client shrank, without having to type.
@@ -246,6 +260,8 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       captureContainer.removeEventListener("mousedown", selectDragCapture, true);
       if (copyTimeoutId) clearTimeout(copyTimeoutId);
       selectionSub.dispose();
+      linkProvider?.dispose();
+      captureContainer.removeEventListener("copy", copyCapture, true);
       captureContainer.removeEventListener("focusin", claimOnFocus);
       dataSub.dispose();
       ro.disconnect();

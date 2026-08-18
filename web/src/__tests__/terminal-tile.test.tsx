@@ -6,6 +6,7 @@ import TerminalTile from "../term/TerminalTile";
 import { beginReflowHold, endReflowHold, isReflowHeld } from "../term/reflowGate";
 
 const loadedAddons: unknown[] = [];
+const linkProviders: unknown[] = [];
 // Selection hooks the tile subscribes to; a test drives them via fireSelection.
 let selectionListener: (() => void) | null = null;
 let selectionText = "";
@@ -36,6 +37,13 @@ vi.mock("@xterm/xterm", () => ({
     getSelection() {
       return selectionText;
     }
+    getSelectionPosition() {
+      return undefined; // exercises selectedText's fallback to getSelection
+    }
+    registerLinkProvider(provider: unknown) {
+      linkProviders.push(provider);
+      return { dispose() {} };
+    }
     write() {}
     dispose() {}
   },
@@ -46,7 +54,6 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 vi.mock("@xterm/addon-clipboard", () => ({ ClipboardAddon: class {} }));
-vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class WebLinksAddon {} }));
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -115,6 +122,7 @@ beforeAll(() => {
 beforeEach(() => {
   FakeWebSocket.instances = [];
   FakeResizeObserver.instances = [];
+  linkProviders.length = 0;
 });
 
 afterEach(() => {
@@ -301,9 +309,9 @@ test("selection is copied to the clipboard once the drag settles", async () => {
   Reflect.deleteProperty(navigator, "clipboard");
 });
 
-test("loads WebLinksAddon on terminal mount", () => {
+test("registers the wrap-aware link provider on terminal mount", () => {
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
-  expect(loadedAddons.some((addon) => addon?.constructor?.name === "WebLinksAddon")).toBe(true);
+  expect(linkProviders).toHaveLength(1);
 });
 
 // A tile the dir filter has hidden has no box at all. Fitting to it would size
