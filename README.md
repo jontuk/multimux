@@ -344,10 +344,14 @@ opens, the app follows the browser's visible viewport and refits once the
 keyboard transition settles, keeping the terminal prompt in the usable area.
 
 For longer text or phone dictation, use **Compose**. It opens a multiline editor
-for normal mobile editing and review. **Insert** pastes the draft into the
-foreground application without Enter; **Insert & Enter** performs the same paste
+for normal mobile editing and review. **Add** pastes the draft into the
+foreground application without Enter; **Add & Enter** performs the same paste
 and then sends exactly one Enter. Direct terminal focus remains available for
 short keystrokes and interactive programs.
+
+While the terminal or Compose has focus, a bottom key row provides Esc, Tab,
+Ctrl-C, the four arrow keys, and Enter. These keys always target the terminal,
+so they can interrupt or navigate a program without changing a Compose draft.
 
 Only the selected terminal is mounted. The mobile view has no launcher and no
 rename, move, remove, or terminate controls; use a wider viewport for those
