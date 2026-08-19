@@ -1545,12 +1545,6 @@ a {
     background: var(--panel);
   }
 
-  .app.grid-route .mobile-compose label {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 0.75rem;
-  }
-
   .app.grid-route .mobile-compose textarea {
     box-sizing: border-box;
     width: 100%;
@@ -1590,6 +1584,40 @@ a {
     color: var(--error);
     font-family: var(--mono);
     font-size: 0.75rem;
+  }
+
+  .app.grid-route .mobile-key-bar {
+    display: none;
+  }
+
+  .app.grid-route .mobile-terminal:focus-within > .mobile-key-bar {
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 0.2rem;
+    padding: 0.35rem calc(0.5rem + env(safe-area-inset-right)) 0.35rem calc(0.5rem + env(safe-area-inset-left));
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .app.grid-route .mobile-key-bar button {
+    min-width: 0;
+    min-height: 2.75rem;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.25rem 0.1rem;
+    background: color-mix(in srgb, var(--panel) 90%, transparent);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    text-overflow: clip;
+    touch-action: manipulation;
+  }
+
+  .app.grid-route .mobile-key-bar button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   .settings-page {

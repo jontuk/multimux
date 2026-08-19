@@ -79,6 +79,25 @@ test("Compose stays below the shrinking terminal and above the keyboard safe are
   expect(textarea).toMatch(/resize:\s*vertical/);
 });
 
+test("the essential key bar consumes space only while the mobile terminal contains focus", () => {
+  const styles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+  const hiddenKeyBar = styles.match(/\.app\.grid-route \.mobile-key-bar\s*\{([^}]*)\}/s)?.[1];
+  const focusedKeyBar = styles.match(
+    /\.app\.grid-route \.mobile-terminal:focus-within > \.mobile-key-bar\s*\{([^}]*)\}/s,
+  )?.[1];
+  const keyButton = styles.match(/\.app\.grid-route \.mobile-key-bar button\s*\{([^}]*)\}/s)?.[1];
+
+  expect(hiddenKeyBar).toMatch(/display:\s*none/);
+  expect(focusedKeyBar).toMatch(/display:\s*grid/);
+  expect(focusedKeyBar).toMatch(/flex:\s*none/);
+  expect(focusedKeyBar).toMatch(/grid-template-columns:\s*repeat\(8,\s*minmax\(0,\s*1fr\)\)/);
+  expect(focusedKeyBar).toMatch(/safe-area-inset-left/);
+  expect(focusedKeyBar).toMatch(/safe-area-inset-right/);
+  expect(keyButton).toMatch(/min-height:\s*2\.75rem/);
+  expect(keyButton).toMatch(/min-width:\s*0/);
+  expect(keyButton).toMatch(/touch-action:\s*manipulation/);
+});
+
 test("reads the visual viewport immediately and publishes only its settled height", () => {
   vi.useFakeTimers();
   const viewport = new FakeVisualViewport(780);
