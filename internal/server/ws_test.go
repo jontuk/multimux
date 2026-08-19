@@ -10,7 +10,29 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
+
+func TestPTYSizePolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want tmuxmgr.SizePolicy
+	}{
+		{name: "missing defaults to desktop", url: "/ws/pty/1", want: tmuxmgr.SizePolicyFollowInput},
+		{name: "passive capability", url: "/ws/pty/1?size=passive", want: tmuxmgr.SizePolicyPassive},
+		{name: "unknown defaults to desktop", url: "/ws/pty/1?size=future", want: tmuxmgr.SizePolicyFollowInput},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			if got := ptySizePolicy(r); got != tt.want {
+				t.Fatalf("ptySizePolicy() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func dialPTY(t *testing.T, ts *httptest.Server, sessionID int64, token string) *websocket.Conn {
 	t.Helper()

@@ -15,6 +15,7 @@ import (
 
 	"github.com/jontuk/multimux/internal/auth"
 	"github.com/jontuk/multimux/internal/store"
+	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
 
 // pingInterval keeps otherwise-idle WebSockets alive through proxies and NAT
@@ -76,6 +77,13 @@ func clientID(r *http.Request) string {
 	return "anon:" + hex.EncodeToString(b[:])
 }
 
+func ptySizePolicy(r *http.Request) tmuxmgr.SizePolicy {
+	if r.URL.Query().Get("size") == "passive" {
+		return tmuxmgr.SizePolicyPassive
+	}
+	return tmuxmgr.SizePolicyFollowInput
+}
+
 type resizeMsg struct {
 	Type   string `json:"type"`
 	Cols   uint16 `json:"cols"`
@@ -114,7 +122,7 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	arb := s.cfg.Arbiter.Register(sess.TmuxName, clientID(r))
+	arb := s.cfg.Arbiter.Register(sess.TmuxName, clientID(r), ptySizePolicy(r))
 	defer arb.Unregister()
 
 	// Keepalive pings; WriteControl is safe alongside the PTY→WS writer.
