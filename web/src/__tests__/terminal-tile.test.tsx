@@ -1,12 +1,17 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { vi } from "vitest";
 import { FitAddon } from "@xterm/addon-fit";
-import TerminalTile from "../term/TerminalTile";
+import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
 import { beginReflowHold, endReflowHold, isReflowHeld } from "../term/reflowGate";
 
 const loadedAddons: unknown[] = [];
 const linkProviders: unknown[] = [];
+let dataListener: ((data: string) => void) | null = null;
+const pasteCalls: string[] = [];
+const focusSpy = vi.fn();
+const terminalOptions: Array<{ fontSize?: number }> = [];
 // Selection hooks the tile subscribes to; a test drives them via fireSelection.
 let selectionListener: (() => void) | null = null;
 let selectionText = "";
@@ -19,12 +24,29 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
+    options: { fontSize?: number };
+    constructor(options: { fontSize?: number }) {
+      this.options = { ...options };
+      terminalOptions.push(this.options);
+    }
     open() {}
     loadAddon(addon: unknown) {
       loadedAddons.push(addon);
     }
-    onData() {
-      return { dispose() {} };
+    onData(cb: (data: string) => void) {
+      dataListener = cb;
+      return {
+        dispose() {
+          dataListener = null;
+        },
+      };
+    }
+    paste(data: string) {
+      pasteCalls.push(data);
+      dataListener?.(data);
+    }
+    focus() {
+      focusSpy();
     }
     onSelectionChange(cb: () => void) {
       selectionListener = cb;
@@ -93,6 +115,13 @@ function resizeFrames(ws: FakeWebSocket) {
     .filter((m) => m.type === "resize");
 }
 
+function decodedBinaryFrames(ws: FakeWebSocket) {
+  const decoder = new TextDecoder();
+  return ws.sent
+    .filter((data): data is Uint8Array => ArrayBuffer.isView(data) && data.constructor.name === "Uint8Array")
+    .map((data) => decoder.decode(data));
+}
+
 // Last {"type":"resize"} the tile sent, parsed.
 function lastResize(ws: FakeWebSocket) {
   return resizeFrames(ws).at(-1);
@@ -129,6 +158,10 @@ beforeEach(() => {
   FakeWebSocket.instances = [];
   FakeResizeObserver.instances = [];
   linkProviders.length = 0;
+  dataListener = null;
+  pasteCalls.length = 0;
+  focusSpy.mockClear();
+  terminalOptions.length = 0;
 });
 
 afterEach(() => {
@@ -202,6 +235,75 @@ test("running session that closes keeps retrying", async () => {
 
   await screen.findByText(/daemon unreachable/);
   await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(1), { timeout: 2000 });
+});
+
+test("terminal handle sends direct input only while connected", () => {
+  const ref = createRef<TerminalHandle>();
+  render(<TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+
+  expect(ref.current?.input("not sent")).toBe(false);
+  expect(decodedBinaryFrames(ws)).toEqual([]);
+
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  expect(ref.current?.input("hello 🌍")).toBe(true);
+  expect(decodedBinaryFrames(ws)).toEqual(["hello 🌍"]);
+});
+
+test("terminal handle pastes multiline Unicode through xterm without adding Enter", () => {
+  const ref = createRef<TerminalHandle>();
+  render(<TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  expect(ref.current?.paste("first\nsecond 🐚")).toBe(true);
+  expect(pasteCalls).toEqual(["first\nsecond 🐚"]);
+  expect(decodedBinaryFrames(ws)).toEqual(["first\nsecond 🐚"]);
+});
+
+test("terminal handle focuses, changes font size, and fits passively", () => {
+  const ref = createRef<TerminalHandle>();
+  const fitSpy = vi.spyOn(FitAddon.prototype, "fit");
+  const { container } = render(
+    <TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />,
+  );
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  const box = container.querySelector(".terminal-tile > div") as HTMLElement;
+  Object.defineProperties(box, {
+    clientWidth: { configurable: true, value: 390 },
+    clientHeight: { configurable: true, value: 600 },
+  });
+  act(() => ws.onopen?.());
+
+  act(() => {
+    ref.current?.focus();
+    ref.current?.setFontSize(11);
+    ref.current?.fit();
+  });
+
+  expect(focusSpy).toHaveBeenCalledOnce();
+  expect(terminalOptions[0].fontSize).toBe(11);
+  expect(fitSpy).toHaveBeenCalled();
+  expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
+});
+
+test("a captured terminal handle becomes inert after unmount", () => {
+  const ref = createRef<TerminalHandle>();
+  const { unmount } = render(<TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} />);
+  const handle = ref.current!;
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  unmount();
+
+  expect(ref.current).toBeNull();
+  expect(handle.input("stale")).toBe(false);
+  expect(handle.paste("stale")).toBe(false);
+  expect(decodedBinaryFrames(ws)).toEqual([]);
 });
 
 // Window-size ownership is arbitrated server-side and claimed by active:true.

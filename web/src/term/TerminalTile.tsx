@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -14,6 +14,22 @@ import { wrapAwareLinkProvider } from "./links";
 import { selectedText } from "./wrap";
 
 export type TerminalSizePolicy = "follow-input" | "passive";
+
+export type TerminalHandle = {
+  input(data: string): boolean;
+  paste(data: string): boolean;
+  focus(): void;
+  setFontSize(size: number): void;
+  fit(): void;
+};
+
+const inertTerminalOperations: TerminalHandle = {
+  input: () => false,
+  paste: () => false,
+  focus: () => {},
+  setFontSize: () => {},
+  fit: () => {},
+};
 
 type Props = {
   server: Server;
@@ -49,16 +65,24 @@ async function classifyClose(server: Server, sessionId: number): Promise<"retry"
   }
 }
 
-export default function TerminalTile({
-  server,
-  sessionId,
-  onClose,
-  autoFocus,
-  sizePolicy = "follow-input",
-  controlsSlot,
-}: Props) {
+const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
+  { server, sessionId, onClose, autoFocus, sizePolicy = "follow-input", controlsSlot },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fitSharedSizeRef = useRef<() => void>(() => {});
+  const operationsRef = useRef<TerminalHandle>(inertTerminalOperations);
+  useImperativeHandle(
+    ref,
+    () => ({
+      input: (data) => operationsRef.current.input(data),
+      paste: (data) => operationsRef.current.paste(data),
+      focus: () => operationsRef.current.focus(),
+      setFontSize: (size) => operationsRef.current.setFontSize(size),
+      fit: () => operationsRef.current.fit(),
+    }),
+    [],
+  );
   // Fire the initial focus once; reconnects (retryNonce/url) re-run the effect
   // but must not steal focus back from wherever the user has since moved.
   const didAutoFocus = useRef(false);
@@ -131,6 +155,50 @@ export default function TerminalTile({
       if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
       fit.fit();
     }
+
+    let pasteAccepted: boolean | null = null;
+
+    function sendInput(data: string) {
+      if (ws?.readyState !== WebSocket.OPEN) {
+        if (pasteAccepted !== null) pasteAccepted = false;
+        return false;
+      }
+      try {
+        ws.send(encoder.encode(data));
+        return true;
+      } catch {
+        if (pasteAccepted !== null) pasteAccepted = false;
+        return false;
+      }
+    }
+
+    operationsRef.current = {
+      input: sendInput,
+      paste(data) {
+        if (ws?.readyState !== WebSocket.OPEN) return false;
+        pasteAccepted = true;
+        try {
+          // xterm adds bracketed-paste markers only when the foreground app
+          // enabled that mode. Without it, embedded newlines remain live input.
+          term.paste(data);
+          return pasteAccepted;
+        } catch {
+          return false;
+        } finally {
+          pasteAccepted = null;
+        }
+      },
+      focus: () => term.focus(),
+      setFontSize(size) {
+        term.options.fontSize = size;
+        fitToBox();
+        sendResize();
+      },
+      fit() {
+        fitToBox();
+        sendResize();
+      },
+    };
 
     fitSharedSizeRef.current = () => {
       fitToBox();
@@ -247,7 +315,7 @@ export default function TerminalTile({
         suppressNextCR = false;
         return;
       }
-      if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data));
+      sendInput(data);
     });
     // A splitter drag moves this tile's box every frame; defer to one refit on
     // release instead of reflowing xterm and resizing the PTY per frame. The
@@ -277,6 +345,7 @@ export default function TerminalTile({
     document.addEventListener("visibilitychange", resyncSize);
 
     return () => {
+      operationsRef.current = inertTerminalOperations;
       closed = true;
       if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
       if (ws) {
@@ -337,4 +406,6 @@ export default function TerminalTile({
       )}
     </div>
   );
-}
+});
+
+export default TerminalTile;
