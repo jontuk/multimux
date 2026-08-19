@@ -1400,6 +1400,11 @@ a {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  .app.grid-route .mobile-terminal > .terminal-tile {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
   .app.grid-route .mobile-session-header {
     display: grid;
     flex: none;
@@ -1497,7 +1502,21 @@ a {
     grid-area: controls;
     display: flex;
     justify-content: flex-end;
+    gap: 0.35rem;
     min-width: 0;
+  }
+
+  .app.grid-route .mobile-terminal-controls button,
+  .app.grid-route .mobile-compose-actions button {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--panel) 90%, transparent);
+    color: var(--ink);
+    font: inherit;
+  }
+
+  .app.grid-route .mobile-compose-toggle {
+    padding: 0.2rem 0.4rem;
   }
 
   .app.grid-route .mobile-terminal-controls .fit-session-button {
@@ -1515,6 +1534,62 @@ a {
   .app.grid-route .mobile-settings-link:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
+  }
+
+  .app.grid-route .mobile-compose {
+    display: grid;
+    flex: none;
+    gap: 0.4rem;
+    padding: 0.5rem calc(0.5rem + env(safe-area-inset-right)) 0.5rem calc(0.5rem + env(safe-area-inset-left));
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .app.grid-route .mobile-compose label {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+
+  .app.grid-route .mobile-compose textarea {
+    box-sizing: border-box;
+    width: 100%;
+    max-height: min(30dvh, 12rem);
+    min-height: 4.5rem;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem;
+    background: var(--bg);
+    color: var(--ink);
+    font:
+      1rem/1.4 system-ui,
+      sans-serif;
+  }
+
+  .app.grid-route .mobile-compose textarea:focus-visible,
+  .app.grid-route .mobile-compose button:focus-visible,
+  .app.grid-route .mobile-compose-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .app.grid-route .mobile-compose-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .app.grid-route .mobile-compose-actions button {
+    min-height: 2.25rem;
+    padding: 0.35rem 0.65rem;
+  }
+
+  .app.grid-route .mobile-compose p[role="status"] {
+    margin: 0;
+    color: var(--error);
+    font-family: var(--mono);
+    font-size: 0.75rem;
   }
 
   .settings-page {

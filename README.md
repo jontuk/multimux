@@ -343,6 +343,12 @@ context, position, Settings, and terminal controls. When the software keyboard
 opens, the app follows the browser's visible viewport and refits once the
 keyboard transition settles, keeping the terminal prompt in the usable area.
 
+For longer text or phone dictation, use **Compose**. It opens a multiline editor
+for normal mobile editing and review. **Insert** pastes the draft into the
+foreground application without Enter; **Insert & Enter** performs the same paste
+and then sends exactly one Enter. Direct terminal focus remains available for
+short keystrokes and interactive programs.
+
 Only the selected terminal is mounted. The mobile view has no launcher and no
 rename, move, remove, or terminate controls; use a wider viewport for those
 actions. Selection is temporary, and neither switching sessions nor entering

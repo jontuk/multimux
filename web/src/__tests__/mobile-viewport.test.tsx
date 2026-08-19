@@ -61,6 +61,24 @@ test("long mobile host labels shrink and ellipsize before controls", () => {
   expect(hostLabel).toMatch(/text-overflow:\s*ellipsis/);
 });
 
+test("Compose stays below the shrinking terminal and above the keyboard safe area", () => {
+  const styles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+  const mobileTerminal = [...styles.matchAll(/\.app\.grid-route \.mobile-terminal\s*\{([^}]*)\}/gs)]
+    .map((match) => match[1])
+    .join("\n");
+  const terminalTile = styles.match(/\.app\.grid-route \.mobile-terminal > \.terminal-tile\s*\{([^}]*)\}/s)?.[1];
+  const compose = styles.match(/\.app\.grid-route \.mobile-compose\s*\{([^}]*)\}/s)?.[1];
+  const textarea = styles.match(/\.app\.grid-route \.mobile-compose textarea\s*\{([^}]*)\}/s)?.[1];
+
+  expect(mobileTerminal).toMatch(/flex-direction:\s*column/);
+  expect(mobileTerminal).toMatch(/padding-bottom:\s*env\(safe-area-inset-bottom\)/);
+  expect(terminalTile).toMatch(/flex:\s*1 1 auto/);
+  expect(terminalTile).toMatch(/min-height:\s*0/);
+  expect(compose).toMatch(/flex:\s*none/);
+  expect(textarea).toMatch(/max-height:/);
+  expect(textarea).toMatch(/resize:\s*vertical/);
+});
+
 test("reads the visual viewport immediately and publishes only its settled height", () => {
   vi.useFakeTimers();
   const viewport = new FakeVisualViewport(780);
