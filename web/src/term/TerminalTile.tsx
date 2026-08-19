@@ -11,6 +11,7 @@ import { clientId } from "../clientId";
 import { encodeResize, parseServerText } from "./protocol";
 import { isReflowHeld, onReflowRelease } from "./reflowGate";
 import { wrapAwareLinkProvider } from "./links";
+import { installTouchScroll } from "./touchScroll";
 import { selectedText } from "./wrap";
 
 export type TerminalSizePolicy = "follow-input" | "passive";
@@ -38,6 +39,7 @@ type Props = {
   autoFocus?: boolean;
   sizePolicy?: TerminalSizePolicy;
   controlsSlot?: HTMLElement | null;
+  touchScrollback?: boolean;
 };
 
 // Mirrors xterm.js's own isMac (common/Platform.ts) — it gates selection
@@ -66,7 +68,7 @@ async function classifyClose(server: Server, sessionId: number): Promise<"retry"
 }
 
 const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
-  { server, sessionId, onClose, autoFocus, sizePolicy = "follow-input", controlsSlot },
+  { server, sessionId, onClose, autoFocus, sizePolicy = "follow-input", controlsSlot, touchScrollback = false },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -122,6 +124,9 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     // them, which the addon can't see (see wrap.ts).
     const linkProvider = term.registerLinkProvider(wrapAwareLinkProvider(term));
     term.open(containerRef.current!);
+    const disposeTouchScroll = touchScrollback
+      ? installTouchScroll(term.element!, () => term.modes.mouseTrackingMode !== "none")
+      : () => {};
     if (autoFocusRef.current && !didAutoFocus.current) {
       didAutoFocus.current = true;
       term.focus();
@@ -366,9 +371,10 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       window.removeEventListener("focus", resyncSize);
       document.removeEventListener("visibilitychange", resyncSize);
       fitSharedSizeRef.current = () => {};
+      disposeTouchScroll();
       term.dispose();
     };
-  }, [url, sessionId, retryNonce, sizePolicy]);
+  }, [url, sessionId, retryNonce, sizePolicy, touchScrollback]);
 
   const fitButton = sizePolicy === "passive" && (
     <button
@@ -386,7 +392,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
 
   return (
     <div className="terminal-tile" style={{ position: "relative", height: "100%" }}>
-      <div ref={containerRef} style={{ height: "100%" }} />
+      <div ref={containerRef} className={touchScrollback ? "touch-scrollback" : undefined} style={{ height: "100%" }} />
       {controlsSlot && fitButton ? createPortal(fitButton, controlsSlot) : fitButton}
       {state === "offline" && <div className="overlay">daemon unreachable — retrying…</div>}
       {state === "exited" && (

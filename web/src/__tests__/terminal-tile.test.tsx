@@ -6,12 +6,26 @@ import { FitAddon } from "@xterm/addon-fit";
 import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
 import { beginReflowHold, endReflowHold, isReflowHeld } from "../term/reflowGate";
 
+const touchScrollMocks = vi.hoisted(() => ({
+  cleanup: vi.fn(),
+  install: vi.fn(),
+}));
+
+vi.mock("../term/touchScroll", () => ({
+  installTouchScroll: touchScrollMocks.install,
+}));
+
 const loadedAddons: unknown[] = [];
 const linkProviders: unknown[] = [];
 let dataListener: ((data: string) => void) | null = null;
 const pasteCalls: string[] = [];
 const focusSpy = vi.fn();
 const terminalOptions: Array<{ fontSize?: number }> = [];
+type FakeTerminalInstance = {
+  element: HTMLElement | undefined;
+  modes: { mouseTrackingMode: "none" | "any" };
+};
+const terminalInstances: FakeTerminalInstance[] = [];
 // Selection hooks the tile subscribes to; a test drives them via fireSelection.
 let selectionListener: (() => void) | null = null;
 let selectionText = "";
@@ -25,11 +39,18 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     rows = 24;
     options: { fontSize?: number };
+    element: HTMLElement | undefined;
+    modes = { mouseTrackingMode: "none" as "none" | "any" };
     constructor(options: { fontSize?: number }) {
       this.options = { ...options };
       terminalOptions.push(this.options);
+      terminalInstances.push(this);
     }
-    open() {}
+    open(parent: HTMLElement) {
+      this.element = document.createElement("div");
+      this.element.className = "xterm";
+      parent.append(this.element);
+    }
     loadAddon(addon: unknown) {
       loadedAddons.push(addon);
     }
@@ -164,6 +185,10 @@ beforeEach(() => {
   pasteCalls.length = 0;
   focusSpy.mockClear();
   terminalOptions.length = 0;
+  terminalInstances.length = 0;
+  touchScrollMocks.cleanup.mockReset();
+  touchScrollMocks.install.mockReset();
+  touchScrollMocks.install.mockReturnValue(touchScrollMocks.cleanup);
 });
 
 afterEach(() => {
@@ -171,6 +196,31 @@ afterEach(() => {
   // reflowGate is module-level state shared across tiles/tests; never let a
   // failed assertion mid-test leave the gate held for the next test.
   if (isReflowHeld()) endReflowHold();
+});
+
+test("touch scrollback is disabled by default", () => {
+  const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+
+  expect(touchScrollMocks.install).not.toHaveBeenCalled();
+  expect(container.querySelector(".touch-scrollback")).toBeNull();
+});
+
+test("touch scrollback installs after xterm opens and follows mouse tracking readiness", () => {
+  const { container, unmount } = render(
+    <TerminalTile server={server} sessionId={7} onClose={() => {}} touchScrollback />,
+  );
+  const instance = terminalInstances[0];
+
+  expect(container.querySelector(".terminal-tile > .touch-scrollback")).not.toBeNull();
+  expect(touchScrollMocks.install).toHaveBeenCalledOnce();
+  expect(touchScrollMocks.install).toHaveBeenCalledWith(instance.element, expect.any(Function));
+  const isReady = touchScrollMocks.install.mock.calls[0][1] as () => boolean;
+  expect(isReady()).toBe(false);
+  instance.modes.mouseTrackingMode = "any";
+  expect(isReady()).toBe(true);
+
+  unmount();
+  expect(touchScrollMocks.cleanup).toHaveBeenCalledOnce();
 });
 
 test("missing session shows not-found overlay and stops retrying", async () => {
