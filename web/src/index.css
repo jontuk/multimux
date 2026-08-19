@@ -973,6 +973,18 @@ a {
   background: rgba(0, 0, 0, 0.65);
 }
 
+.fit-session-button {
+  position: absolute;
+  z-index: 2;
+  top: 0.4rem;
+  right: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
 .empty-tile {
   height: 100%;
   display: flex;

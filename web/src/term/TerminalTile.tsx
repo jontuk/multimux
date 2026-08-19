@@ -12,7 +12,15 @@ import { isReflowHeld, onReflowRelease } from "./reflowGate";
 import { wrapAwareLinkProvider } from "./links";
 import { selectedText } from "./wrap";
 
-type Props = { server: Server; sessionId: number; onClose: () => void; autoFocus?: boolean };
+export type TerminalSizePolicy = "follow-input" | "passive";
+
+type Props = {
+  server: Server;
+  sessionId: number;
+  onClose: () => void;
+  autoFocus?: boolean;
+  sizePolicy?: TerminalSizePolicy;
+};
 
 // Mirrors xterm.js's own isMac (common/Platform.ts) — it gates selection
 // behaviour on exactly this list, so shiftDragCapture must agree with it or
@@ -39,8 +47,9 @@ async function classifyClose(server: Server, sessionId: number): Promise<"retry"
   }
 }
 
-export default function TerminalTile({ server, sessionId, onClose, autoFocus }: Props) {
+export default function TerminalTile({ server, sessionId, onClose, autoFocus, sizePolicy = "follow-input" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const fitSharedSizeRef = useRef<() => void>(() => {});
   // Fire the initial focus once; reconnects (retryNonce/url) re-run the effect
   // but must not steal focus back from wherever the user has since moved.
   const didAutoFocus = useRef(false);
@@ -55,7 +64,10 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
   // fresh objects each render, but the string only changes when it matters.
   // client= keys window-size ownership to this browser, so our reconnects don't
   // hand the shared tmux window to another machine's next passive resize.
-  const url = wsURL(server, `/ws/pty/${sessionId}`, { client: clientId() });
+  const url = wsURL(server, `/ws/pty/${sessionId}`, {
+    client: clientId(),
+    ...(sizePolicy === "passive" ? { size: "passive" } : {}),
+  });
   const serverRef = useRef(server);
   useEffect(() => {
     serverRef.current = server;
@@ -110,6 +122,11 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
       fit.fit();
     }
+
+    fitSharedSizeRef.current = () => {
+      fitToBox();
+      sendResize(true);
+    };
 
     function connect() {
       if (closed) return;
@@ -211,7 +228,9 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
     // Focusing this terminal claims the window size at our dims — the cheap way
     // to reclaim a window some other client shrank, without having to type.
     // (Keyboard input claims it too, server-side, via Arbiter.ClaimInput.)
-    const claimOnFocus = () => sendResize(true);
+    const claimOnFocus = () => {
+      if (sizePolicy === "follow-input") sendResize(true);
+    };
     captureContainer.addEventListener("focusin", claimOnFocus);
 
     const dataSub = term.onData((data) => {
@@ -268,13 +287,27 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus }: 
       unsubscribeReflow();
       window.removeEventListener("focus", resyncSize);
       document.removeEventListener("visibilitychange", resyncSize);
+      fitSharedSizeRef.current = () => {};
       term.dispose();
     };
-  }, [url, sessionId, retryNonce]);
+  }, [url, sessionId, retryNonce, sizePolicy]);
 
   return (
     <div className="terminal-tile" style={{ position: "relative", height: "100%" }}>
       <div ref={containerRef} style={{ height: "100%" }} />
+      {sizePolicy === "passive" && (
+        <button
+          className="fit-session-button"
+          disabled={state !== "open"}
+          onClick={() => {
+            if (window.confirm("Fit this session to your phone? Other attached clients will reflow.")) {
+              fitSharedSizeRef.current();
+            }
+          }}
+        >
+          Fit session to phone
+        </button>
+      )}
       {state === "offline" && <div className="overlay">daemon unreachable — retrying…</div>}
       {state === "exited" && (
         <div className="overlay">

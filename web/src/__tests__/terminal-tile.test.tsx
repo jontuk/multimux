@@ -86,10 +86,16 @@ class FakeResizeObserver {
   disconnect() {}
 }
 
+function resizeFrames(ws: FakeWebSocket) {
+  return ws.sent
+    .filter((d): d is string => typeof d === "string")
+    .map((d) => JSON.parse(d) as { type: string; active?: boolean })
+    .filter((m) => m.type === "resize");
+}
+
 // Last {"type":"resize"} the tile sent, parsed.
 function lastResize(ws: FakeWebSocket) {
-  const texts = ws.sent.filter((d): d is string => typeof d === "string").map((d) => JSON.parse(d));
-  return texts.filter((m) => m.type === "resize").at(-1);
+  return resizeFrames(ws).at(-1);
 }
 
 const server = { id: "local", origin: "http://daemon.test", name: "local" };
@@ -209,6 +215,7 @@ test("only terminal focus claims window-size ownership", async () => {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
 
   const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  expect(screen.queryByRole("button", { name: "Fit session to phone" })).not.toBeInTheDocument();
   const ws = FakeWebSocket.instances[0];
   ws.readyState = FakeWebSocket.OPEN;
 
@@ -229,6 +236,50 @@ test("only terminal focus claims window-size ownership", async () => {
     term.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
   });
   expect(lastResize(ws)).toMatchObject({ active: true });
+});
+
+test("passive terminal advertises its size policy and focus does not claim", () => {
+  const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
+  const fitButton = screen.getByRole("button", { name: "Fit session to phone" });
+  expect(fitButton).toBeDisabled();
+
+  const ws = FakeWebSocket.instances[0];
+  expect(new URL(ws.url).searchParams.get("size")).toBe("passive");
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  expect(fitButton).toBeEnabled();
+
+  const term = container.querySelector(".terminal-tile > div")!;
+  act(() => term.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
+
+  expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
+});
+
+test("cancelled phone fit does not claim the shared size", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  await userEvent.click(screen.getByRole("button", { name: "Fit session to phone" }));
+
+  expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
+});
+
+test("confirmed phone fit sends one active resize and later reflow stays passive", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  await userEvent.click(screen.getByRole("button", { name: "Fit session to phone" }));
+  expect(resizeFrames(ws).filter((m) => m.active)).toHaveLength(1);
+
+  act(() => FakeResizeObserver.instances[0].cb());
+  expect(resizeFrames(ws).at(-1)).toMatchObject({ active: false });
+  expect(resizeFrames(ws).filter((m) => m.active)).toHaveLength(1);
 });
 
 test("resize observations are suppressed while a splitter drag holds the gate", async () => {
