@@ -56,10 +56,10 @@ export default function MobileCompose({
       {controlsSlot && createPortal(toggle, controlsSlot)}
       {open && (
         <section className="mobile-compose" id={panelId} aria-label="Compose terminal input">
-          <label htmlFor={`${panelId}-textarea`}>Compose terminal input</label>
           <textarea
             id={`${panelId}-textarea`}
             ref={textareaRef}
+            aria-label="Compose terminal input"
             value={draft}
             rows={4}
             onChange={(event) => {
@@ -69,10 +69,10 @@ export default function MobileCompose({
           />
           <div className="mobile-compose-actions">
             <button type="button" disabled={!draft} onClick={() => insert(false)}>
-              Insert
+              Add
             </button>
             <button type="button" disabled={!draft} onClick={() => insert(true)}>
-              Insert &amp; Enter
+              Add &amp; Enter
             </button>
           </div>
           {status && <p role="status">{status}</p>}

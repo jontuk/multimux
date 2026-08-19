@@ -554,6 +554,72 @@ test("changing selection unmounts the former terminal", () => {
   expect(screen.getByTestId("term-2")).toBeInTheDocument();
 });
 
+test("mounts the terminal key bar after Compose and targets the newly selected terminal", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  const mobileTerminal = document.querySelector<HTMLElement>(".mobile-terminal")!;
+  const compose = document.querySelector<HTMLElement>(".mobile-compose")!;
+  const keyBar = screen.getByRole("group", { name: "Terminal keys" });
+
+  expect(mobileTerminal.lastElementChild).toBe(keyBar);
+  expect(compose.compareDocumentPosition(keyBar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  fireEvent.click(within(keyBar).getByRole("button", { name: "Left" }));
+  swipe(document.querySelector<HTMLElement>(".mobile-session-header")!, { toX: 52 });
+  fireEvent.click(screen.getByRole("button", { name: "Right" }));
+
+  expect(terminalCalls).toEqual([
+    { sessionId: 1, operation: "input", data: "\x1b[D" },
+    { sessionId: 2, operation: "input", data: "\x1b[C" },
+  ]);
+});
+
+test("terminal keys preserve Compose focus and its draft", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  const editor = screen.getByRole("textbox", { name: "Compose terminal input" });
+  const up = screen.getByRole("button", { name: "Up" });
+  fireEvent.change(editor, { target: { value: "unfinished draft" } });
+  editor.focus();
+
+  expect(fireEvent.pointerDown(up)).toBe(false);
+  fireEvent.click(up);
+
+  expect(editor).toHaveFocus();
+  expect(editor).toHaveValue("unfinished draft");
+  expect(terminalCalls).toEqual([{ sessionId: 1, operation: "input", data: "\x1b[A" }]);
+});
+
+test("terminal keys are a safe no-op while disconnected", () => {
+  terminalConnected = false;
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+
+  expect(terminalCalls).toEqual([]);
+});
+
 test("Compose opens a focused multiline editor and manual close retains its draft", async () => {
   render(
     <MobileSessionView
@@ -570,6 +636,9 @@ test("Compose opens a focused multiline editor and manual close retains its draf
   const editor = screen.getByRole("textbox", { name: "Compose terminal input" });
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   expect(editor).toHaveFocus();
+  expect(screen.queryByText("Compose terminal input")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add & Enter" })).toBeInTheDocument();
   fireEvent.change(editor, { target: { value: "draft 🌍" } });
 
   await userEvent.click(toggle);
@@ -578,7 +647,7 @@ test("Compose opens a focused multiline editor and manual close retains its draf
   expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("draft 🌍");
 });
 
-test("Insert pastes exactly the draft and clears and closes Compose", async () => {
+test("Add pastes exactly the draft and clears and closes Compose", async () => {
   render(
     <MobileSessionView
       sessions={[session(1)]}
@@ -592,7 +661,7 @@ test("Insert pastes exactly the draft and clears and closes Compose", async () =
     target: { value: "first\nsecond 🐚" },
   });
 
-  await userEvent.click(screen.getByRole("button", { name: /^Insert$/ }));
+  await userEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
   expect(terminalCalls).toEqual([{ sessionId: 1, operation: "paste", data: "first\nsecond 🐚" }]);
   expect(screen.queryByRole("textbox", { name: "Compose terminal input" })).not.toBeInTheDocument();
@@ -600,7 +669,7 @@ test("Insert pastes exactly the draft and clears and closes Compose", async () =
   expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("");
 });
 
-test("Insert & Enter pastes first and sends exactly one separate Enter", async () => {
+test("Add & Enter pastes first and sends exactly one separate Enter", async () => {
   render(
     <MobileSessionView
       sessions={[session(1)]}
@@ -614,7 +683,7 @@ test("Insert & Enter pastes first and sends exactly one separate Enter", async (
     target: { value: "ship it" },
   });
 
-  await userEvent.click(screen.getByRole("button", { name: "Insert & Enter" }));
+  await userEvent.click(screen.getByRole("button", { name: "Add & Enter" }));
 
   expect(terminalCalls).toEqual([
     { sessionId: 1, operation: "paste", data: "ship it" },
@@ -622,7 +691,7 @@ test("Insert & Enter pastes first and sends exactly one separate Enter", async (
   ]);
 });
 
-test("Insert & Enter reports when text was inserted but Enter was not sent", async () => {
+test("Add & Enter reports when text was inserted but Enter was not sent", async () => {
   terminalInputAccepted = false;
   render(
     <MobileSessionView
@@ -637,7 +706,7 @@ test("Insert & Enter reports when text was inserted but Enter was not sent", asy
     target: { value: "ship it" },
   });
 
-  await userEvent.click(screen.getByRole("button", { name: "Insert & Enter" }));
+  await userEvent.click(screen.getByRole("button", { name: "Add & Enter" }));
 
   expect(terminalCalls).toEqual([{ sessionId: 1, operation: "paste", data: "ship it" }]);
   expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("");
@@ -658,7 +727,7 @@ test("a disconnected terminal preserves the Compose draft and reports it", async
   const editor = screen.getByRole("textbox", { name: "Compose terminal input" });
   fireEvent.change(editor, { target: { value: "keep me" } });
 
-  await userEvent.click(screen.getByRole("button", { name: /^Insert$/ }));
+  await userEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
   expect(terminalCalls).toEqual([]);
   expect(editor).toHaveValue("keep me");
@@ -675,8 +744,8 @@ test("empty Compose actions send nothing", async () => {
     />,
   );
   await userEvent.click(screen.getByRole("button", { name: "Compose" }));
-  expect(screen.getByRole("button", { name: /^Insert$/ })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Insert & Enter" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Add$/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add & Enter" })).toBeDisabled();
   expect(terminalCalls).toEqual([]);
 });
 
@@ -707,7 +776,9 @@ test("loading and empty mobile states do not expose Compose", () => {
     <MobileSessionView sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} />,
   );
   expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Terminal keys" })).not.toBeInTheDocument();
 
   rerender(<MobileSessionView sessions={[]} toolsByServer={{}} initialLoading={false} onRefresh={vi.fn()} />);
   expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Terminal keys" })).not.toBeInTheDocument();
 });

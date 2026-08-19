@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
 import MobileCompose from "./MobileCompose";
+import MobileKeyBar from "./MobileKeyBar";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
@@ -174,6 +175,7 @@ export default function MobileSessionView({
             controlsSlot={controlsSlot}
           />
           <MobileCompose key={`compose:${selected.key}`} terminalRef={terminalRef} controlsSlot={controlsSlot} />
+          <MobileKeyBar terminalRef={terminalRef} />
         </div>
       )}
     </div>
