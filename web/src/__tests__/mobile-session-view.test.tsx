@@ -1,23 +1,51 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { Profiler, useEffect } from "react";
+import userEvent from "@testing-library/user-event";
+import { forwardRef, Profiler, useEffect, useImperativeHandle } from "react";
 import { vi } from "vitest";
 import MobileSessionView from "../grid/MobileSessionView";
 import type { MobileSession } from "../grid/mobileModel";
 import type { Session, Tool } from "../grid/types";
 import type { Server } from "../servers";
+import type { TerminalHandle } from "../term/TerminalTile";
 
 const unmounted = vi.fn();
+const terminalHandles = new Map<number, TerminalHandle>();
+const terminalCalls: Array<{ sessionId: number; operation: "input" | "paste"; data: string }> = [];
+let terminalConnected = true;
 
 vi.mock("../term/TerminalTile", () => ({
-  default: function TerminalTileMock({
-    sessionId,
-    sizePolicy,
-    controlsSlot,
-  }: {
-    sessionId: number;
-    sizePolicy?: string;
-    controlsSlot?: HTMLElement | null;
-  }) {
+  default: forwardRef(function TerminalTileMock(
+    {
+      sessionId,
+      sizePolicy,
+      controlsSlot,
+    }: {
+      sessionId: number;
+      sizePolicy?: string;
+      controlsSlot?: HTMLElement | null;
+    },
+    ref,
+  ) {
+    let handle = terminalHandles.get(sessionId);
+    if (!handle) {
+      handle = {
+        input(data) {
+          if (!terminalConnected) return false;
+          terminalCalls.push({ sessionId, operation: "input", data });
+          return true;
+        },
+        paste(data) {
+          if (!terminalConnected) return false;
+          terminalCalls.push({ sessionId, operation: "paste", data });
+          return true;
+        },
+        focus() {},
+        setFontSize() {},
+        fit() {},
+      };
+      terminalHandles.set(sessionId, handle);
+    }
+    useImperativeHandle(ref, () => handle, [handle]);
     useEffect(() => () => unmounted(sessionId), [sessionId]);
     return (
       <div
@@ -26,7 +54,7 @@ vi.mock("../term/TerminalTile", () => ({
         data-controls-slot={controlsSlot?.className}
       />
     );
-  },
+  }),
 }));
 
 const local: Server = {
@@ -91,6 +119,9 @@ function mockPointerCapture(header: HTMLElement) {
 
 beforeEach(() => {
   unmounted.mockClear();
+  terminalHandles.clear();
+  terminalCalls.length = 0;
+  terminalConnected = true;
 });
 
 test("mounts the selected mobile terminal with passive sizing", () => {
@@ -519,4 +550,140 @@ test("changing selection unmounts the former terminal", () => {
   expect(unmounted).toHaveBeenCalledWith(1);
   expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
   expect(screen.getByTestId("term-2")).toBeInTheDocument();
+});
+
+test("Compose opens a focused multiline editor and manual close retains its draft", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const toggle = screen.getByRole("button", { name: "Compose" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  await userEvent.click(toggle);
+  const editor = screen.getByRole("textbox", { name: "Compose terminal input" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(editor).toHaveFocus();
+  fireEvent.change(editor, { target: { value: "draft 🌍" } });
+
+  await userEvent.click(toggle);
+  expect(screen.queryByRole("textbox", { name: "Compose terminal input" })).not.toBeInTheDocument();
+  await userEvent.click(toggle);
+  expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("draft 🌍");
+});
+
+test("Insert pastes exactly the draft and clears and closes Compose", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Compose terminal input" }), {
+    target: { value: "first\nsecond 🐚" },
+  });
+
+  await userEvent.click(screen.getByRole("button", { name: /^Insert$/ }));
+
+  expect(terminalCalls).toEqual([{ sessionId: 1, operation: "paste", data: "first\nsecond 🐚" }]);
+  expect(screen.queryByRole("textbox", { name: "Compose terminal input" })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("");
+});
+
+test("Insert & Enter pastes first and sends exactly one separate Enter", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Compose terminal input" }), {
+    target: { value: "ship it" },
+  });
+
+  await userEvent.click(screen.getByRole("button", { name: "Insert & Enter" }));
+
+  expect(terminalCalls).toEqual([
+    { sessionId: 1, operation: "paste", data: "ship it" },
+    { sessionId: 1, operation: "input", data: "\r" },
+  ]);
+});
+
+test("a disconnected terminal preserves the Compose draft and reports it", async () => {
+  terminalConnected = false;
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  const editor = screen.getByRole("textbox", { name: "Compose terminal input" });
+  fireEvent.change(editor, { target: { value: "keep me" } });
+
+  await userEvent.click(screen.getByRole("button", { name: /^Insert$/ }));
+
+  expect(terminalCalls).toEqual([]);
+  expect(editor).toHaveValue("keep me");
+  expect(screen.getByRole("status")).toHaveTextContent("Terminal is disconnected. Draft not sent.");
+});
+
+test("empty Compose actions send nothing", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  expect(screen.getByRole("button", { name: /^Insert$/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Insert & Enter" })).toBeDisabled();
+  expect(terminalCalls).toEqual([]);
+});
+
+test("switching sessions closes Compose and discards the former session draft", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Compose terminal input" }), {
+    target: { value: "session one" },
+  });
+
+  swipe(document.querySelector<HTMLElement>(".mobile-session-header")!, { toX: 52 });
+
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Compose" })).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("");
+});
+
+test("loading and empty mobile states do not expose Compose", () => {
+  const { rerender } = render(
+    <MobileSessionView sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} />,
+  );
+  expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
+
+  rerender(<MobileSessionView sessions={[]} toolsByServer={{}} initialLoading={false} onRefresh={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
 });

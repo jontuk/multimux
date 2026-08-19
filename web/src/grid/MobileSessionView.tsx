@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import TerminalTile from "../term/TerminalTile";
+import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
+import MobileCompose from "./MobileCompose";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
@@ -24,6 +25,7 @@ export default function MobileSessionView({
   const [selection, setSelection] = useState<MobileSelection>({ key: null, index: 0 });
   const [controlsSlot, setControlsSlot] = useState<HTMLElement | null>(null);
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
+  const terminalRef = useRef<TerminalHandle | null>(null);
 
   useEffect(() => {
     // Selection must follow asynchronous session-list changes while retaining
@@ -163,13 +165,15 @@ export default function MobileSessionView({
       ) : (
         <div className="mobile-terminal">
           <TerminalTile
-            key={selected.key}
+            ref={terminalRef}
+            key={`terminal:${selected.key}`}
             server={selected.server}
             sessionId={selected.session.id}
             onClose={onRefresh}
             sizePolicy="passive"
             controlsSlot={controlsSlot}
           />
+          <MobileCompose key={`compose:${selected.key}`} terminalRef={terminalRef} controlsSlot={controlsSlot} />
         </div>
       )}
     </div>
