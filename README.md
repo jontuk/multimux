@@ -353,6 +353,12 @@ While the terminal or Compose has focus, a bottom key row provides Esc, Tab,
 Ctrl-C, the four arrow keys, and Enter. These keys always target the terminal,
 so they can interrupt or navigate a program without changing a Compose draft.
 
+Drag down over the terminal to move toward older output, and drag up to move
+toward newer output. The gesture uses tmux copy mode rather than browser-owned
+scrollback; press **Esc** in the bottom key row to leave copy mode. A tap still
+focuses and interacts with the terminal, and scrolling stops when the finger is
+released.
+
 Only the selected terminal is mounted. The mobile view has no launcher and no
 rename, move, remove, or terminate controls; use a wider viewport for those
 actions. Selection is temporary, and neither switching sessions nor entering
