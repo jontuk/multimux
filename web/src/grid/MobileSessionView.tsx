@@ -11,13 +11,16 @@ export default function MobileSessionView({
   toolsByServer,
   initialLoading,
   onRefresh,
+  hostLabel,
 }: {
   sessions: MobileSession[];
   toolsByServer: Record<string, Tool[]>;
   initialLoading: boolean;
   onRefresh: () => void;
+  hostLabel?: string;
 }) {
   const [selection, setSelection] = useState<MobileSelection>({ key: null, index: 0 });
+  const [controlsSlot, setControlsSlot] = useState<HTMLElement | null>(null);
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -75,74 +78,86 @@ export default function MobileSessionView({
     moveSelection(offset);
   }
 
-  if (initialLoading) {
-    return <div className="mobile-session-empty">Loading sessions…</div>;
-  }
-  if (sessions.length === 0) {
-    return (
-      <div className="mobile-session-empty">
-        <span>No sessions are running.</span>
-        <span>Launching needs a wider device.</span>
-      </div>
-    );
-  }
-
   const resolvedSelection = reconcileMobileSelection(selection, sessions);
   const selected = sessions[resolvedSelection.index];
-  const selectedTitle = `#${selected.session.id} · ${sessionTitle(
-    toolsByServer[selected.server.id],
-    selected.session,
-  )}`;
+  const selectedTitle = selected
+    ? `#${selected.session.id} · ${sessionTitle(toolsByServer[selected.server.id], selected.session)}`
+    : "";
 
   return (
     <div className="mobile-session-view">
       <div
         className="mobile-session-header"
-        role="slider"
-        tabIndex={0}
-        aria-label="Active session"
-        aria-valuemin={1}
-        aria-valuemax={sessions.length}
-        aria-valuenow={resolvedSelection.index + 1}
-        aria-valuetext={`Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}`}
-        style={{ touchAction: "pan-y", ...dirTintStyle(selected.session.dir) }}
-        onKeyDown={onKeyDown}
-        onPointerDown={onPointerDown}
-        onPointerUp={onPointerUp}
-        onPointerCancel={(e) => clearPointer(e, true)}
-        onLostPointerCapture={(e) => {
-          if (pointerStart.current?.id === e.pointerId) pointerStart.current = null;
-        }}
+        role={selected ? "slider" : undefined}
+        tabIndex={selected ? 0 : undefined}
+        aria-label={selected ? "Active session" : undefined}
+        aria-valuemin={selected ? 1 : undefined}
+        aria-valuemax={selected ? sessions.length : undefined}
+        aria-valuenow={selected ? resolvedSelection.index + 1 : undefined}
+        aria-valuetext={
+          selected ? `Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}` : undefined
+        }
+        style={selected ? { touchAction: "pan-y", ...dirTintStyle(selected.session.dir) } : undefined}
+        onKeyDown={selected ? onKeyDown : undefined}
+        onPointerDown={selected ? onPointerDown : undefined}
+        onPointerUp={selected ? onPointerUp : undefined}
+        onPointerCancel={selected ? (e) => clearPointer(e, true) : undefined}
+        onLostPointerCapture={
+          selected
+            ? (e) => {
+                if (pointerStart.current?.id === e.pointerId) pointerStart.current = null;
+              }
+            : undefined
+        }
       >
-        <span className="mobile-session-title">{selectedTitle}</span>
-        <span className="mobile-session-context">
-          {selected.session.gitState && (
-            <span className="mobile-session-branch">
-              <span
-                className={`git-dot git-dot-${selected.session.gitState}`}
-                title={gitStateTitles[selected.session.gitState]}
-              />
-              <span className="tile-branch-name">{selected.session.branch}</span>
-              <TrackingMarks session={selected.session} />
+        {hostLabel && <span className="mobile-host-label">@{hostLabel}</span>}
+        {selected && (
+          <>
+            <span className="mobile-session-title">{selectedTitle}</span>
+            <span className="mobile-session-context">
+              {selected.session.gitState && (
+                <span className="mobile-session-branch">
+                  <span
+                    className={`git-dot git-dot-${selected.session.gitState}`}
+                    title={gitStateTitles[selected.session.gitState]}
+                  />
+                  <span className="tile-branch-name">{selected.session.branch}</span>
+                  <TrackingMarks session={selected.session} />
+                </span>
+              )}
+              <span className="mobile-session-dir" title={selected.session.dir}>
+                {selected.session.dir}
+              </span>
             </span>
-          )}
-          <span className="mobile-session-dir" title={selected.session.dir}>
-            {selected.session.dir}
-          </span>
-        </span>
-        <span className="mobile-session-position">
-          {resolvedSelection.index + 1}/{sessions.length}
-        </span>
+            <span className="mobile-session-position">
+              {resolvedSelection.index + 1}/{sessions.length}
+            </span>
+          </>
+        )}
+        <span className="mobile-terminal-controls" ref={setControlsSlot} />
+        <a className="mobile-settings-link" href="#/settings" aria-label="Settings">
+          <span aria-hidden="true">⚙</span>
+        </a>
       </div>
-      <div className="mobile-terminal">
-        <TerminalTile
-          key={selected.key}
-          server={selected.server}
-          sessionId={selected.session.id}
-          onClose={onRefresh}
-          sizePolicy="passive"
-        />
-      </div>
+      {initialLoading ? (
+        <div className="mobile-session-empty">Loading sessions…</div>
+      ) : !selected ? (
+        <div className="mobile-session-empty">
+          <span>No sessions are running.</span>
+          <span>Launching needs a wider device.</span>
+        </div>
+      ) : (
+        <div className="mobile-terminal">
+          <TerminalTile
+            key={selected.key}
+            server={selected.server}
+            sessionId={selected.session.id}
+            onClose={onRefresh}
+            sizePolicy="passive"
+            controlsSlot={controlsSlot}
+          />
+        </div>
+      )}
     </div>
   );
 }

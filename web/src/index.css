@@ -1362,30 +1362,14 @@ a {
 
   .app.grid-route {
     height: 100vh;
-    height: 100dvh;
+    height: var(--mobile-viewport-height, 100dvh);
     min-height: 100vh;
-    min-height: 100dvh;
+    min-height: var(--mobile-viewport-height, 100dvh);
     overflow: hidden;
   }
 
   .app.grid-route > header {
-    flex: none;
-    gap: 0.5rem;
-    padding: calc(0.5rem + env(safe-area-inset-top)) calc(0.75rem + env(safe-area-inset-right)) 0.5rem
-      calc(0.75rem + env(safe-area-inset-left));
-  }
-
-  .app.grid-route #header-controls,
-  .app.grid-route > header nav a[href="#/"] {
     display: none;
-  }
-
-  .app.grid-route > header .nav-text {
-    display: none;
-  }
-
-  .app.grid-route > header .settings-icon {
-    display: inline;
   }
 
   .app.grid-route #page-root,
@@ -1399,18 +1383,35 @@ a {
     min-height: 0;
   }
 
+  .app.grid-route .mobile-session-empty {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.85rem;
+  }
+
   .app.grid-route .mobile-terminal {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
   .app.grid-route .mobile-session-header {
-    display: flex;
+    display: grid;
     flex: none;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "host title position settings"
+      "context context controls controls";
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.2rem 0.5rem;
     min-width: 0;
     overflow: hidden;
-    padding: 0.4rem 0.5rem;
+    padding: calc(0.35rem + env(safe-area-inset-top)) calc(0.5rem + env(safe-area-inset-right)) 0.35rem
+      calc(0.5rem + env(safe-area-inset-left));
     border-bottom: 1px solid var(--border);
     background: color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--panel));
     font-family: var(--mono);
@@ -1419,16 +1420,21 @@ a {
     touch-action: pan-y;
   }
 
+  .app.grid-route .mobile-host-label {
+    grid-area: host;
+    color: var(--accent);
+  }
+
   .app.grid-route .mobile-session-title {
-    flex: 1 1 auto;
+    grid-area: title;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .app.grid-route .mobile-session-context {
+    grid-area: context;
     display: flex;
-    flex: 1 3 auto;
     gap: 0.5rem;
     min-width: 0;
     overflow: hidden;
@@ -1452,8 +1458,32 @@ a {
   }
 
   .app.grid-route .mobile-session-position {
-    flex: none;
+    grid-area: position;
     font-variant-numeric: tabular-nums;
+  }
+
+  .app.grid-route .mobile-terminal-controls {
+    grid-area: controls;
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .app.grid-route .mobile-terminal-controls .fit-session-button {
+    position: static;
+  }
+
+  .app.grid-route .mobile-settings-link {
+    grid-area: settings;
+    padding: 0.25rem;
+    border-radius: 4px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .app.grid-route .mobile-settings-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .settings-page {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { Profiler, useEffect } from "react";
 import { vi } from "vitest";
 import MobileSessionView from "../grid/MobileSessionView";
@@ -9,9 +9,23 @@ import type { Server } from "../servers";
 const unmounted = vi.fn();
 
 vi.mock("../term/TerminalTile", () => ({
-  default: function TerminalTileMock({ sessionId, sizePolicy }: { sessionId: number; sizePolicy?: string }) {
+  default: function TerminalTileMock({
+    sessionId,
+    sizePolicy,
+    controlsSlot,
+  }: {
+    sessionId: number;
+    sizePolicy?: string;
+    controlsSlot?: HTMLElement | null;
+  }) {
     useEffect(() => () => unmounted(sessionId), [sessionId]);
-    return <div data-testid={`term-${sessionId}`} data-size-policy={sizePolicy} />;
+    return (
+      <div
+        data-testid={`term-${sessionId}`}
+        data-size-policy={sizePolicy}
+        data-controls-slot={controlsSlot?.className}
+      />
+    );
   },
 }));
 
@@ -105,6 +119,53 @@ test("distinguishes unresolved initial data from a settled empty session list", 
   expect(screen.getByText(/no sessions are running/i)).toBeInTheDocument();
   expect(screen.getByText(/launching needs a wider device/i)).toBeInTheDocument();
   expect(screen.queryByText("Loading sessions…")).not.toBeInTheDocument();
+});
+
+test("combines host, session context, controls, position, and Settings in one mobile header", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1, { branch: "mobile", gitState: "clean" })]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+      hostLabel="work-mac"
+    />,
+  );
+
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  expect(header).toHaveTextContent("@work-mac");
+  expect(header).toHaveTextContent("#1 · claude");
+  expect(header).toHaveTextContent("mobile");
+  expect(header).toHaveTextContent("/work/1");
+  expect(header).toHaveTextContent("1/1");
+  expect(within(header).getByRole("link", { name: "Settings" })).toHaveAttribute("href", "#/settings");
+  expect(header.querySelector(".mobile-terminal-controls")).not.toBeNull();
+  expect(screen.getByTestId("term-1")).toHaveAttribute("data-controls-slot", "mobile-terminal-controls");
+});
+
+test("keeps identity and Settings chrome while loading and after an empty result", () => {
+  const { rerender } = render(
+    <MobileSessionView sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} hostLabel="work-mac" />,
+  );
+
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  expect(header).toHaveTextContent("@work-mac");
+  expect(within(header).getByRole("link", { name: "Settings" })).toBeInTheDocument();
+  expect(header).not.toHaveAttribute("role");
+  expect(screen.getByText("Loading sessions…")).toBeInTheDocument();
+
+  rerender(
+    <MobileSessionView
+      sessions={[]}
+      toolsByServer={{}}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+      hostLabel="work-mac"
+    />,
+  );
+  expect(document.querySelectorAll(".mobile-session-header")).toHaveLength(1);
+  expect(screen.getByText(/no sessions are running/i)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
 });
 
 test("mounts one terminal and renders label, position, branch, tracking, and directory metadata", () => {
