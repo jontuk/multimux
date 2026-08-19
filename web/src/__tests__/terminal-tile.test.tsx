@@ -255,6 +255,22 @@ test("passive terminal advertises its size policy and focus does not claim", () 
   expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
 });
 
+test("a passive terminal portals Fit into the supplied controls target", () => {
+  const controls = document.createElement("div");
+  controls.className = "mobile-terminal-controls";
+  document.body.append(controls);
+  const { container, unmount } = render(
+    <TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" controlsSlot={controls} />,
+  );
+
+  expect(controls).toContainElement(screen.getByRole("button", { name: "Fit session to phone" }));
+  expect(container.querySelector(".fit-session-button")).toBeNull();
+
+  unmount();
+  expect(controls).toBeEmptyDOMElement();
+  controls.remove();
+});
+
 test("cancelled phone fit does not claim the shared size", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);

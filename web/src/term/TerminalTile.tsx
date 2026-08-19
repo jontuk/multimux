@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
@@ -20,6 +21,7 @@ type Props = {
   onClose: () => void;
   autoFocus?: boolean;
   sizePolicy?: TerminalSizePolicy;
+  controlsSlot?: HTMLElement | null;
 };
 
 // Mirrors xterm.js's own isMac (common/Platform.ts) — it gates selection
@@ -47,7 +49,14 @@ async function classifyClose(server: Server, sessionId: number): Promise<"retry"
   }
 }
 
-export default function TerminalTile({ server, sessionId, onClose, autoFocus, sizePolicy = "follow-input" }: Props) {
+export default function TerminalTile({
+  server,
+  sessionId,
+  onClose,
+  autoFocus,
+  sizePolicy = "follow-input",
+  controlsSlot,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fitSharedSizeRef = useRef<() => void>(() => {});
   // Fire the initial focus once; reconnects (retryNonce/url) re-run the effect
@@ -292,22 +301,24 @@ export default function TerminalTile({ server, sessionId, onClose, autoFocus, si
     };
   }, [url, sessionId, retryNonce, sizePolicy]);
 
+  const fitButton = sizePolicy === "passive" && (
+    <button
+      className="fit-session-button"
+      disabled={state !== "open"}
+      onClick={() => {
+        if (window.confirm("Fit this session to your phone? Other attached clients will reflow.")) {
+          fitSharedSizeRef.current();
+        }
+      }}
+    >
+      Fit session to phone
+    </button>
+  );
+
   return (
     <div className="terminal-tile" style={{ position: "relative", height: "100%" }}>
       <div ref={containerRef} style={{ height: "100%" }} />
-      {sizePolicy === "passive" && (
-        <button
-          className="fit-session-button"
-          disabled={state !== "open"}
-          onClick={() => {
-            if (window.confirm("Fit this session to your phone? Other attached clients will reflow.")) {
-              fitSharedSizeRef.current();
-            }
-          }}
-        >
-          Fit session to phone
-        </button>
-      )}
+      {controlsSlot && fitButton ? createPortal(fitButton, controlsSlot) : fitButton}
       {state === "offline" && <div className="overlay">daemon unreachable — retrying…</div>}
       {state === "exited" && (
         <div className="overlay">
