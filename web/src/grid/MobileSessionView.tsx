@@ -135,7 +135,13 @@ export default function MobileSessionView({
         </span>
       </div>
       <div className="mobile-terminal">
-        <TerminalTile key={selected.key} server={selected.server} sessionId={selected.session.id} onClose={onRefresh} />
+        <TerminalTile
+          key={selected.key}
+          server={selected.server}
+          sessionId={selected.session.id}
+          onClose={onRefresh}
+          sizePolicy="passive"
+        />
       </div>
     </div>
   );

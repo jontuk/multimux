@@ -9,9 +9,9 @@ import type { Server } from "../servers";
 const unmounted = vi.fn();
 
 vi.mock("../term/TerminalTile", () => ({
-  default: function TerminalTileMock({ sessionId }: { sessionId: number }) {
+  default: function TerminalTileMock({ sessionId, sizePolicy }: { sessionId: number; sizePolicy?: string }) {
     useEffect(() => () => unmounted(sessionId), [sessionId]);
-    return <div data-testid={`term-${sessionId}`} />;
+    return <div data-testid={`term-${sessionId}`} data-size-policy={sizePolicy} />;
   },
 }));
 
@@ -77,6 +77,19 @@ function mockPointerCapture(header: HTMLElement) {
 
 beforeEach(() => {
   unmounted.mockClear();
+});
+
+test("mounts the selected mobile terminal with passive sizing", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByTestId("term-1")).toHaveAttribute("data-size-policy", "passive");
 });
 
 test("distinguishes unresolved initial data from a settled empty session list", () => {
