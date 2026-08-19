@@ -30,7 +30,7 @@ func claimInput(t *testing.T, c *ArbConn) (cols, rows uint16, reapplied bool) {
 
 func TestFirstConnMayResize(t *testing.T) {
 	a := NewArbiter()
-	c := a.Register("mm-1", "A")
+	c := a.Register("mm-1", "A", SizePolicyFollowInput)
 	defer c.Unregister()
 	if !resizeAllowed(t, c, 80, 24, false) {
 		t.Fatal("sole connection should be allowed to resize")
@@ -39,8 +39,8 @@ func TestFirstConnMayResize(t *testing.T) {
 
 func TestOwnershipFollowsInput(t *testing.T) {
 	a := NewArbiter()
-	c1 := a.Register("mm-1", "A")
-	c2 := a.Register("mm-1", "B")
+	c1 := a.Register("mm-1", "A", SizePolicyFollowInput)
+	c2 := a.Register("mm-1", "B", SizePolicyFollowInput)
 	defer c1.Unregister()
 	defer c2.Unregister()
 
@@ -66,7 +66,7 @@ func TestOwnershipFollowsInput(t *testing.T) {
 
 func TestClaimInputByOwnerIsNoop(t *testing.T) {
 	a := NewArbiter()
-	c := a.Register("mm-1", "A")
+	c := a.Register("mm-1", "A", SizePolicyFollowInput)
 	defer c.Unregister()
 	resizeAllowed(t, c, 80, 24, false)
 	claimInput(t, c)
@@ -80,8 +80,8 @@ func TestClaimInputByOwnerIsNoop(t *testing.T) {
 // different machine must not be able to grab the window in the gap.
 func TestOwnershipSurvivesOwnerReconnect(t *testing.T) {
 	a := NewArbiter()
-	owner := a.Register("mm-1", "desktop")
-	other := a.Register("mm-1", "phone")
+	owner := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	other := a.Register("mm-1", "phone", SizePolicyFollowInput)
 	defer other.Unregister()
 
 	resizeAllowed(t, owner, 200, 50, false)
@@ -92,7 +92,7 @@ func TestOwnershipSurvivesOwnerReconnect(t *testing.T) {
 		t.Fatal("another client must not claim the window while the owner is merely reconnecting")
 	}
 
-	reconnected := a.Register("mm-1", "desktop")
+	reconnected := a.Register("mm-1", "desktop", SizePolicyFollowInput)
 	defer reconnected.Unregister()
 	if !resizeAllowed(t, reconnected, 200, 50, false) {
 		t.Fatal("the owning client must still own the window after reconnecting")
@@ -108,8 +108,8 @@ func TestOwnershipLapsesAfterOwnerStaysGone(t *testing.T) {
 	now := time.Now()
 	a.now = func() time.Time { return now }
 
-	owner := a.Register("mm-1", "desktop")
-	other := a.Register("mm-1", "phone")
+	owner := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	other := a.Register("mm-1", "phone", SizePolicyFollowInput)
 	defer other.Unregister()
 	claimInput(t, owner)
 	owner.Unregister()
@@ -134,10 +134,10 @@ func TestSecondConnOfOwningClientKeepsOwnership(t *testing.T) {
 	now := time.Now()
 	a.now = func() time.Time { return now }
 
-	first := a.Register("mm-1", "desktop")
-	second := a.Register("mm-1", "desktop")
+	first := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	second := a.Register("mm-1", "desktop", SizePolicyFollowInput)
 	defer second.Unregister()
-	other := a.Register("mm-1", "phone")
+	other := a.Register("mm-1", "phone", SizePolicyFollowInput)
 	defer other.Unregister()
 
 	claimInput(t, first)
@@ -154,8 +154,8 @@ func TestSecondConnOfOwningClientKeepsOwnership(t *testing.T) {
 
 func TestUnregisterIdempotent(t *testing.T) {
 	a := NewArbiter()
-	c1 := a.Register("mm-1", "A")
-	c2 := a.Register("mm-1", "B")
+	c1 := a.Register("mm-1", "A", SizePolicyFollowInput)
+	c2 := a.Register("mm-1", "B", SizePolicyFollowInput)
 	defer c2.Unregister()
 
 	c1.Unregister()
@@ -172,8 +172,8 @@ func TestUnregisterIdempotent(t *testing.T) {
 
 func TestSessionsIsolated(t *testing.T) {
 	a := NewArbiter()
-	c1 := a.Register("mm-1", "A")
-	c2 := a.Register("mm-2", "B")
+	c1 := a.Register("mm-1", "A", SizePolicyFollowInput)
+	c2 := a.Register("mm-2", "B", SizePolicyFollowInput)
 	defer c1.Unregister()
 	defer c2.Unregister()
 	claimInput(t, c1)
@@ -184,8 +184,8 @@ func TestSessionsIsolated(t *testing.T) {
 
 func TestActiveResizeClaimsAndTransfersOwnership(t *testing.T) {
 	a := NewArbiter()
-	foreground := a.Register("mm-1", "A")
-	background := a.Register("mm-1", "B")
+	foreground := a.Register("mm-1", "A", SizePolicyFollowInput)
+	background := a.Register("mm-1", "B", SizePolicyFollowInput)
 	defer foreground.Unregister()
 	defer background.Unregister()
 
@@ -203,10 +203,51 @@ func TestActiveResizeClaimsAndTransfersOwnership(t *testing.T) {
 	}
 }
 
+func TestPassiveConnectionDoesNotResizeSharedWindow(t *testing.T) {
+	a := NewArbiter()
+	phone := a.Register("mm-1", "phone", SizePolicyPassive)
+	defer phone.Unregister()
+
+	if resizeAllowed(t, phone, 60, 20, false) {
+		t.Fatal("passive resize must only resize the connection PTY")
+	}
+	if _, _, reapplied := claimInput(t, phone); reapplied {
+		t.Fatal("passive input must not reapply shared dimensions")
+	}
+}
+
+func TestPassiveFitIsOneShotAndDesktopInputReclaims(t *testing.T) {
+	a := NewArbiter()
+	desktop := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	phone := a.Register("mm-1", "phone", SizePolicyPassive)
+	defer desktop.Unregister()
+	defer phone.Unregister()
+
+	resizeAllowed(t, desktop, 160, 50, false)
+	claimInput(t, desktop)
+	if resizeAllowed(t, phone, 60, 20, false) {
+		t.Fatal("ordinary phone resize must remain local")
+	}
+	if !resizeAllowed(t, phone, 60, 20, true) {
+		t.Fatal("explicit phone fit must resize the shared window")
+	}
+	if resizeAllowed(t, phone, 61, 21, false) {
+		t.Fatal("fit must not turn later phone resizes into shared resizes")
+	}
+	if _, _, reapplied := claimInput(t, phone); reapplied {
+		t.Fatal("phone input after fit must remain passive")
+	}
+
+	cols, rows, reapplied := claimInput(t, desktop)
+	if !reapplied || cols != 160 || rows != 50 {
+		t.Fatalf("desktop reclaim = %d,%d,%v; want 160,50,true", cols, rows, reapplied)
+	}
+}
+
 func TestResizeApplicationIsSerializedWithOwnership(t *testing.T) {
 	a := NewArbiter()
-	first := a.Register("mm-1", "A")
-	second := a.Register("mm-1", "B")
+	first := a.Register("mm-1", "A", SizePolicyFollowInput)
+	second := a.Register("mm-1", "B", SizePolicyFollowInput)
 	defer first.Unregister()
 	defer second.Unregister()
 
@@ -255,8 +296,8 @@ func TestResizeApplicationIsSerializedWithOwnership(t *testing.T) {
 
 func TestResizeApplicationDoesNotBlockOtherSessions(t *testing.T) {
 	a := NewArbiter()
-	first := a.Register("mm-1", "A")
-	second := a.Register("mm-2", "B")
+	first := a.Register("mm-1", "A", SizePolicyFollowInput)
+	second := a.Register("mm-2", "B", SizePolicyFollowInput)
 	defer first.Unregister()
 	defer second.Unregister()
 

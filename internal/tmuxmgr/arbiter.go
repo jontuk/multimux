@@ -7,18 +7,20 @@ import (
 
 // ownerGrace is how long a session keeps its owner after that client's last
 // connection drops. Reconnects are routine — a network blip, a tile remount, a
-// phone waking up — and ownership must survive them, or the next passive resize
-// from any other client would reclaim the window and resize it under the person
-// actually typing. Once the owner has stayed gone this long it is presumed
-// closed, and the next client to resize takes over.
+// phone waking up — and ownership must survive them, or the next permitted
+// resize from another follow-input client would reclaim the window and resize
+// it under the person actually typing. Once the owner has stayed gone this long
+// it is presumed closed, and the next follow-input client to resize takes over.
 const ownerGrace = 30 * time.Second
 
 // Arbiter decides which connection may change the shared tmux window size for
-// a session. Ownership follows keyboard input: the client that most recently
-// wrote input to the PTY owns the size. Non-owner resizes are recorded (and
-// still size that client's own attach PTY) but do not touch the window. On
-// ownership transfer the new owner's last-known dims are reapplied so switching
-// machines and typing reclaims the window at that machine's size.
+// a session. Follow-input connections keep the existing behavior: ownership
+// follows keyboard input, and the client that most recently wrote input to the
+// PTY owns the size. Passive connections only resize their own attach PTY during
+// ordinary resize and input activity. An active resize is an explicit ownership
+// claim for either policy. On a follow-input ownership transfer the new owner's
+// last-known dims are reapplied so switching machines and typing reclaims the
+// window at that machine's size.
 //
 // Ownership is keyed on the *client* id (one browser profile), not on the
 // connection, so it survives reconnects — see ownerGrace.
@@ -38,11 +40,21 @@ type arbSession struct {
 	ownerLeftAt time.Time
 }
 
+// SizePolicy controls whether ordinary resize and input activity may claim the
+// shared tmux window for a connection.
+type SizePolicy uint8
+
+const (
+	SizePolicyFollowInput SizePolicy = iota
+	SizePolicyPassive
+)
+
 // ArbConn is one connection's handle on the arbiter.
 type ArbConn struct {
 	arb          *Arbiter
 	tmuxName     string
 	clientID     string
+	sizePolicy   SizePolicy
 	session      *arbSession
 	cols, rows   uint16 // last dims this conn asked for (guarded by arb.mu)
 	unregistered bool   // guarded by arb.mu; true once Unregister has run
@@ -53,8 +65,8 @@ func NewArbiter() *Arbiter {
 }
 
 // Register adds a connection for tmuxName on behalf of clientID (a stable
-// per-browser id); pair with Unregister.
-func (a *Arbiter) Register(tmuxName, clientID string) *ArbConn {
+// per-browser id) using sizePolicy; pair with Unregister.
+func (a *Arbiter) Register(tmuxName, clientID string, sizePolicy SizePolicy) *ArbConn {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := a.sessions[tmuxName]
@@ -64,7 +76,13 @@ func (a *Arbiter) Register(tmuxName, clientID string) *ArbConn {
 	}
 	s.refs++
 	s.live[clientID]++
-	return &ArbConn{arb: a, tmuxName: tmuxName, clientID: clientID, session: s}
+	return &ArbConn{
+		arb:        a,
+		tmuxName:   tmuxName,
+		clientID:   clientID,
+		sizePolicy: sizePolicy,
+		session:    s,
+	}
 }
 
 // Unregister drops the connection. Ownership is not released with it — it is
@@ -95,8 +113,8 @@ func (c *ArbConn) Unregister() {
 	}
 }
 
-// mayResize reports whether this conn's passive resize may touch the window.
-// Callers hold arb.mu.
+// mayResize reports whether this follow-input conn's ordinary resize may touch
+// the window. Callers hold arb.mu.
 func (c *ArbConn) mayResize() bool {
 	s := c.session
 	if s.ownerID == "" || s.ownerID == c.clientID {
@@ -119,7 +137,7 @@ func (c *ArbConn) Resize(cols, rows uint16, active bool, apply func(resizeWindow
 		return nil
 	}
 	c.cols, c.rows = cols, rows
-	allowed := c.mayResize()
+	allowed := c.sizePolicy == SizePolicyFollowInput && c.mayResize()
 	if active || allowed {
 		// Whoever last sized the window owns it; taking over a lapsed
 		// ownership must also stop the old owner from silently getting it back.
@@ -139,7 +157,8 @@ func (c *ArbConn) ClaimInput(apply func(cols, rows uint16) error) error {
 	defer c.session.resizeMu.Unlock()
 
 	c.arb.mu.Lock()
-	if c.unregistered || c.arb.sessions[c.tmuxName] != c.session || c.session.ownerID == c.clientID {
+	if c.unregistered || c.arb.sessions[c.tmuxName] != c.session ||
+		c.sizePolicy == SizePolicyPassive || c.session.ownerID == c.clientID {
 		c.arb.mu.Unlock()
 		return nil
 	}
