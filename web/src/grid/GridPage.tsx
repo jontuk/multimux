@@ -129,10 +129,12 @@ function TileTitle({
 export default function GridPage({
   headerSlot = null,
   confirmTerminate = false,
+  hostLabel,
 }: {
   headerSlot?: HTMLElement | null;
   // Off by default: terminating is one click unless the user opts in.
   confirmTerminate?: boolean;
+  hostLabel?: string;
 }) {
   const [layout, setLayout] = useState<Layout>(emptyLayout());
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
@@ -773,6 +775,7 @@ export default function GridPage({
           toolsByServer={toolsByServer}
           initialLoading={initialLoading}
           onRefresh={refreshSessions}
+          hostLabel={hostLabel}
         />
       ) : (
         <>

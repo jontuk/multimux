@@ -5,9 +5,16 @@ import App from "../App";
 
 const health = { status: "ok", setupPending: false, version: "1.0.0" };
 const realSecureContext = Object.getOwnPropertyDescriptor(window, "isSecureContext");
+const realVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport");
 
 function setSecureContext(value: boolean) {
   Object.defineProperty(window, "isSecureContext", { configurable: true, value });
+}
+
+function setVisualViewportHeight(height: number) {
+  const viewport = new EventTarget();
+  Object.defineProperty(viewport, "height", { configurable: true, value: height });
+  Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
 }
 
 /** Answers /healthz from `healthz` and /api/auth/me from `me`. */
@@ -28,6 +35,8 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
   if (realSecureContext) Object.defineProperty(window, "isSecureContext", realSecureContext);
   else Reflect.deleteProperty(window, "isSecureContext");
+  if (realVisualViewport) Object.defineProperty(window, "visualViewport", realVisualViewport);
+  else Reflect.deleteProperty(window, "visualViewport");
 });
 
 test("a network failure on /api/auth/me shows the unreachable screen, not the login page", async () => {
@@ -92,6 +101,15 @@ test("the ready shell marks only the grid route and keeps Settings accessible wh
   window.dispatchEvent(new HashChangeEvent("hashchange"));
 
   await waitFor(() => expect(app).not.toHaveClass("grid-route"));
+});
+
+test("the ready shell publishes the initial visual viewport height", async () => {
+  setVisualViewportHeight(612);
+  stubFetch(ok, () => Promise.resolve(new Response(JSON.stringify({ name: "jon" }))));
+  render(<App />);
+
+  const gridLink = await screen.findByRole("link", { name: "Grid" });
+  expect(gridLink.closest(".app")).toHaveStyle("--mobile-viewport-height: 612px");
 });
 
 test("insecure setup keeps the wordmark but hides registration controls behind the trust prompt", async () => {

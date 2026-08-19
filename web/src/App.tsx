@@ -10,6 +10,7 @@ import { useEvents } from "./useEvents";
 import GridPage from "./grid/GridPage";
 import { APPEARANCE_EVENT, type AppearanceDetail } from "./settings/AppearancePanel";
 import { PREFERENCES_EVENT, type Preferences, type PreferencesDetail } from "./settings/PreferencesPanel";
+import { useVisualViewportHeight } from "./useVisualViewportHeight";
 
 // Matches defaultThemeColor in internal/server/pwa.go and the static
 // theme-color in index.html: the fallback when no accent is configured.
@@ -121,6 +122,11 @@ export default function App() {
   const [route, setRoute] = useState(window.location.hash || "#/");
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   const [confirmTerminate, setConfirmTerminate] = useState(false);
+  const mobileViewportHeight = useVisualViewportHeight();
+  const appStyle =
+    mobileViewportHeight === null
+      ? undefined
+      : ({ "--mobile-viewport-height": `${mobileViewportHeight}px` } as React.CSSProperties);
 
   useEffect(() => {
     document.title = health?.hostLabel ? `multimux @${health.hostLabel}` : "multimux";
@@ -201,7 +207,7 @@ export default function App() {
 
   // Settings (Task 23), Connect (Task 24) routed here.
   return (
-    <div className={`app${route === "#/" ? " grid-route" : ""}`}>
+    <div className={`app${route === "#/" ? " grid-route" : ""}`} style={appStyle}>
       <header
         className={health?.accentColor ? "host-accented" : undefined}
         style={health?.accentColor ? ({ "--host-accent": health.accentColor } as React.CSSProperties) : undefined}
@@ -226,7 +232,9 @@ export default function App() {
       </header>
       <UpdateBanner />
       <main id="page-root">
-        {route === "#/" && <GridPage headerSlot={headerSlot} confirmTerminate={confirmTerminate} />}
+        {route === "#/" && (
+          <GridPage headerSlot={headerSlot} confirmTerminate={confirmTerminate} hostLabel={health?.hostLabel} />
+        )}
         {route === "#/settings" && <SettingsPage />}
         {route.startsWith("#/connect") && <ConnectPage />}
       </main>
