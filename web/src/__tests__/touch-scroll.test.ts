@@ -111,3 +111,90 @@ test("ignores an additional pointer without disturbing the primary candidate", (
   expect(setPointerCapture).toHaveBeenCalledOnce();
   expect(setPointerCapture).toHaveBeenCalledWith(1);
 });
+
+test("downward and upward drags emit opposite line-mode wheel directions", () => {
+  const { element, wheels } = setup();
+
+  dispatchPointer(element, "pointerdown", { clientY: 20 });
+  dispatchPointer(element, "pointermove", { clientY: 44 });
+  dispatchPointer(element, "pointerup", { clientY: 44 });
+  dispatchPointer(element, "pointerdown", { clientY: 60 });
+  dispatchPointer(element, "pointermove", { clientY: 36 });
+
+  expect(wheels.map((event) => event.deltaY)).toEqual([-1, 1]);
+  expect(wheels.every((event) => event.deltaMode === WheelEvent.DOM_DELTA_LINE)).toBe(true);
+});
+
+test("emits multiple 24-pixel steps and keeps only the signed remainder", () => {
+  const { element, wheels } = setup();
+
+  dispatchPointer(element, "pointerdown");
+  dispatchPointer(element, "pointermove", { clientY: 62 });
+  expect(wheels.map((event) => event.deltaY)).toEqual([-1, -1]);
+
+  dispatchPointer(element, "pointermove", { clientY: 38 });
+  expect(wheels.map((event) => event.deltaY)).toEqual([-1, -1]);
+  dispatchPointer(element, "pointermove", { clientY: 24 });
+  expect(wheels.map((event) => event.deltaY)).toEqual([-1, -1, 1]);
+});
+
+test("wheel events use the latest pointer coordinates and xterm-compatible options", () => {
+  const { element, wheels } = setup();
+
+  dispatchPointer(element, "pointerdown", { clientX: 10, clientY: 20 });
+  dispatchPointer(element, "pointermove", { clientX: 34, clientY: 50 });
+
+  expect(wheels).toHaveLength(1);
+  expect(wheels[0]).toMatchObject({
+    bubbles: true,
+    cancelable: true,
+    clientX: 34,
+    clientY: 50,
+    deltaMode: WheelEvent.DOM_DELTA_LINE,
+    deltaX: 0,
+    deltaY: -1,
+    deltaZ: 0,
+  });
+});
+
+test("drops completed steps while mouse tracking is inactive instead of queueing them", () => {
+  let ready = false;
+  const { element, wheels } = setup(() => ready);
+
+  dispatchPointer(element, "pointerdown");
+  dispatchPointer(element, "pointermove", { clientY: 48 });
+  expect(wheels).toEqual([]);
+
+  ready = true;
+  dispatchPointer(element, "pointermove", { clientY: 72 });
+  expect(wheels.map((event) => event.deltaY)).toEqual([-1]);
+});
+
+test.each(["pointerup", "pointercancel", "lostpointercapture"] as const)(
+  "%s clears activation and the unconsumed remainder",
+  (endEvent) => {
+    const { element, wheels } = setup();
+
+    dispatchPointer(element, "pointerdown");
+    dispatchPointer(element, "pointermove", { clientY: 20 });
+    dispatchPointer(element, endEvent, { clientY: 20 });
+    dispatchPointer(element, "pointerdown", { clientY: 100 });
+    dispatchPointer(element, "pointermove", { clientY: 113 });
+
+    expect(wheels).toEqual([]);
+  },
+);
+
+test("cleanup releases capture, removes listeners, and clears active state", () => {
+  const { element, wheels, setPointerCapture, releasePointerCapture, dispose } = setup();
+
+  dispatchPointer(element, "pointerdown");
+  dispatchPointer(element, "pointermove", { clientY: 13 });
+  dispose();
+
+  expect(releasePointerCapture).toHaveBeenCalledWith(1);
+  dispatchPointer(element, "pointerdown", { pointerId: 2 });
+  dispatchPointer(element, "pointermove", { pointerId: 2, clientY: 48 });
+  expect(setPointerCapture).toHaveBeenCalledTimes(1);
+  expect(wheels).toEqual([]);
+});

@@ -1,4 +1,5 @@
 const ACTIVATION_DISTANCE = 12;
+const PIXELS_PER_STEP = 24;
 
 type Gesture = {
   pointerId: number;
@@ -11,10 +12,37 @@ type Gesture = {
 
 export function installTouchScroll(element: HTMLElement, isReady: () => boolean): () => void {
   let gesture: Gesture | null = null;
-  void isReady;
 
   function clear() {
     gesture = null;
+  }
+
+  function emitMovement(event: PointerEvent) {
+    if (!gesture || gesture.phase !== "scrolling") return;
+    gesture.remainder += event.clientY - gesture.lastY;
+    gesture.lastY = event.clientY;
+    const steps = Math.trunc(gesture.remainder / PIXELS_PER_STEP);
+    gesture.remainder -= steps * PIXELS_PER_STEP;
+
+    // Completed steps while tmux mouse tracking is inactive are deliberately
+    // dropped: xterm's no-scrollback fallback would turn them into cursor keys,
+    // and retaining them would produce a delayed burst after negotiation.
+    if (steps === 0 || !isReady()) return;
+    const deltaY = steps > 0 ? -1 : 1;
+    for (let index = 0; index < Math.abs(steps); index += 1) {
+      element.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          deltaX: 0,
+          deltaY,
+          deltaZ: 0,
+        }),
+      );
+    }
   }
 
   function onPointerDown(event: PointerEvent) {
@@ -45,6 +73,7 @@ export function installTouchScroll(element: HTMLElement, isReady: () => boolean)
     }
 
     event.preventDefault();
+    emitMovement(event);
   }
 
   function onPointerEnd(event: PointerEvent) {
