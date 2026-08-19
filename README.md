@@ -331,7 +331,7 @@ filter, so the new tile is never hidden. The filter itself and the
 per-directory arrangements are browser-local, in `localStorage`.
 
 **Mobile session view.** At a viewport width of **560 CSS pixels or less**,
-multimux switches to a portrait-first, read-only session switcher. It shows all
+multimux switches to a portrait-first session switcher. It shows all
 running sessions already placed in the desktop grid first, in grid order, then
 appends other running sessions in stable server/session order. Swipe
 horizontally on the compact session header to move between them; terminal touch
@@ -344,6 +344,12 @@ actions. Selection is temporary, and neither switching sessions nor entering
 or leaving mobile view changes the saved desktop grid layout. Viewports wider
 than 560 pixels — including most tablets — keep the full grid.
 
+Mobile terminals use passive window sizing: ordinary phone input, focus, and
+viewport changes resize only the phone's attach PTY and do not reflow the shared
+tmux window on a desktop. **Fit session to phone** is a deliberate one-shot
+escape hatch; after confirmation it resizes the shared window, and the next
+desktop input restores that desktop's saved dimensions.
+
 **In the terminal.** Sessions run with tmux mouse mode on, so the wheel/trackpad
 scrolls tmux's copy-mode with 50 000 lines of scrollback. A plain click-drag
 makes a native browser selection and copies it to your system clipboard, so no
@@ -351,8 +357,8 @@ modifier and no Cmd/Ctrl+C are needed; hold **Shift** while dragging to send
 the drag to tmux instead (pane focus and resize, copy-mode drags). A copy-mode
 yank reaches your system clipboard via OSC 52.
 **Shift+Enter** is sent as an extended key rather than a bare newline. When the
-same session is open on several machines, the window size follows whoever typed
-last, so switching machines and typing reclaims it at that machine's size.
+same session is open on several desktop grids, the window size follows whoever
+typed last, so switching machines and typing reclaims it at that machine's size.
 
 **Settings tabs** — Tools, Directories (both drag-reorderable, with arrow keys
 for keyboard and touch; the saved order is the launcher's order), Passkeys (add
