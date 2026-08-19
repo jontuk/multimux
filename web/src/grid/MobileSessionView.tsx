@@ -173,6 +173,7 @@ export default function MobileSessionView({
             onClose={onRefresh}
             sizePolicy="passive"
             controlsSlot={controlsSlot}
+            touchScrollback
           />
           <MobileCompose key={`compose:${selected.key}`} terminalRef={terminalRef} controlsSlot={controlsSlot} />
           <MobileKeyBar terminalRef={terminalRef} />

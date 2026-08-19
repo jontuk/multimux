@@ -98,6 +98,17 @@ test("the essential key bar consumes space only while the mobile terminal contai
   expect(keyButton).toMatch(/touch-action:\s*manipulation/);
 });
 
+test("native touch panning is disabled only for an opted-in terminal host", () => {
+  const styles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+  const optedIn = styles.match(
+    /\.app\.grid-route \.mobile-terminal > \.terminal-tile > \.touch-scrollback\s*\{([^}]*)\}/s,
+  )?.[1];
+  const ordinaryTerminal = styles.match(/\.terminal-tile\s*\{([^}]*)\}/s)?.[1];
+
+  expect(optedIn).toMatch(/touch-action:\s*none/);
+  expect(ordinaryTerminal).not.toMatch(/touch-action/);
+});
+
 test("reads the visual viewport immediately and publishes only its settled height", () => {
   vi.useFakeTimers();
   const viewport = new FakeVisualViewport(780);

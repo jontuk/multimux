@@ -20,10 +20,12 @@ vi.mock("../term/TerminalTile", () => ({
       sessionId,
       sizePolicy,
       controlsSlot,
+      touchScrollback,
     }: {
       sessionId: number;
       sizePolicy?: string;
       controlsSlot?: HTMLElement | null;
+      touchScrollback?: boolean;
     },
     ref,
   ) {
@@ -53,6 +55,7 @@ vi.mock("../term/TerminalTile", () => ({
         data-testid={`term-${sessionId}`}
         data-size-policy={sizePolicy}
         data-controls-slot={controlsSlot?.className}
+        data-touch-scrollback={touchScrollback ? "true" : "false"}
       />
     );
   }),
@@ -137,6 +140,7 @@ test("mounts the selected mobile terminal with passive sizing", () => {
   );
 
   expect(screen.getByTestId("term-1")).toHaveAttribute("data-size-policy", "passive");
+  expect(screen.getByTestId("term-1")).toHaveAttribute("data-touch-scrollback", "true");
 });
 
 test("distinguishes unresolved initial data from a settled empty session list", () => {
