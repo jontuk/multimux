@@ -130,11 +130,13 @@ export default function GridPage({
   headerSlot = null,
   confirmTerminate = false,
   hostLabel,
+  accentColor,
 }: {
   headerSlot?: HTMLElement | null;
   // Off by default: terminating is one click unless the user opts in.
   confirmTerminate?: boolean;
   hostLabel?: string;
+  accentColor?: string;
 }) {
   const [layout, setLayout] = useState<Layout>(emptyLayout());
   const [sessionsByServer, setSessionsByServer] = useState<Record<string, Session[]>>({});
@@ -776,6 +778,7 @@ export default function GridPage({
           initialLoading={initialLoading}
           onRefresh={refreshSessions}
           hostLabel={hostLabel}
+          accentColor={accentColor}
         />
       ) : (
         <>

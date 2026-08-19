@@ -233,7 +233,12 @@ export default function App() {
       <UpdateBanner />
       <main id="page-root">
         {route === "#/" && (
-          <GridPage headerSlot={headerSlot} confirmTerminate={confirmTerminate} hostLabel={health?.hostLabel} />
+          <GridPage
+            headerSlot={headerSlot}
+            confirmTerminate={confirmTerminate}
+            hostLabel={health?.hostLabel}
+            accentColor={health?.accentColor}
+          />
         )}
         {route === "#/settings" && <SettingsPage />}
         {route.startsWith("#/connect") && <ConnectPage />}

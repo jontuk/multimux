@@ -143,6 +143,46 @@ test("combines host, session context, controls, position, and Settings in one mo
   expect(screen.getByTestId("term-1")).toHaveAttribute("data-controls-slot", "mobile-terminal-controls");
 });
 
+test("keeps interactive controls outside the slider and does not capture their pointers", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  const slider = within(header).getByRole("slider", { name: "Active session" });
+  const settings = within(header).getByRole("link", { name: "Settings" });
+  const controls = header.querySelector<HTMLElement>(".mobile-terminal-controls")!;
+  const { setPointerCapture } = mockPointerCapture(header);
+
+  expect(header).not.toHaveAttribute("role");
+  expect(slider).not.toContainElement(settings);
+  expect(slider).not.toContainElement(controls);
+
+  fireEvent.pointerDown(settings, { pointerId: 7, isPrimary: true, clientX: 10, clientY: 10 });
+  expect(setPointerCapture).not.toHaveBeenCalled();
+});
+
+test("applies the configured host accent to the consolidated mobile header", () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+      accentColor="#3fb950"
+    />,
+  );
+
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  expect(header).toHaveClass("host-accented");
+  expect(header.style.getPropertyValue("--host-accent")).toBe("#3fb950");
+});
+
 test("keeps identity and Settings chrome while loading and after an empty result", () => {
   const { rerender } = render(
     <MobileSessionView sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} hostLabel="work-mac" />,

@@ -42,6 +42,25 @@ test("viewport metadata enables safe areas and interactive keyboard resizing", (
   ]);
 });
 
+test("the mobile grid reserves the top safe area before banners and chrome", () => {
+  const styles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+  const gridRoute = styles.match(/\.app\.grid-route\s*\{([^}]*)\}/s)?.[1];
+  const mobileHeader = styles.match(/\.app\.grid-route \.mobile-session-header\s*\{([^}]*)\}/s)?.[1];
+
+  expect(gridRoute).toMatch(/padding-top:\s*env\(safe-area-inset-top\)/);
+  expect(mobileHeader).not.toMatch(/safe-area-inset-top/);
+});
+
+test("long mobile host labels shrink and ellipsize before controls", () => {
+  const styles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+  const hostLabel = styles.match(/\.app\.grid-route \.mobile-host-label\s*\{([^}]*)\}/s)?.[1];
+
+  expect(hostLabel).toMatch(/max-width:/);
+  expect(hostLabel).toMatch(/min-width:\s*0/);
+  expect(hostLabel).toMatch(/overflow:\s*hidden/);
+  expect(hostLabel).toMatch(/text-overflow:\s*ellipsis/);
+});
+
 test("reads the visual viewport immediately and publishes only its settled height", () => {
   vi.useFakeTimers();
   const viewport = new FakeVisualViewport(780);

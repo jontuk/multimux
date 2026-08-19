@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import TerminalTile from "../term/TerminalTile";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
@@ -12,12 +12,14 @@ export default function MobileSessionView({
   initialLoading,
   onRefresh,
   hostLabel,
+  accentColor,
 }: {
   sessions: MobileSession[];
   toolsByServer: Record<string, Tool[]>;
   initialLoading: boolean;
   onRefresh: () => void;
   hostLabel?: string;
+  accentColor?: string;
 }) {
   const [selection, setSelection] = useState<MobileSelection>({ key: null, index: 0 });
   const [controlsSlot, setControlsSlot] = useState<HTMLElement | null>(null);
@@ -32,6 +34,7 @@ export default function MobileSessionView({
 
   function onPointerDown(e: PointerEvent) {
     if (!e.isPrimary || pointerStart.current) return;
+    if (e.target instanceof Element && e.target.closest("a, button, input, select, textarea")) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     pointerStart.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
   }
@@ -83,22 +86,19 @@ export default function MobileSessionView({
   const selectedTitle = selected
     ? `#${selected.session.id} · ${sessionTitle(toolsByServer[selected.server.id], selected.session)}`
     : "";
+  const headerStyle =
+    selected || accentColor
+      ? ({
+          ...(selected ? dirTintStyle(selected.session.dir) : {}),
+          ...(accentColor ? { "--host-accent": accentColor } : {}),
+        } as CSSProperties)
+      : undefined;
 
   return (
     <div className="mobile-session-view">
       <div
-        className="mobile-session-header"
-        role={selected ? "slider" : undefined}
-        tabIndex={selected ? 0 : undefined}
-        aria-label={selected ? "Active session" : undefined}
-        aria-valuemin={selected ? 1 : undefined}
-        aria-valuemax={selected ? sessions.length : undefined}
-        aria-valuenow={selected ? resolvedSelection.index + 1 : undefined}
-        aria-valuetext={
-          selected ? `Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}` : undefined
-        }
-        style={selected ? { touchAction: "pan-y", ...dirTintStyle(selected.session.dir) } : undefined}
-        onKeyDown={selected ? onKeyDown : undefined}
+        className={`mobile-session-header${accentColor ? " host-accented" : ""}`}
+        style={headerStyle}
         onPointerDown={selected ? onPointerDown : undefined}
         onPointerUp={selected ? onPointerUp : undefined}
         onPointerCancel={selected ? (e) => clearPointer(e, true) : undefined}
@@ -110,30 +110,44 @@ export default function MobileSessionView({
             : undefined
         }
       >
-        {hostLabel && <span className="mobile-host-label">@{hostLabel}</span>}
-        {selected && (
-          <>
-            <span className="mobile-session-title">{selectedTitle}</span>
-            <span className="mobile-session-context">
-              {selected.session.gitState && (
-                <span className="mobile-session-branch">
-                  <span
-                    className={`git-dot git-dot-${selected.session.gitState}`}
-                    title={gitStateTitles[selected.session.gitState]}
-                  />
-                  <span className="tile-branch-name">{selected.session.branch}</span>
-                  <TrackingMarks session={selected.session} />
+        <div
+          className="mobile-session-selector"
+          role={selected ? "slider" : undefined}
+          tabIndex={selected ? 0 : undefined}
+          aria-label={selected ? "Active session" : undefined}
+          aria-valuemin={selected ? 1 : undefined}
+          aria-valuemax={selected ? sessions.length : undefined}
+          aria-valuenow={selected ? resolvedSelection.index + 1 : undefined}
+          aria-valuetext={
+            selected ? `Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}` : undefined
+          }
+          onKeyDown={selected ? onKeyDown : undefined}
+        >
+          {hostLabel && <span className="mobile-host-label">@{hostLabel}</span>}
+          {selected && (
+            <>
+              <span className="mobile-session-title">{selectedTitle}</span>
+              <span className="mobile-session-context">
+                {selected.session.gitState && (
+                  <span className="mobile-session-branch">
+                    <span
+                      className={`git-dot git-dot-${selected.session.gitState}`}
+                      title={gitStateTitles[selected.session.gitState]}
+                    />
+                    <span className="tile-branch-name">{selected.session.branch}</span>
+                    <TrackingMarks session={selected.session} />
+                  </span>
+                )}
+                <span className="mobile-session-dir" title={selected.session.dir}>
+                  {selected.session.dir}
                 </span>
-              )}
-              <span className="mobile-session-dir" title={selected.session.dir}>
-                {selected.session.dir}
               </span>
-            </span>
-            <span className="mobile-session-position">
-              {resolvedSelection.index + 1}/{sessions.length}
-            </span>
-          </>
-        )}
+              <span className="mobile-session-position">
+                {resolvedSelection.index + 1}/{sessions.length}
+              </span>
+            </>
+          )}
+        </div>
         <span className="mobile-terminal-controls" ref={setControlsSlot} />
         <a className="mobile-settings-link" href="#/settings" aria-label="Settings">
           <span aria-hidden="true">⚙</span>

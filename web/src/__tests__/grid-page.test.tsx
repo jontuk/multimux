@@ -124,10 +124,14 @@ test("narrow mode renders the mobile session view without desktop controls", asy
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
   mockFetch(layout);
 
-  render(<GridPage />);
+  render(<GridPage hostLabel="work-mac" accentColor="#3fb950" />);
 
   await screen.findByText("1/3");
+  const mobileHeader = document.querySelector<HTMLElement>(".mobile-session-header")!;
   expect(document.querySelector(".mobile-session-view")).not.toBeNull();
+  expect(mobileHeader).toHaveTextContent("@work-mac");
+  expect(mobileHeader).toHaveClass("host-accented");
+  expect(mobileHeader.style.getPropertyValue("--host-accent")).toBe("#3fb950");
   expect(document.querySelector(".grid")).toBeNull();
   expect(document.querySelector(".empty-tile")).toBeNull();
   expect(screen.queryByText("+ New")).not.toBeInTheDocument();
