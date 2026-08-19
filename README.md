@@ -338,6 +338,11 @@ horizontally on the compact session header to move between them; terminal touch
 input does not switch sessions, and swiping at the first or last session does
 not wrap.
 
+The mobile grid uses one safe-area-aware header for the host identity, session
+context, position, Settings, and terminal controls. When the software keyboard
+opens, the app follows the browser's visible viewport and refits once the
+keyboard transition settles, keeping the terminal prompt in the usable area.
+
 Only the selected terminal is mounted. The mobile view has no launcher and no
 rename, move, remove, or terminate controls; use a wider viewport for those
 actions. Selection is temporary, and neither switching sessions nor entering
