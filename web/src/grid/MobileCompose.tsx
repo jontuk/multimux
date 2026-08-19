@@ -27,7 +27,11 @@ export default function MobileCompose({
       setStatus("Terminal is disconnected. Draft not sent.");
       return;
     }
-    if (sendEnter) terminal.input("\r");
+    if (sendEnter && !terminal.input("\r")) {
+      setDraft("");
+      setStatus("Text inserted, but Enter was not sent.");
+      return;
+    }
     setDraft("");
     setOpen(false);
   }

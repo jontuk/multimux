@@ -87,11 +87,13 @@ class FakeWebSocket {
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
   sent: unknown[] = [];
+  throwOnBinarySend = false;
   constructor(url: string) {
     this.url = url;
     FakeWebSocket.instances.push(this);
   }
   send(data: unknown) {
+    if (this.throwOnBinarySend && ArrayBuffer.isView(data)) throw new Error("send failed");
     this.sent.push(data);
   }
   close() {}
@@ -261,6 +263,19 @@ test("terminal handle pastes multiline Unicode through xterm without adding Ente
   expect(ref.current?.paste("first\nsecond 🐚")).toBe(true);
   expect(pasteCalls).toEqual(["first\nsecond 🐚"]);
   expect(decodedBinaryFrames(ws)).toEqual(["first\nsecond 🐚"]);
+});
+
+test("terminal handle reports synchronous input and paste send failures", () => {
+  const ref = createRef<TerminalHandle>();
+  render(<TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  ws.throwOnBinarySend = true;
+
+  expect(ref.current?.input("not accepted")).toBe(false);
+  expect(ref.current?.paste("also not accepted")).toBe(false);
+  expect(decodedBinaryFrames(ws)).toEqual([]);
 });
 
 test("terminal handle focuses, changes font size, and fits passively", () => {

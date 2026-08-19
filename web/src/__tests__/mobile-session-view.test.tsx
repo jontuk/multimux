@@ -12,6 +12,7 @@ const unmounted = vi.fn();
 const terminalHandles = new Map<number, TerminalHandle>();
 const terminalCalls: Array<{ sessionId: number; operation: "input" | "paste"; data: string }> = [];
 let terminalConnected = true;
+let terminalInputAccepted = true;
 
 vi.mock("../term/TerminalTile", () => ({
   default: forwardRef(function TerminalTileMock(
@@ -30,7 +31,7 @@ vi.mock("../term/TerminalTile", () => ({
     if (!handle) {
       handle = {
         input(data) {
-          if (!terminalConnected) return false;
+          if (!terminalConnected || !terminalInputAccepted) return false;
           terminalCalls.push({ sessionId, operation: "input", data });
           return true;
         },
@@ -122,6 +123,7 @@ beforeEach(() => {
   terminalHandles.clear();
   terminalCalls.length = 0;
   terminalConnected = true;
+  terminalInputAccepted = true;
 });
 
 test("mounts the selected mobile terminal with passive sizing", () => {
@@ -618,6 +620,28 @@ test("Insert & Enter pastes first and sends exactly one separate Enter", async (
     { sessionId: 1, operation: "paste", data: "ship it" },
     { sessionId: 1, operation: "input", data: "\r" },
   ]);
+});
+
+test("Insert & Enter reports when text was inserted but Enter was not sent", async () => {
+  terminalInputAccepted = false;
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Compose terminal input" }), {
+    target: { value: "ship it" },
+  });
+
+  await userEvent.click(screen.getByRole("button", { name: "Insert & Enter" }));
+
+  expect(terminalCalls).toEqual([{ sessionId: 1, operation: "paste", data: "ship it" }]);
+  expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("");
+  expect(screen.getByRole("status")).toHaveTextContent("Text inserted, but Enter was not sent.");
 });
 
 test("a disconnected terminal preserves the Compose draft and reports it", async () => {
