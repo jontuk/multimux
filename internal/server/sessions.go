@@ -390,6 +390,10 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 	for _, name := range names {
 		alive[name] = true
 	}
+	// Window-size ownership outlives a session's connections, so this listing —
+	// the one place that knows tmux has genuinely forgotten a session — is what
+	// ends the record.
+	s.cfg.Arbiter.Prune(alive)
 	var newlyDead []store.Session
 	now := time.Now()
 	for _, sess := range sessions {

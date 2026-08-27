@@ -310,8 +310,15 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     // Focusing this terminal claims the window size at our dims — the cheap way
     // to reclaim a window some other client shrank, without having to type.
     // (Keyboard input claims it too, server-side, via Arbiter.ClaimInput.)
+    // Only a focus the user caused counts: a machine waking with this tab
+    // frontmost re-fires focus on the element that already had it, and a claim
+    // from there resizes the window under whoever is really typing. Browsers
+    // without userActivation (and jsdom) keep the unconditional behaviour.
     const claimOnFocus = () => {
-      if (sizePolicy === "follow-input") sendResize(true);
+      if (sizePolicy !== "follow-input") return;
+      const activation = navigator.userActivation as UserActivation | undefined;
+      if (activation && !activation.isActive) return;
+      sendResize(true);
     };
     captureContainer.addEventListener("focusin", claimOnFocus);
 

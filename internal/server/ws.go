@@ -22,6 +22,15 @@ import (
 // (an idle terminal produces no traffic at all).
 const pingInterval = 30 * time.Second
 
+// pongWait is how long a PTY socket may go without a pong before the daemon
+// gives up on it. A laptop that sleeps mid-connection leaves a socket TCP will
+// not fail for hours — the log has had 30- and 138-hour ones — and every one of
+// those holds a tmux attach, a PTY, and an arbiter registration that makes a
+// dead browser look like a client still sitting on the session. 2.5× the ping
+// interval, so one dropped or late pong is not enough to cut a healthy tab
+// (the same margin the events socket's staleAfter uses).
+const pongWait = 75 * time.Second
+
 // checkWSOrigin defends against cross-site WebSocket hijacking: a browser can
 // be tricked into opening a WS with the victim's cookie, so cookie-authenticated
 // upgrades must come from our own origins. Token-authenticated upgrades carry
@@ -122,8 +131,21 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	arb := s.cfg.Arbiter.Register(sess.TmuxName, clientID(r), ptySizePolicy(r))
+	client := clientID(r)
+	policy := ptySizePolicy(r)
+	arb := s.cfg.Arbiter.Register(sess.TmuxName, client, policy)
 	defer arb.Unregister()
+	// Which browser is on which session is what turns a window that came back
+	// the wrong size into a client id the arbiter's own logs can be read with.
+	slog.Info("pty attached", "session_id", sess.ID, "tmux", sess.TmuxName,
+		"client", client, "remote", r.RemoteAddr, "passive", policy == tmuxmgr.SizePolicyPassive)
+
+	// A socket that stops answering is a dead client; ping it and require the
+	// browser's automatic pong back inside pongWait.
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
 
 	// Keepalive pings; WriteControl is safe alongside the PTY→WS writer.
 	stopPing := make(chan struct{})
@@ -136,6 +158,10 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 			case <-ping.C:
 				deadline := time.Now().Add(5 * time.Second)
 				if conn.WriteControl(websocket.PingMessage, nil, deadline) != nil {
+					// The peer is unreachable, and the read loop below would
+					// otherwise sit on it until its deadline: close now so the
+					// handler tears down its PTY and registration.
+					conn.Close()
 					return
 				}
 			case <-stopPing:
@@ -188,6 +214,9 @@ readLoop:
 		if err != nil {
 			break
 		}
+		// Traffic proves liveness as well as a pong does, and gorilla only
+		// extends the deadline from the pong handler.
+		conn.SetReadDeadline(time.Now().Add(pongWait))
 		switch mt {
 		case websocket.BinaryMessage:
 			// Keyboard input claims window-size ownership; if ownership just

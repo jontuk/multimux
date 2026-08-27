@@ -405,6 +405,29 @@ test("only terminal focus claims window-size ownership", async () => {
   expect(lastResize(ws)).toMatchObject({ active: true });
 });
 
+// A machine waking with the tab frontmost re-fires focus on the element that
+// already had it. That is not a person asking for the window.
+test("a focus the user did not cause does not claim the shared size", () => {
+  const activation = { isActive: false, hasBeenActive: true };
+  Object.defineProperty(navigator, "userActivation", { value: activation, configurable: true });
+  try {
+    const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+    const ws = FakeWebSocket.instances[0];
+    ws.readyState = FakeWebSocket.OPEN;
+    act(() => ws.onopen?.());
+
+    const term = container.querySelector(".terminal-tile > div")!;
+    act(() => term.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
+    expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
+
+    activation.isActive = true; // the user clicked into the tile
+    act(() => term.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
+    expect(lastResize(ws)).toMatchObject({ active: true });
+  } finally {
+    Reflect.deleteProperty(navigator, "userActivation");
+  }
+});
+
 test("passive terminal advertises its size policy and focus does not claim", () => {
   const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
   const fitButton = screen.getByRole("button", { name: "Fit session to phone" });

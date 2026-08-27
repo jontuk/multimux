@@ -113,6 +113,7 @@ func TestOwnershipLapsesAfterOwnerStaysGone(t *testing.T) {
 	defer other.Unregister()
 	claimInput(t, owner)
 	owner.Unregister()
+	markPresent(t, a, "phone") // someone is at the other machine
 
 	now = now.Add(ownerGrace - time.Second)
 	if resizeAllowed(t, other, 60, 20, false) {
@@ -334,5 +335,119 @@ func TestResizeApplicationDoesNotBlockOtherSessions(t *testing.T) {
 	close(releaseFirst)
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// markPresent stamps clientID as having a human at it the way a real keystroke
+// does — input on some session that client is connected to.
+func markPresent(t *testing.T, a *Arbiter, clientID string) {
+	t.Helper()
+	c := a.Register("mm-presence", clientID, SizePolicyFollowInput)
+	claimInput(t, c)
+	c.Unregister()
+}
+
+// A grid tile is routinely the only connection a session has, so closing it
+// empties the session. Ownership must survive that: a laptop that wakes for
+// half a minute every hour with nobody at it reconnects into exactly this
+// state, and its ordinary reconnect resize would otherwise claim the vacated
+// window and shrink it under the machine actually being used.
+func TestOwnershipOutlivesEveryConnectionDropping(t *testing.T) {
+	a := NewArbiter()
+	now := time.Now()
+	a.now = func() time.Time { return now }
+
+	owner := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	resizeAllowed(t, owner, 200, 50, false)
+	owner.Unregister() // the session now has no connections at all
+
+	now = now.Add(time.Hour)
+	waker := a.Register("mm-1", "laptop", SizePolicyFollowInput)
+	defer waker.Unregister()
+	if resizeAllowed(t, waker, 60, 20, false) {
+		t.Fatal("a reconnect into an emptied session must not claim the previous owner's window")
+	}
+}
+
+// Absence alone is not a takeover: the machine claiming the window must have
+// someone at it. A dormant tab reconnecting on a wake has not.
+func TestIdleClientCannotTakeOverAnAbsentOwner(t *testing.T) {
+	a := NewArbiter()
+	now := time.Now()
+	a.now = func() time.Time { return now }
+
+	owner := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	other := a.Register("mm-1", "laptop", SizePolicyFollowInput)
+	defer other.Unregister()
+	claimInput(t, owner)
+	owner.Unregister()
+	markPresent(t, a, "laptop")
+
+	now = now.Add(presenceWindow + time.Second) // the human at the laptop has long gone
+	if resizeAllowed(t, other, 60, 20, false) {
+		t.Fatal("a client with nobody at it must not take an absent owner's window")
+	}
+}
+
+func TestPresentClientTakesOverAnAbsentOwner(t *testing.T) {
+	a := NewArbiter()
+	now := time.Now()
+	a.now = func() time.Time { return now }
+
+	owner := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	other := a.Register("mm-1", "laptop", SizePolicyFollowInput)
+	defer other.Unregister()
+	claimInput(t, owner)
+	owner.Unregister()
+
+	now = now.Add(ownerGrace + time.Second)
+	markPresent(t, a, "laptop")
+	if !resizeAllowed(t, other, 60, 20, false) {
+		t.Fatal("a machine with someone at it must take over once the owner has stayed gone")
+	}
+}
+
+// Records are kept for as long as tmux still has the session; the reconcile
+// tick is what forgets the rest, so the map cannot grow without bound.
+func TestPruneForgetsOnlySessionsTmuxNoLongerHas(t *testing.T) {
+	a := NewArbiter()
+	now := time.Now()
+	a.now = func() time.Time { return now }
+
+	owner := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	resizeAllowed(t, owner, 200, 50, false)
+	owner.Unregister()
+
+	a.Prune(map[string]bool{"mm-1": true})
+	kept := a.Register("mm-1", "laptop", SizePolicyFollowInput)
+	if resizeAllowed(t, kept, 60, 20, false) {
+		t.Fatal("pruning a session tmux still has must keep its owner")
+	}
+	kept.Unregister()
+
+	a.Prune(map[string]bool{}) // tmux no longer has mm-1
+	fresh := a.Register("mm-1", "laptop", SizePolicyFollowInput)
+	defer fresh.Unregister()
+	if !resizeAllowed(t, fresh, 60, 20, false) {
+		t.Fatal("a session tmux has forgotten must arbitrate from scratch")
+	}
+}
+
+// A connection still registered pins its record: pruning under it would strand
+// the live connection's ownership on a map entry nothing else can reach.
+func TestPruneKeepsSessionsThatStillHaveConnections(t *testing.T) {
+	a := NewArbiter()
+	owner := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	defer owner.Unregister()
+	resizeAllowed(t, owner, 200, 50, false)
+
+	a.Prune(map[string]bool{})
+	if !resizeAllowed(t, owner, 200, 50, false) {
+		t.Fatal("a live connection must keep arbitrating after a prune")
+	}
+	laptop := a.Register("mm-1", "laptop", SizePolicyFollowInput)
+	defer laptop.Unregister()
+	if resizeAllowed(t, laptop, 60, 20, false) {
+		t.Fatal("prune must not have dropped the live owner")
 	}
 }
