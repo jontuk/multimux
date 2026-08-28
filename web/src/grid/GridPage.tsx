@@ -7,6 +7,7 @@ import {
   emptyLayout,
   normalize,
   removeTile,
+  removeTilesWhere,
   setCols,
   swapTiles,
   tileKey,
@@ -491,6 +492,30 @@ export default function GridPage({
     refreshSessions();
   }
 
+  // Close a whole directory: every running session in it, on every server,
+  // whether or not it has a tile. The pill's count is what the user is acting
+  // on, and that count is over running sessions — a dead one is not something
+  // to terminate.
+  async function closeDir(path: string) {
+    const doomed = servers.flatMap((server) =>
+      (sessionsByServer[server.id] ?? [])
+        .filter((sess) => sess.status === "running" && sess.dir === path)
+        .map((sess) => ({ server, id: sess.id })),
+    );
+    if (doomed.length === 0) return;
+    if (confirmTerminate && !window.confirm(`Terminate ${doomed.length} session(s) in ${path}?`)) return;
+    // A session may already be gone; drop its tile either way.
+    await Promise.all(doomed.map(({ server, id }) => del(server, `/api/sessions/${id}`).catch(() => {})));
+    const keys = new Set(doomed.map(({ server, id }) => tileKey({ serverId: server.id, sessionId: id })));
+    // One layout write for the batch, not one per session.
+    persist((l) => removeTilesWhere(l, (t) => keys.has(tileKey(t))));
+    // The directory is about to lose its button, and a solo with no button is
+    // not in effect anyway — clear it rather than leave it in storage to
+    // reappear if the directory ever comes back.
+    setSolo((prev) => (prev === path ? null : prev));
+    refreshSessions();
+  }
+
   // Sessions running on some server but not shown in any tile. Dead sessions
   // stay in /api/sessions until dismissed — offering those would attach a tile
   // to a tmux session that no longer exists.
@@ -523,7 +548,7 @@ export default function GridPage({
           activeSolo !== null ? editOverlay((o) => ({ ...o, cols: c })) : persist((l) => setCols(l, c))
         }
       />
-      <DirFilterBar dirs={dirs} solo={activeSolo} onSolo={toggleDir} />
+      <DirFilterBar dirs={dirs} solo={activeSolo} onSolo={toggleDir} onClose={closeDir} />
       {unplaced.length > 0 && (
         <div className="unplaced-sessions">
           {unplaced.map(({ server, sess }) => (

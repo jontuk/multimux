@@ -669,15 +669,25 @@ a {
 }
 
 /* Same wash as a tile header, over the header's own panel background, so a
-   button and the tiles it controls read as the same colour. */
+   pill and the tiles it controls read as the same colour. The pill draws the
+   border and background for both of its buttons, which are bare. */
+.dir-filter-item {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--panel));
+  white-space: nowrap;
+}
+
 .dir-filter button {
   display: flex;
   align-items: center;
   gap: 0.3rem;
   padding: 0.2rem 0.5rem;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--dir-tint) var(--dir-tint-strength), var(--panel));
+  background: none;
   color: var(--ink);
   font-family: var(--mono);
   font-size: 0.75rem;
@@ -685,7 +695,25 @@ a {
   cursor: pointer;
 }
 
-.dir-filter button:hover {
+/* Close is the second half of the pill: quiet until the pointer or keyboard
+   is on the pill, so a row of directories does not read as a row of × marks,
+   and never so small it misses a thumb. */
+.dir-filter-close {
+  padding: 0.2rem 0.5rem 0.2rem 0.15rem;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.dir-filter-item:hover .dir-filter-close,
+.dir-filter-item:focus-within .dir-filter-close {
+  opacity: 1;
+}
+
+.dir-filter-close:hover {
+  color: var(--error);
+}
+
+.dir-filter-item:hover {
   border-color: var(--accent);
 }
 

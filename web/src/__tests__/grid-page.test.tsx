@@ -428,6 +428,68 @@ test("terminate confirms first when confirmTerminate is on", async () => {
   expect(String(delCall?.[0])).toContain("/api/sessions/1");
 });
 
+test("closing a directory terminates every running session in it", async () => {
+  const list = [
+    { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running" },
+    { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/b", status: "running" },
+    { id: 3, tmuxName: "mm-3", toolId: 1, dir: "/a", status: "running" },
+    { id: 4, tmuxName: "mm-4", toolId: 1, dir: "/a", status: "dead" },
+  ];
+  const layout = {
+    shape: { rows: 1, cols: 3 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 3 },
+    ],
+  };
+  const fetchMock = mockFetch(layout, list);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-3");
+
+  await userEvent.click(screen.getByRole("button", { name: /close 2 sessions in \/a/ }));
+
+  // Both running sessions in /a go; the dead one is not a tile and is left alone.
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  expect(screen.queryByTestId("term-3")).not.toBeInTheDocument();
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+
+  const deleted = fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE").map(([input]) => String(input));
+  expect(deleted).toHaveLength(2);
+  expect(deleted.some((u) => u.endsWith("/api/sessions/1"))).toBe(true);
+  expect(deleted.some((u) => u.endsWith("/api/sessions/3"))).toBe(true);
+});
+
+test("closing a directory honours the confirm prompt and clears its solo", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+    ],
+  };
+  const fetchMock = mockFetch(layout);
+  const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+  render(<GridPage confirmTerminate />);
+  await screen.findByTestId("term-1");
+
+  // Solo /a, then decline its close: nothing terminates, the solo stands.
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+  await userEvent.click(screen.getByRole("button", { name: /close 1 session in \/a/ }));
+  expect(confirmMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  expect(soloDir()).toBe("/a");
+
+  // Accepting terminates and drops the filter with the directory it named.
+  confirmMock.mockReturnValue(true);
+  await userEvent.click(screen.getByRole("button", { name: /close 1 session in \/a/ }));
+  await waitFor(() => expect(screen.queryByTestId("term-1")).not.toBeInTheDocument());
+  await waitFor(() => expect(soloDir()).toBe(null));
+  expect(screen.getByTestId("term-2")).toBeInTheDocument();
+});
+
 test("header offers quick-add buttons for sessions not in the grid", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
   mockFetch(layout);

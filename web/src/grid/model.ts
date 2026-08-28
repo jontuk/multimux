@@ -50,6 +50,20 @@ export function setCols(layout: Layout, cols: number): Layout {
 export function removeTile(layout: Layout, index: number): Layout {
   const tiles = layout.tiles.slice();
   tiles[index] = null;
+  return packAfterRemoval(layout, tiles);
+}
+
+// The same removal for a whole set of tiles at once. Removing them one index at
+// a time would be wrong: each pass repacks, so every index after the first goes
+// stale. Naming the tiles instead of their positions sidesteps that.
+export function removeTilesWhere(layout: Layout, drop: (tile: NonNullable<Tile>) => boolean): Layout {
+  return packAfterRemoval(
+    layout,
+    layout.tiles.map((t) => (t && drop(t) ? null : t)),
+  );
+}
+
+function packAfterRemoval(layout: Layout, tiles: Tile[]): Layout {
   const count = tiles.filter((t) => t !== null).length;
   return normalize(tiles, Math.min(layout.shape.cols, Math.max(1, count)), layout.rowSizes, layout.colSizes);
 }
