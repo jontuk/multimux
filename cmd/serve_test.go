@@ -400,3 +400,63 @@ func TestRunServeDevRefusesDefaultDataDir(t *testing.T) {
 		t.Fatalf("stderr = %q, want MULTIMUX_DATA_DIR hint", errBuf.String())
 	}
 }
+
+// --port is documented as persistent, and `service install` snapshots nothing
+// but the data dir: "run serve --port once, then install the service" only
+// works if the flag writes the setting. The dotless --hostname is just a
+// fail-fast exit after the port is stored, so no listener or tmux is needed.
+func TestRunServePersistsExplicitPort(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MULTIMUX_DATA_DIR", dir)
+	var out, errBuf strings.Builder
+	if code := runServe([]string{"--port", "9999", "--hostname", "mybox"}, "test", nil, &out, &errBuf); code != 1 {
+		t.Fatalf("exit code = %d, want 1 (stderr: %s)", code, errBuf.String())
+	}
+	st, err := store.Open(filepath.Join(dir, "multimux.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if got, _ := st.GetSetting("port"); got != "9999" {
+		t.Fatalf("stored port = %q, want 9999", got)
+	}
+}
+
+func TestRunServeRejectsOutOfRangePort(t *testing.T) {
+	t.Setenv("MULTIMUX_DATA_DIR", t.TempDir())
+	for _, arg := range []string{"70000", "0"} {
+		var out, errBuf strings.Builder
+		code := runServe([]string{"--port", arg}, "test", nil, &out, &errBuf)
+		if code != 1 || !strings.Contains(errBuf.String(), "--port") {
+			t.Fatalf("--port %s: exit %d, stderr %q", arg, code, errBuf.String())
+		}
+	}
+}
+
+// No flag means the stored port stands — that is what makes the persisted
+// value usable by the installed service.
+func TestRunServeKeepsStoredPortWithoutFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MULTIMUX_DATA_DIR", dir)
+	st, err := store.Open(filepath.Join(dir, "multimux.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("port", "9443"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	var out, errBuf strings.Builder
+	if code := runServe([]string{"--hostname", "mybox"}, "test", nil, &out, &errBuf); code != 1 {
+		t.Fatalf("exit code = %d, want 1 (stderr: %s)", code, errBuf.String())
+	}
+	st2, err := store.Open(filepath.Join(dir, "multimux.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	if got, _ := st2.GetSetting("port"); got != "9443" {
+		t.Fatalf("stored port = %q, want it untouched", got)
+	}
+}

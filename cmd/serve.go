@@ -84,6 +84,15 @@ func applyHostname(st *store.Store, host string) error {
 	return nil
 }
 
+// applyPort validates and persists a port supplied via --port, through the
+// same identity path the settings API writes with.
+func applyPort(st *store.Store, port int) error {
+	if _, err := identity.Apply(st, map[string]string{"port": strconv.Itoa(port)}, false); err != nil {
+		return fmt.Errorf("--port: %w", err)
+	}
+	return nil
+}
+
 // computeOrigins returns the browser origins allowed to authenticate against
 // this daemon (WebAuthn RP origins and the cookie-auth WebSocket origin
 // check), one per hostname. Browsers omit a default ":443" from the Origin, so
@@ -274,6 +283,15 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	if *hostname == "" {
 		*hostname = os.Getenv("MULTIMUX_HOSTNAME")
 	}
+	// An explicit --port is persisted; an absent one falls back to the stored
+	// value. Only the flag set can tell those apart — `--port 0` is a value
+	// the user typed, and must be rejected rather than read as "unset".
+	portSet := false
+	fs2.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portSet = true
+		}
+	})
 
 	// --dev disables authentication entirely. Refuse before touching any
 	// database: with MULTIMUX_DATA_DIR unset, dataDir() is the real install.
@@ -304,7 +322,17 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		return 1
 	}
 
-	if *port == 0 {
+	// --port is documented as persistent, and `service install` snapshots
+	// nothing but the data dir — "run serve --port once, then install the
+	// service" (cmd/service.go) only works if the flag writes the setting.
+	// Validation rides along, through the same identity path the settings API
+	// uses, so an out-of-range port fails here instead of at Listen.
+	if portSet {
+		if err := applyPort(st, *port); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	} else {
 		*port = 8686
 		if p, _ := st.GetSetting("port"); p != "" {
 			if n, err := strconv.Atoi(p); err == nil {
