@@ -223,3 +223,42 @@ func TestEventsSendsKeepalive(t *testing.T) {
 		}
 	}
 }
+
+// A peer that vanishes without a close — a phone whose network dies mid-frame —
+// leaves a socket TCP will not fail for hours, and the handler behind it holds
+// a goroutine, a ticker, a hub subscription and a descriptor for every one of
+// them. The pong deadline is what bounds that: a client that never answers is
+// dropped, not kept.
+func TestEventsDropsClientThatNeverPongs(t *testing.T) {
+	oldPing, oldWait := keepaliveInterval, eventsPongWait
+	keepaliveInterval, eventsPongWait = 10*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { keepaliveInterval, eventsPongWait = oldPing, oldWait })
+
+	s, _, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/events?token=" + token
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial events: %v", err)
+	}
+	defer conn.Close()
+	// Deliberately never read: gorilla answers pings from ReadMessage, so a
+	// client that never reads is exactly a client that never pongs.
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.hub.mu.Lock()
+		n := len(s.hub.subs)
+		s.hub.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("handler still subscribed after pong deadline (%d subs)", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

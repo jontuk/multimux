@@ -15,6 +15,10 @@ import (
 // never changes it.
 var keepaliveInterval = pingInterval
 
+// eventsPongWait is the events socket's share of pongWait. A var for the same
+// reason keepaliveInterval is: tests cannot wait out 75 seconds.
+var eventsPongWait = pongWait
+
 // The heartbeat clients can actually see. Pre-marshalled: it is identical for
 // every connection and every tick.
 var keepaliveFrame = []byte(`{"type":"keepalive"}`)
@@ -63,6 +67,15 @@ func (h *Hub) Broadcast(eventType string, payload any) {
 	h.mu.Unlock()
 }
 
+// writeText sends one text frame under writeWait, so a peer that stops reading
+// cannot wedge this handler in a write that never returns.
+func writeText(conn *websocket.Conn, raw []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		return err
+	}
+	return conn.WriteMessage(websocket.TextMessage, raw)
+}
+
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	up := s.wsUpgrader()
 	conn, err := up.Upgrade(w, r, nil)
@@ -79,10 +92,20 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		hello["build"] = build
 	}
 	if raw, err := json.Marshal(hello); err == nil {
-		conn.WriteMessage(websocket.TextMessage, raw)
+		writeText(conn, raw)
 	}
 
-	// Reader goroutine detects client close.
+	// A peer that vanishes without a close leaves a socket TCP will not fail
+	// for hours, and this handler holds a goroutine, a ticker, a hub
+	// subscription and a descriptor the whole time. Same contract as the PTY
+	// socket: ping, and require the browser's automatic pong inside pongWait.
+	conn.SetReadDeadline(time.Now().Add(eventsPongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(eventsPongWait))
+	})
+
+	// Reader goroutine detects client close — and, via the deadline above, a
+	// client that stopped answering.
 	closed := make(chan struct{})
 	go func() {
 		defer close(closed)
@@ -90,6 +113,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}
+			// Traffic proves liveness as well as a pong does, and gorilla only
+			// extends the deadline from the pong handler.
+			conn.SetReadDeadline(time.Now().Add(eventsPongWait))
 		}
 	}()
 	ping := time.NewTicker(keepaliveInterval)
@@ -97,11 +123,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case raw := <-ch:
-			if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
+			if err := writeText(conn, raw); err != nil {
 				return
 			}
 		case <-ping.C:
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
 				return
 			}
 			// The ping keeps proxies and NAT from timing the socket out, but a
@@ -111,7 +137,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			// connected. The keepalive is the same heartbeat made visible to
 			// JS. Clients that don't know the type ignore it, as they do any
 			// other unknown event.
-			if err := conn.WriteMessage(websocket.TextMessage, keepaliveFrame); err != nil {
+			if err := writeText(conn, keepaliveFrame); err != nil {
 				return
 			}
 		case <-closed:

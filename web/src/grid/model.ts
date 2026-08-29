@@ -57,10 +57,13 @@ export function removeTile(layout: Layout, index: number): Layout {
 // a time would be wrong: each pass repacks, so every index after the first goes
 // stale. Naming the tiles instead of their positions sidesteps that.
 export function removeTilesWhere(layout: Layout, drop: (tile: NonNullable<Tile>) => boolean): Layout {
-  return packAfterRemoval(
-    layout,
-    layout.tiles.map((t) => (t && drop(t) ? null : t)),
-  );
+  const tiles = layout.tiles.map((t) => (t && drop(t) ? null : t));
+  // A predicate that matched nothing must not touch the grid: packing an
+  // under-filled single row would shrink the column count the user picked,
+  // even though no tile went away (closing a directory whose sessions are all
+  // unplaced hits exactly that).
+  if (tiles.every((t, i) => t === layout.tiles[i])) return layout;
+  return packAfterRemoval(layout, tiles);
 }
 
 function packAfterRemoval(layout: Layout, tiles: Tile[]): Layout {

@@ -1,6 +1,7 @@
 import {
   addTile,
   removeTile,
+  removeTilesWhere,
   emptyLayout,
   normalize,
   setCols,
@@ -111,6 +112,21 @@ test("removeTile keeps the column count while every column is still used", () =>
   // 4 tiles over 3 columns: no column is empty, so the width stays.
   expect(l.shape).toEqual({ rows: 2, cols: 3 });
   expect(l.tiles).toEqual([sess(2), sess(3), sess(4), sess(5), null, null]);
+});
+
+test("removeTilesWhere drops every named tile in one pass", () => {
+  const l = normalize([sess(1), sess(2), sess(3)], 3);
+  const after = removeTilesWhere(l, (t) => t.sessionId !== 2);
+  expect(after.shape).toEqual({ rows: 1, cols: 1 });
+  expect(after.tiles).toEqual([sess(2)]);
+});
+
+test("removeTilesWhere leaves the layout alone when nothing matched", () => {
+  const l = normalize([sess(1)], 3);
+  expect(l.shape).toEqual({ rows: 1, cols: 3 });
+  // Closing a directory whose sessions are all unplaced: no tile matches, so
+  // the grid must not narrow to the one occupied column.
+  expect(removeTilesWhere(l, (t) => t.sessionId === 99)).toBe(l);
 });
 
 test("removing the last session collapses to a single column", () => {

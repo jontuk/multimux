@@ -31,6 +31,10 @@ const pingInterval = 30 * time.Second
 // (the same margin the events socket's staleAfter uses).
 const pongWait = 75 * time.Second
 
+// writeWait bounds a single frame write. A peer that stops reading fills the
+// socket buffer and would otherwise block the writing goroutine forever.
+const writeWait = 5 * time.Second
+
 // checkWSOrigin defends against cross-site WebSocket hijacking: a browser can
 // be tricked into opening a WS with the victim's cookie, so cookie-authenticated
 // upgrades must come from our own origins. Token-authenticated upgrades carry
@@ -156,7 +160,7 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 		for {
 			select {
 			case <-ping.C:
-				deadline := time.Now().Add(5 * time.Second)
+				deadline := time.Now().Add(writeWait)
 				if conn.WriteControl(websocket.PingMessage, nil, deadline) != nil {
 					// The peer is unreachable, and the read loop below would
 					// otherwise sit on it until its deadline: close now so the
