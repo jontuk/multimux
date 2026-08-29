@@ -605,3 +605,145 @@ func TestInstalledReportsUnitPresence(t *testing.T) {
 		t.Fatal("Installed = false after Install")
 	}
 }
+
+// `service upgrade` rewrites the unit from the current environment. A shell
+// that does not export MULTIMUX_DATA_DIR must not thereby move the daemon onto
+// the default data dir — a fresh database, no passkeys and a new CA, which
+// looks to the user like the install lost everything.
+func TestInstallPreservesCapturedEnvFromExistingUnit(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			stubRunCmd(t)
+			if goos == "darwin" {
+				fastPolls(t)
+				stubJobLoaded(t, func(string) bool { return true })
+			}
+			// First install captures a custom data dir.
+			t.Setenv("MULTIMUX_DATA_DIR", "/srv/mm-data")
+			t.Setenv("MULTIMUX_HOSTNAME", "box.example.com")
+			if err := Install(goos, "/usr/local/bin/multimux"); err != nil {
+				t.Fatalf("first Install = %v", err)
+			}
+
+			// The upgrade runs from a shell with neither variable set.
+			t.Setenv("MULTIMUX_DATA_DIR", "")
+			t.Setenv("MULTIMUX_HOSTNAME", "")
+			if err := Install(goos, "/usr/local/bin/multimux"); err != nil {
+				t.Fatalf("second Install = %v", err)
+			}
+
+			env, err := InstalledEnv(goos)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []EnvVar{
+				{Key: "MULTIMUX_DATA_DIR", Value: "/srv/mm-data"},
+				{Key: "MULTIMUX_HOSTNAME", Value: "box.example.com"},
+			}
+			for _, w := range want {
+				got, ok := lookupEnv(env, w.Key)
+				if !ok || got.Value != w.Value {
+					t.Fatalf("%s after upgrade = %v (present %v), want %q", w.Key, got.Value, ok, w.Value)
+				}
+			}
+		})
+	}
+}
+
+// A deliberate reinstall under a different data dir must still move the
+// daemon: the current environment wins where it sets a variable.
+func TestInstallCurrentEnvOverridesExistingUnit(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			stubRunCmd(t)
+			if goos == "darwin" {
+				fastPolls(t)
+				stubJobLoaded(t, func(string) bool { return true })
+			}
+			t.Setenv("MULTIMUX_DATA_DIR", "/srv/old")
+			if err := Install(goos, "/usr/local/bin/multimux"); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("MULTIMUX_DATA_DIR", "/srv/new")
+			if err := Install(goos, "/usr/local/bin/multimux"); err != nil {
+				t.Fatal(err)
+			}
+			env, err := InstalledEnv(goos)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := lookupEnv(env, "MULTIMUX_DATA_DIR"); got.Value != "/srv/new" {
+				t.Fatalf("MULTIMUX_DATA_DIR = %q, want /srv/new", got.Value)
+			}
+		})
+	}
+}
+
+// Values that needed escaping on the way into the unit must come back out
+// unchanged, or preserving them would corrupt them a little on every upgrade.
+func TestInstalledEnvRoundTripsEscapedValues(t *testing.T) {
+	const tricky = `/srv/we"ird\path/100%`
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			path, content, err := UnitContent(goos, Options{
+				ExecPath: "/usr/local/bin/multimux",
+				PathEnv:  "/usr/bin",
+				Env:      []EnvVar{{Key: "MULTIMUX_DATA_DIR", Value: tricky}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			env, err := InstalledEnv(goos)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := lookupEnv(env, "MULTIMUX_DATA_DIR"); got.Value != tricky {
+				t.Fatalf("round trip = %q, want %q", got.Value, tricky)
+			}
+			if got, _ := lookupEnv(env, "PATH"); got.Value != "/usr/bin" {
+				t.Fatalf("PATH round trip = %q", got.Value)
+			}
+		})
+	}
+}
+
+func TestInstalledEnvMissingUnitIsNotAnError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	env, err := InstalledEnv("linux")
+	if err != nil || env != nil {
+		t.Fatalf("InstalledEnv = %v, %v; want nil, nil", env, err)
+	}
+}
+
+// A unit that cannot be parsed must stop the install rather than let it
+// quietly rewrite the daemon onto default settings.
+func TestInstallRefusesUnreadableUnit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	stubRunCmd(t)
+	path, err := unitPath("darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("<plist><dict>truncated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = Install("darwin", "/usr/local/bin/multimux")
+	if err == nil {
+		t.Fatal("Install over an unparseable unit succeeded")
+	}
+	if !strings.Contains(err.Error(), "uninstall") {
+		t.Fatalf("error does not say how to recover: %v", err)
+	}
+}

@@ -24,7 +24,11 @@ Manage the multimux background service (launchd on macOS, systemd --user on Linu
 The installed unit runs a bare "multimux serve" with no flags, but "install"
 captures MULTIMUX_DATA_DIR and MULTIMUX_HOSTNAME from the installing shell into
 the unit, so the service uses the same data directory. Change either variable
-later and you must re-run "multimux service install". To set a port, persist it
+later and you must re-run "multimux service install". A rewrite of the unit
+("install" again, or "upgrade") keeps whatever the installed unit already
+captured unless the current shell sets that variable, so an upgrade run from
+an ordinary shell cannot move the daemon onto the default data directory; to
+clear a captured variable, run "uninstall" first. To set a port, persist it
 first (run "multimux serve --port <n>" once, then Ctrl-C) or use the Settings
 page.
 

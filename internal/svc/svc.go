@@ -243,11 +243,19 @@ func xmlEscape(s string) (string, error) {
 	return b.String(), nil
 }
 
+// Install writes the unit for goos and (re)starts the service on it. The
+// environment baked into the unit is the installing shell's captured
+// variables layered over whatever the already-installed unit carries — see
+// mergeEnv for why a rewrite must not silently drop a captured value.
 func Install(goos, execPath string) error {
+	prev, err := InstalledEnv(goos)
+	if err != nil {
+		return fmt.Errorf("%w\nthe installed unit could not be read, so its settings cannot be carried over; run `multimux service uninstall` first to reinstall from scratch", err)
+	}
 	path, content, err := UnitContent(goos, Options{
 		ExecPath: execPath,
 		PathEnv:  os.Getenv("PATH"),
-		Env:      CaptureEnv(),
+		Env:      mergeEnv(prev, CaptureEnv()),
 	})
 	if err != nil {
 		return err
