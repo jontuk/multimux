@@ -195,3 +195,52 @@ func TestLoginOrigins(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalHostFoldsCase(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"MacBook-Pro.local", "macbook-pro.local"},
+		{" Mux.Example.COM ", "mux.example.com"},
+		{"already.lower", "already.lower"},
+	} {
+		if got := CanonicalHost(tc.in); got != tc.want {
+			t.Errorf("CanonicalHost(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	// A browser lowercases the host in an Origin and an authenticator hashes
+	// the lowercase effective domain, so the RP ID must fold too.
+	if got := RPIDForHost("MacBook-Pro"); got != "macbook-pro.local" {
+		t.Errorf("RPIDForHost(%q) = %q", "MacBook-Pro", got)
+	}
+}
+
+func TestApplyCanonicalizesNames(t *testing.T) {
+	st := newStore(t)
+	if _, err := Apply(st, map[string]string{
+		"hostname": "Mux.Example.COM", "extra_sans": "A.TS.net , B.Local",
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := setting(t, st, "hostname"); got != "mux.example.com" {
+		t.Fatalf("hostname = %q, want lowercased", got)
+	}
+	if got := setting(t, st, "extra_sans"); got != "a.ts.net,b.local" {
+		t.Fatalf("extra_sans = %q, want lowercased", got)
+	}
+}
+
+// Folding a hostname persisted before canonicalization was enforced names the
+// same RP, so it must not trip the guard that protects registered passkeys.
+func TestApplyCaseOnlyHostnameChangeIsNotAnRPChange(t *testing.T) {
+	st := newStore(t)
+	if err := st.SetSetting("hostname", "MacBook-Pro.local"); err != nil {
+		t.Fatal(err)
+	}
+	addCredential(t, st)
+	rpChanged, err := Apply(st, map[string]string{"hostname": "macbook-pro.local"}, false)
+	if err != nil {
+		t.Fatalf("case-only change rejected: %v", err)
+	}
+	if rpChanged {
+		t.Fatal("case-only hostname change reported as an RP change")
+	}
+}

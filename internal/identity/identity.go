@@ -13,11 +13,26 @@ import (
 	"github.com/jontuk/multimux/internal/store"
 )
 
+// CanonicalHost folds a DNS name to the form a browser will send it back in.
+// Browsers lowercase the host when they serialize an Origin, and the RP ID
+// hash an authenticator signs is over the lowercase effective domain, so a
+// configured name that keeps its case (os.Hostname() on a Mac commonly
+// returns "MacBook-Pro.local") matches nothing: the origin checks in
+// internal/server reject every mutation and cookie-auth WebSocket, and
+// go-webauthn's byte comparison of the RP ID hash fails every registration.
+// DNS names are case-insensitive, so folding loses nothing.
+func CanonicalHost(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
+}
+
 // RPIDForHost returns the WebAuthn RP ID for a configured hostname.
 // go-webauthn's RPID validator rejects any value without a dot (except the
 // literal "localhost"), so a bare single-label hostname (the very common case
-// on Macs, e.g. "macmini") falls back to its ".local" form.
+// on Macs, e.g. "macmini") falls back to its ".local" form. The host is
+// canonicalized first so a name persisted before that was enforced still
+// derives the RP ID a browser will actually agree with.
 func RPIDForHost(host string) string {
+	host = CanonicalHost(host)
 	if strings.Contains(host, ".") || host == "localhost" {
 		return host
 	}
@@ -37,6 +52,8 @@ func (e *RPChangeError) Error() string {
 		e.Next, RPIDForHost(e.Prev), RPIDForHost(e.Next), e.Credentials)
 }
 
+// validateHostname checks a hostname that has already been through
+// CanonicalHost.
 func validateHostname(host string) error {
 	if host == "" {
 		return fmt.Errorf("hostname must not be empty")
@@ -47,9 +64,11 @@ func validateHostname(host string) error {
 	return nil
 }
 
-// normalizeSANs splits a comma-separated SAN list, trims entries, and drops
-// empties. Entries with whitespace, slashes, or colons cannot be certificate
-// DNS names and are rejected.
+// normalizeSANs splits a comma-separated SAN list, trims and lowercases
+// entries, and drops empties. Entries with whitespace, slashes, or colons
+// cannot be certificate DNS names and are rejected. Lowercasing keeps every
+// name this daemon answers to in the one form a browser sends back — see
+// CanonicalHost.
 func normalizeSANs(raw string) (string, error) {
 	var out []string
 	for _, s := range strings.Split(raw, ",") {
@@ -60,7 +79,7 @@ func normalizeSANs(raw string) (string, error) {
 		if strings.ContainsAny(s, " \t/:") {
 			return "", fmt.Errorf("extra SAN %q is not a valid name", s)
 		}
-		out = append(out, s)
+		out = append(out, CanonicalHost(s))
 	}
 	return strings.Join(out, ","), nil
 }
@@ -86,6 +105,7 @@ func Apply(st *store.Store, changes map[string]string, confirm bool) (rpChanged 
 	for key, value := range changes {
 		switch key {
 		case "hostname":
+			value = CanonicalHost(value)
 			if err := validateHostname(value); err != nil {
 				return false, err
 			}
@@ -111,6 +131,9 @@ func Apply(st *store.Store, changes map[string]string, confirm bool) (rpChanged 
 		if err != nil {
 			return false, err
 		}
+		// RPIDForHost canonicalizes, so a stored "MacBook-Pro.local" and the
+		// folded "macbook-pro.local" compare equal: canonicalizing an old
+		// hostname is not a change that strands passkeys.
 		if prev != "" && RPIDForHost(prev) != RPIDForHost(host) {
 			rpChanged = true
 			n, err := st.CountCredentials()

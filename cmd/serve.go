@@ -42,6 +42,16 @@ func hostnames(st *store.Store) ([]string, error) {
 			return nil, err
 		}
 		host = strings.TrimSuffix(h, ".local")
+	}
+	// Every name this daemon answers to must be in the form a browser sends
+	// back (identity.CanonicalHost). The seed above bypasses identity.Apply,
+	// and a hostname persisted before folding was enforced is still in the
+	// settings row, so fold here and write the canonical form back — one
+	// migration rather than a mismatch that survives every restart.
+	if canon := identity.CanonicalHost(host); canon != host {
+		host = canon
+	}
+	if stored, _ := st.GetSetting("hostname"); stored != host {
 		if err := st.SetSetting("hostname", host); err != nil {
 			return nil, err
 		}
@@ -53,7 +63,9 @@ func hostnames(st *store.Store) ([]string, error) {
 	if extra, _ := st.GetSetting("extra_sans"); extra != "" {
 		var extras []string
 		for _, s := range strings.Split(extra, ",") {
-			if s = strings.TrimSpace(s); s != "" {
+			// Folded for the same reason as the hostname; SANs stored before
+			// normalizeSANs lowercased them are still in the settings row.
+			if s = identity.CanonicalHost(s); s != "" {
 				extras = append(extras, s)
 			}
 		}

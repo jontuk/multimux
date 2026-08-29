@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 	"time"
 
@@ -61,7 +60,7 @@ func (s *Server) checkWSOrigin(r *http.Request) bool {
 		return true // no credentials at all — the auth gate rejects these anyway (except under NoAuth, see above)
 	}
 	origin := r.Header.Get("Origin")
-	return origin == "" || slices.Contains(s.cfg.Origins, origin)
+	return origin == "" || s.allowedOrigin(origin)
 }
 
 func (s *Server) wsUpgrader() websocket.Upgrader {

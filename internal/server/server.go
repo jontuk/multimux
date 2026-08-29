@@ -147,6 +147,18 @@ func (s *Server) Handler() http.Handler {
 // issue mutating API calls to a --dev daemon. Accepted for the same reason as
 // checkWSOrigin: --dev is for a network you control and is already an
 // unauthenticated shell server.
+// allowedOrigin reports whether an Origin header names one of this daemon's
+// own origins. Config.Origins is built from canonicalized hostnames
+// (identity.CanonicalHost), and a browser lowercases the host when it
+// serializes an Origin — so folding here is what makes the two comparable,
+// and it also covers an origin list built before canonicalization landed.
+func (s *Server) allowedOrigin(origin string) bool {
+	origin = strings.ToLower(origin)
+	return slices.ContainsFunc(s.cfg.Origins, func(o string) bool {
+		return strings.ToLower(o) == origin
+	})
+}
+
 func (s *Server) csrfGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -157,7 +169,7 @@ func (s *Server) csrfGate(next http.Handler) http.Handler {
 		}
 		if auth.ExplicitToken(r) == "" {
 			if c, err := r.Cookie(auth.CookieName); err == nil && c.Value != "" {
-				if !slices.Contains(s.cfg.Origins, r.Header.Get("Origin")) {
+				if !s.allowedOrigin(r.Header.Get("Origin")) {
 					writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden origin"})
 					return
 				}

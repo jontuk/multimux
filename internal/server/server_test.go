@@ -268,3 +268,40 @@ func TestServerErrorsAreLogged(t *testing.T) {
 		t.Fatalf("500 response not logged: %q", log)
 	}
 }
+
+// Browsers lowercase the host when they serialize an Origin, so a daemon
+// configured with a hostname that kept its case (os.Hostname() on a Mac) would
+// otherwise serve the page and then 403 every mutation and cookie-auth
+// WebSocket. Hostnames are canonicalized on write now; folding here covers an
+// origin list built before that.
+func TestOriginCheckIsCaseInsensitive(t *testing.T) {
+	cfg, _, am := newTestServerCfg(t, true)
+	cfg.Origins = []string{"https://MacBook-Pro.local:8686"}
+	s := New(cfg)
+	cookie, _ := am.CreateSession("UA")
+	const browserOrigin = "https://macbook-pro.local:8686"
+
+	r := httptest.NewRequest("POST", "/api/tools", stringsReader(`{"name":"x","command":"y"}`))
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+	r.Header.Set("Origin", browserOrigin)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 201 {
+		t.Fatalf("POST from lowercased own origin = %d, want 201 (body %s)", w.Code, w.Body.String())
+	}
+
+	ws := httptest.NewRequest("GET", "/ws/events", nil)
+	ws.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+	ws.Header.Set("Origin", browserOrigin)
+	if !s.checkWSOrigin(ws) {
+		t.Fatal("cookie-auth WS from lowercased own origin rejected")
+	}
+
+	foreign := httptest.NewRequest("GET", "/ws/events", nil)
+	foreign.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+	foreign.Header.Set("Origin", "https://evil.example")
+	if s.checkWSOrigin(foreign) {
+		t.Fatal("folding origins let a foreign origin through")
+	}
+}

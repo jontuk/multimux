@@ -460,3 +460,29 @@ func TestRunServeKeepsStoredPortWithoutFlag(t *testing.T) {
 		t.Fatalf("stored port = %q, want it untouched", got)
 	}
 }
+
+// A hostname persisted before canonicalization was enforced — or seeded from
+// an os.Hostname() that kept its case — must be folded and written back, so
+// the origins, the certificate SANs and the WebAuthn RP ID all use the form a
+// browser sends. Extra SANs get the same treatment.
+func TestHostnamesCanonicalizesStoredNames(t *testing.T) {
+	st := testStore(t)
+	if err := st.SetSetting("hostname", "MacBook-Pro.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("extra_sans", "Box.TS.net"); err != nil {
+		t.Fatal(err)
+	}
+	names, err := hostnames(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"macbook-pro.local", "box.ts.net"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("hostnames = %v, want %v", names, want)
+	}
+	// Written back, so the settings UI and the next start agree.
+	if got, _ := st.GetSetting("hostname"); got != "macbook-pro.local" {
+		t.Fatalf("stored hostname = %q, want folded", got)
+	}
+}
