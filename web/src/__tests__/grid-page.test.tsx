@@ -140,6 +140,45 @@ test("narrow mode renders the mobile session view without desktop controls", asy
   expect(screen.queryByLabelText("terminate session 1")).not.toBeInTheDocument();
 });
 
+test("mobile creation selects the first grouped session and leaves every result unplaced", async () => {
+  stubMatchMedia(true);
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  let sessionList = [{ id: 1, tmuxName: "mm-1", toolId: 1, dir: "/a", status: "running" }];
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
+    if (url.includes("/subdirs") || url.includes("/children")) return new Response("[]");
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(dirs));
+    if (url.includes("/api/sessions") && method === "POST") {
+      const started = [
+        { id: 31, tmuxName: "mm-31", toolId: 1, dir: "/a", status: "running" },
+        { id: 32, tmuxName: "mm-32", toolId: 1, dir: "/a", status: "running" },
+      ];
+      sessionList = [...sessionList, ...started];
+      return new Response(JSON.stringify(started), { status: 201 });
+    }
+    if (url.includes("/api/sessions")) return new Response(JSON.stringify(sessionList));
+    return new Response("[]");
+  });
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await userEvent.click(screen.getByRole("button", { name: "New session" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Create session" }));
+
+  await screen.findByTestId("term-31");
+  expect(
+    fetchMock.mock.calls.some(([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT"),
+  ).toBe(false);
+
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  fireEvent.pointerDown(header, { pointerId: 1, isPrimary: true, clientX: 100, clientY: 10 });
+  fireEvent.pointerUp(header, { pointerId: 1, isPrimary: true, clientX: 52, clientY: 10 });
+  expect(screen.getByTestId("term-32")).toBeInTheDocument();
+});
+
 test("crossing the mobile breakpoint switches branches without persisting layout", async () => {
   const media = stubMatchMedia(false);
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
@@ -151,9 +190,13 @@ test("crossing the mobile breakpoint switches branches without persisting layout
   media.setMatches(true);
   await screen.findByText("1/3");
   expect(screen.queryByText("+ New")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "New session" }));
+  expect(screen.getByRole("heading", { name: "New session" })).toBeInTheDocument();
 
   media.setMatches(false);
   await screen.findByText("+ New");
+  expect(screen.queryByRole("heading", { name: "New session" })).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   expect(
     fetchMock.mock.calls.some(([url, init]) => String(url).includes("/api/layout") && init?.method === "PUT"),
   ).toBe(false);

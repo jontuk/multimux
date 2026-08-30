@@ -846,6 +846,7 @@ export default function GridPage({
       })}
       {narrow ? (
         <MobileSessionView
+          servers={servers}
           sessions={mobileSessions}
           toolsByServer={toolsByServer}
           initialLoading={initialLoading}
