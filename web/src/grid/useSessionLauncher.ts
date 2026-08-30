@@ -57,9 +57,7 @@ export function useSessionLauncher({
   targetDir?: string | null;
   targetServerId?: string | null;
 }): SessionLauncherModel {
-  const initial = servers.some((server) => server.id === initialServerId)
-    ? initialServerId!
-    : (servers[0]?.id ?? "");
+  const initial = servers.some((server) => server.id === initialServerId) ? initialServerId! : (servers[0]?.id ?? "");
   const [serverId, setServerId] = useState(initial);
   const [tools, setTools] = useState<Tool[]>([]);
   const [dirs, setDirs] = useState<Dir[]>([]);
@@ -262,7 +260,8 @@ export function useSessionLauncher({
     loading,
     busy,
     error,
-    unconfigured: !loading && !error && tools.length === 0 ? "tools" : !loading && !error && dirs.length === 0 ? "dirs" : null,
+    unconfigured:
+      !loading && !error && tools.length === 0 ? "tools" : !loading && !error && dirs.length === 0 ? "dirs" : null,
     canLaunch,
     suggestionsOpen: open,
     highlighted: highlight,

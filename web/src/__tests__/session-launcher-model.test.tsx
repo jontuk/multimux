@@ -11,11 +11,9 @@ afterEach(() => vi.restoreAllMocks());
 test("starts on the requested server and returns grouped sessions as one ordered batch", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url.includes("/api/tools"))
-      return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
     if (url.includes("/subdirs")) return new Response("[]");
-    if (url.includes("/api/dirs"))
-      return new Response(JSON.stringify([{ id: 7, name: "repo", path: "/repo" }]));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify([{ id: 7, name: "repo", path: "/repo" }]));
     if (url.includes("/api/sessions") && init?.method === "POST")
       return new Response(
         JSON.stringify([
@@ -55,10 +53,8 @@ test("clears per-daemon ids immediately when the server changes", async () => {
     const url = String(input);
     if (url.startsWith(remote.origin)) return await new Promise<Response>(() => undefined);
     if (url.includes("/subdirs")) return new Response("[]");
-    if (url.includes("/api/tools"))
-      return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
-    if (url.includes("/api/dirs"))
-      return new Response(JSON.stringify([{ id: 7, name: "repo", path: "/repo" }]));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify([{ id: 7, name: "repo", path: "/repo" }]));
     return new Response("[]");
   });
 
@@ -87,8 +83,7 @@ test("a stale failed forget cannot restore another directory's history", async (
       if (init?.method === "DELETE") return pendingDelete;
       return new Response(JSON.stringify(Number(history[1]) === 7 ? ["web/src"] : ["Downloads"]));
     }
-    if (url.includes("/api/tools"))
-      return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
     if (url.includes("/api/dirs"))
       return new Response(
         JSON.stringify([
@@ -121,10 +116,8 @@ test("a failed launch returns null and becomes retryable", async () => {
     const url = String(input);
     if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/children")) return new Response("[]");
-    if (url.includes("/api/tools"))
-      return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
-    if (url.includes("/api/dirs"))
-      return new Response(JSON.stringify([{ id: 7, name: "repo", path: "/repo" }]));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify([{ id: 7, name: "repo", path: "/repo" }]));
     if (url.includes("/api/sessions") && init?.method === "POST") {
       postCount += 1;
       if (postCount === 1) return new Response(JSON.stringify({ error: "directory invalid" }), { status: 400 });

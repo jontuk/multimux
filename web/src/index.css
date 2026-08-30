@@ -418,6 +418,10 @@ a {
   min-width: 0;
 }
 
+.session-launcher-fields-desktop {
+  display: contents;
+}
+
 .header-launcher select {
   font-family: var(--mono);
   font-size: 0.8rem;
@@ -1426,6 +1430,82 @@ a {
 
   .app.grid-route > header {
     display: none;
+  }
+
+  .app.grid-route .mobile-session-creator {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: env(safe-area-inset-top) calc(1rem + env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom))
+      calc(1rem + env(safe-area-inset-left));
+    background: var(--bg);
+  }
+
+  .app.grid-route .mobile-session-creator > header {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    min-height: 2.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .app.grid-route .mobile-session-creator h1 {
+    margin: 0;
+    font: 600 1rem var(--mono);
+    text-align: center;
+  }
+
+  .app.grid-route .mobile-session-creator form,
+  .app.grid-route .session-launcher-fields-mobile {
+    display: grid;
+    gap: 0.9rem;
+  }
+
+  .app.grid-route .mobile-session-creator form {
+    width: min(100%, 32rem);
+    margin: 1rem auto 0;
+  }
+
+  .app.grid-route .session-launcher-fields-mobile .session-launcher-field {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--muted);
+    font: 0.75rem var(--mono);
+    text-transform: uppercase;
+  }
+
+  .app.grid-route .session-launcher-fields-mobile select,
+  .app.grid-route .session-launcher-fields-mobile input,
+  .app.grid-route .mobile-create-session {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 2.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.55rem 0.7rem;
+    background: var(--panel);
+    color: var(--ink);
+    font: 1rem var(--mono);
+    text-transform: none;
+  }
+
+  .app.grid-route .session-launcher-fields-mobile .subdir-wrap {
+    width: 100%;
+    height: auto;
+    min-height: 2.75rem;
+  }
+
+  .app.grid-route .session-launcher-fields-mobile .subdir-wrap:focus-within input.subdir {
+    position: static;
+    width: 100%;
+  }
+
+  .app.grid-route .session-launcher-fields-mobile .subdir-history {
+    width: 100%;
+    max-height: min(17rem, 40dvh);
   }
 
   .app.grid-route #page-root,

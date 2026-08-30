@@ -24,12 +24,7 @@ export default function HeaderLauncher({
 
   return launcher.server ? (
     <div className="header-launcher">
-      <SessionLauncherFields
-        servers={servers}
-        model={launcher}
-        variant="desktop"
-        onSubmit={() => void launch()}
-      />
+      <SessionLauncherFields servers={servers} model={launcher} variant="desktop" onSubmit={() => void launch()} />
       <button
         className="launch"
         disabled={!launcher.canLaunch}
