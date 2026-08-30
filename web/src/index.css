@@ -1566,6 +1566,7 @@ a {
   }
 
   .app.grid-route .mobile-terminal-controls button,
+  .app.grid-route .mobile-font-size-select,
   .app.grid-route .mobile-compose-actions button {
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -1576,6 +1577,11 @@ a {
 
   .app.grid-route .mobile-compose-toggle {
     padding: 0.2rem 0.4rem;
+  }
+
+  .app.grid-route .mobile-font-size-select {
+    min-width: 3.5rem;
+    padding: 0.2rem;
   }
 
   .app.grid-route .mobile-terminal-controls .fit-session-button {
@@ -1622,7 +1628,8 @@ a {
 
   .app.grid-route .mobile-compose textarea:focus-visible,
   .app.grid-route .mobile-compose button:focus-visible,
-  .app.grid-route .mobile-compose-toggle:focus-visible {
+  .app.grid-route .mobile-compose-toggle:focus-visible,
+  .app.grid-route .mobile-font-size-select:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }

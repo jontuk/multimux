@@ -11,6 +11,7 @@ import type { TerminalHandle } from "../term/TerminalTile";
 const unmounted = vi.fn();
 const terminalHandles = new Map<number, TerminalHandle>();
 const terminalCalls: Array<{ sessionId: number; operation: "input" | "paste"; data: string }> = [];
+const terminalFontSizes: Array<{ sessionId: number; size: number }> = [];
 let terminalConnected = true;
 let terminalInputAccepted = true;
 
@@ -43,7 +44,9 @@ vi.mock("../term/TerminalTile", () => ({
           return true;
         },
         focus() {},
-        setFontSize() {},
+        setFontSize(size) {
+          terminalFontSizes.push({ sessionId, size });
+        },
         fit() {},
       };
       terminalHandles.set(sessionId, handle);
@@ -125,8 +128,10 @@ beforeEach(() => {
   unmounted.mockClear();
   terminalHandles.clear();
   terminalCalls.length = 0;
+  terminalFontSizes.length = 0;
   terminalConnected = true;
   terminalInputAccepted = true;
+  localStorage.clear();
 });
 
 test("mounts the selected mobile terminal with passive sizing", () => {
@@ -141,6 +146,50 @@ test("mounts the selected mobile terminal with passive sizing", () => {
 
   expect(screen.getByTestId("term-1")).toHaveAttribute("data-size-policy", "passive");
   expect(screen.getByTestId("term-1")).toHaveAttribute("data-touch-scrollback", "true");
+});
+
+test("selects and persists a mobile terminal font size", async () => {
+  render(
+    <MobileSessionView
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  const select = screen.getByRole("combobox", { name: "Terminal font size" });
+  expect(
+    within(select)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual(["13 px", "11 px", "10 px", "9 px"]);
+  expect(select).toHaveValue("13");
+
+  await userEvent.selectOptions(select, "11");
+
+  expect(select).toHaveValue("11");
+  expect(terminalFontSizes.at(-1)).toEqual({ sessionId: 1, size: 11 });
+  expect(localStorage.getItem("multimux.mobileFontSize")).toBe("11");
+});
+
+test("restores the mobile font size and reapplies it after session switching", () => {
+  localStorage.setItem("multimux.mobileFontSize", "9");
+  render(
+    <MobileSessionView
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("combobox", { name: "Terminal font size" })).toHaveValue("9");
+  expect(terminalFontSizes.at(-1)).toEqual({ sessionId: 1, size: 9 });
+
+  swipe(document.querySelector<HTMLElement>(".mobile-session-header")!, { toX: 52 });
+
+  expect(terminalFontSizes.at(-1)).toEqual({ sessionId: 2, size: 9 });
 });
 
 test("distinguishes unresolved initial data from a settled empty session list", () => {

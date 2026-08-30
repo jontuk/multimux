@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
 import MobileCompose from "./MobileCompose";
+import MobileFontSizeControl from "./MobileFontSizeControl";
 import MobileKeyBar from "./MobileKeyBar";
+import { readMobileFontSize, writeMobileFontSize, type MobileFontSize as MobileFontSizeValue } from "./mobileFontSize";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
@@ -25,6 +27,7 @@ export default function MobileSessionView({
 }) {
   const [selection, setSelection] = useState<MobileSelection>({ key: null, index: 0 });
   const [controlsSlot, setControlsSlot] = useState<HTMLElement | null>(null);
+  const [fontSize, setFontSize] = useState(readMobileFontSize);
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
 
@@ -86,6 +89,17 @@ export default function MobileSessionView({
 
   const resolvedSelection = reconcileMobileSelection(selection, sessions);
   const selected = sessions[resolvedSelection.index];
+  const selectedKey = selected?.key;
+
+  useEffect(() => {
+    terminalRef.current?.setFontSize(fontSize);
+  }, [fontSize, selectedKey]);
+
+  function changeFontSize(size: MobileFontSizeValue) {
+    setFontSize(size);
+    writeMobileFontSize(size);
+  }
+
   const selectedTitle = selected
     ? `#${selected.session.id} · ${sessionTitle(toolsByServer[selected.server.id], selected.session)}`
     : "";
@@ -176,6 +190,7 @@ export default function MobileSessionView({
             touchScrollback
           />
           <MobileCompose key={`compose:${selected.key}`} terminalRef={terminalRef} controlsSlot={controlsSlot} />
+          <MobileFontSizeControl controlsSlot={controlsSlot} value={fontSize} onChange={changeFontSize} />
           <MobileKeyBar terminalRef={terminalRef} />
         </div>
       )}
