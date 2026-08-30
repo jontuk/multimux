@@ -409,6 +409,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
   const fitButton = sizePolicy === "passive" && (
     <button
       className="fit-session-button"
+      aria-label="Fit session to phone"
       disabled={state !== "open"}
       onClick={() => {
         if (window.confirm("Fit this session to your phone? Other attached clients will reflow.")) {
@@ -416,7 +417,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
         }
       }}
     >
-      Fit session to phone
+      Fit
     </button>
   );
 

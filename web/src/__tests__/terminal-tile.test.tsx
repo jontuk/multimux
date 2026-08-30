@@ -490,6 +490,7 @@ test("a focus the user did not cause does not claim the shared size", () => {
 test("passive terminal advertises its size policy and focus does not claim", () => {
   const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
   const fitButton = screen.getByRole("button", { name: "Fit session to phone" });
+  expect(fitButton).toHaveTextContent(/^Fit$/);
   expect(fitButton).toBeDisabled();
 
   const ws = FakeWebSocket.instances[0];

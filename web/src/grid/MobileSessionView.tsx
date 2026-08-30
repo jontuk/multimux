@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import type { Server } from "../servers";
 import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
 import MobileCompose from "./MobileCompose";
 import MobileFontSizeControl from "./MobileFontSizeControl";
 import MobileKeyBar from "./MobileKeyBar";
+import MobileSessionCreator from "./MobileSessionCreator";
+import { dirTintStyle } from "./dirColor";
 import { readMobileFontSize, writeMobileFontSize, type MobileFontSize as MobileFontSizeValue } from "./mobileFontSize";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
-import { dirTintStyle } from "./dirColor";
-import type { Tool } from "./types";
+import type { Session, Tool } from "./types";
 
 export default function MobileSessionView({
+  servers,
   sessions,
   toolsByServer,
   initialLoading,
@@ -18,6 +21,7 @@ export default function MobileSessionView({
   hostLabel,
   accentColor,
 }: {
+  servers: Server[];
   sessions: MobileSession[];
   toolsByServer: Record<string, Tool[]>;
   initialLoading: boolean;
@@ -28,15 +32,45 @@ export default function MobileSessionView({
   const [selection, setSelection] = useState<MobileSelection>({ key: null, index: 0 });
   const [controlsSlot, setControlsSlot] = useState<HTMLElement | null>(null);
   const [fontSize, setFontSize] = useState(readMobileFontSize);
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
+  const newSessionRef = useRef<HTMLButtonElement>(null);
+  const restoreNewSessionFocus = useRef(false);
 
   useEffect(() => {
+    const pendingIndex = pendingSelectionKey ? sessions.findIndex((item) => item.key === pendingSelectionKey) : -1;
+    if (pendingIndex >= 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelection({ key: pendingSelectionKey, index: pendingIndex });
+      setPendingSelectionKey(null);
+      return;
+    }
     // Selection must follow asynchronous session-list changes while retaining
     // the current key when it is still present.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelection((current) => reconcileMobileSelection(current, sessions));
-  }, [sessions]);
+  }, [sessions, pendingSelectionKey]);
+
+  useEffect(() => {
+    if (!creatorOpen && restoreNewSessionFocus.current) {
+      restoreNewSessionFocus.current = false;
+      newSessionRef.current?.focus();
+    }
+  }, [creatorOpen]);
+
+  function closeCreator() {
+    restoreNewSessionFocus.current = true;
+    setCreatorOpen(false);
+  }
+
+  function created(server: Server, started: Session[]) {
+    const first = started[0];
+    if (first) setPendingSelectionKey(`${server.id}:${first.id}`);
+    closeCreator();
+    onRefresh();
+  }
 
   function onPointerDown(e: PointerEvent) {
     if (!e.isPrimary || pointerStart.current) return;
@@ -113,86 +147,108 @@ export default function MobileSessionView({
 
   return (
     <div className="mobile-session-view">
-      <div
-        className={`mobile-session-header${accentColor ? " host-accented" : ""}`}
-        style={headerStyle}
-        onPointerDown={selected ? onPointerDown : undefined}
-        onPointerUp={selected ? onPointerUp : undefined}
-        onPointerCancel={selected ? (e) => clearPointer(e, true) : undefined}
-        onLostPointerCapture={
-          selected
-            ? (e) => {
-                if (pointerStart.current?.id === e.pointerId) pointerStart.current = null;
-              }
-            : undefined
-        }
-      >
+      <div className="mobile-session-browser" hidden={creatorOpen}>
         <div
-          className="mobile-session-selector"
-          role={selected ? "slider" : undefined}
-          tabIndex={selected ? 0 : undefined}
-          aria-label={selected ? "Active session" : undefined}
-          aria-valuemin={selected ? 1 : undefined}
-          aria-valuemax={selected ? sessions.length : undefined}
-          aria-valuenow={selected ? resolvedSelection.index + 1 : undefined}
-          aria-valuetext={
-            selected ? `Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}` : undefined
+          className={`mobile-session-header${accentColor ? " host-accented" : ""}`}
+          style={headerStyle}
+          onPointerDown={selected ? onPointerDown : undefined}
+          onPointerUp={selected ? onPointerUp : undefined}
+          onPointerCancel={selected ? (event) => clearPointer(event, true) : undefined}
+          onLostPointerCapture={
+            selected
+              ? (event) => {
+                  if (pointerStart.current?.id === event.pointerId) pointerStart.current = null;
+                }
+              : undefined
           }
-          onKeyDown={selected ? onKeyDown : undefined}
         >
-          {hostLabel && <span className="mobile-host-label">@{hostLabel}</span>}
-          {selected && (
-            <>
-              <span className="mobile-session-title">{selectedTitle}</span>
-              <span className="mobile-session-context">
-                {selected.session.gitState && (
-                  <span className="mobile-session-branch">
-                    <span
-                      className={`git-dot git-dot-${selected.session.gitState}`}
-                      title={gitStateTitles[selected.session.gitState]}
-                    />
-                    <span className="tile-branch-name">{selected.session.branch}</span>
-                    <TrackingMarks session={selected.session} />
+          <div
+            className="mobile-session-selector"
+            role={selected ? "slider" : undefined}
+            tabIndex={selected ? 0 : undefined}
+            aria-label={selected ? "Active session" : undefined}
+            aria-valuemin={selected ? 1 : undefined}
+            aria-valuemax={selected ? sessions.length : undefined}
+            aria-valuenow={selected ? resolvedSelection.index + 1 : undefined}
+            aria-valuetext={
+              selected ? `Session ${resolvedSelection.index + 1} of ${sessions.length}: ${selectedTitle}` : undefined
+            }
+            onKeyDown={selected ? onKeyDown : undefined}
+          >
+            {hostLabel && <span className="mobile-host-label">@{hostLabel}</span>}
+            {selected && (
+              <>
+                <span className="mobile-session-title">{selectedTitle}</span>
+                <span className="mobile-session-context">
+                  {selected.session.gitState && (
+                    <span className="mobile-session-branch">
+                      <span
+                        className={`git-dot git-dot-${selected.session.gitState}`}
+                        title={gitStateTitles[selected.session.gitState]}
+                      />
+                      <span className="tile-branch-name">{selected.session.branch}</span>
+                      <TrackingMarks session={selected.session} />
+                    </span>
+                  )}
+                  <span className="mobile-session-dir" title={selected.session.dir}>
+                    {selected.session.dir}
                   </span>
-                )}
-                <span className="mobile-session-dir" title={selected.session.dir}>
-                  {selected.session.dir}
                 </span>
-              </span>
-              <span className="mobile-session-position">
-                {resolvedSelection.index + 1}/{sessions.length}
-              </span>
-            </>
-          )}
+                <span className="mobile-session-position">
+                  {resolvedSelection.index + 1}/{sessions.length}
+                </span>
+              </>
+            )}
+          </div>
+          <div className="mobile-session-actions">
+            <button
+              ref={newSessionRef}
+              className="mobile-new-session"
+              type="button"
+              aria-label="New session"
+              onClick={() => setCreatorOpen(true)}
+            >
+              +
+            </button>
+            <span className="mobile-terminal-controls" ref={setControlsSlot} />
+            <a className="mobile-settings-link" href="#/settings" aria-label="Settings">
+              <span aria-hidden="true">⚙</span>
+            </a>
+          </div>
         </div>
-        <span className="mobile-terminal-controls" ref={setControlsSlot} />
-        <a className="mobile-settings-link" href="#/settings" aria-label="Settings">
-          <span aria-hidden="true">⚙</span>
-        </a>
+        {initialLoading ? (
+          <div className="mobile-session-empty">Loading sessions…</div>
+        ) : !selected ? (
+          <div className="mobile-session-empty">
+            <span>No sessions are running.</span>
+          </div>
+        ) : (
+          <div className="mobile-terminal">
+            <TerminalTile
+              ref={terminalRef}
+              key={`terminal:${selected.key}`}
+              server={selected.server}
+              sessionId={selected.session.id}
+              onClose={onRefresh}
+              sizePolicy="passive"
+              controlsSlot={controlsSlot}
+              touchScrollback
+            />
+            <MobileCompose key={`compose:${selected.key}`} terminalRef={terminalRef} controlsSlot={controlsSlot} />
+            <MobileFontSizeControl controlsSlot={controlsSlot} value={fontSize} onChange={changeFontSize} />
+            <MobileKeyBar terminalRef={terminalRef} />
+          </div>
+        )}
       </div>
-      {initialLoading ? (
-        <div className="mobile-session-empty">Loading sessions…</div>
-      ) : !selected ? (
-        <div className="mobile-session-empty">
-          <span>No sessions are running.</span>
-          <span>Launching needs a wider device.</span>
-        </div>
-      ) : (
-        <div className="mobile-terminal">
-          <TerminalTile
-            ref={terminalRef}
-            key={`terminal:${selected.key}`}
-            server={selected.server}
-            sessionId={selected.session.id}
-            onClose={onRefresh}
-            sizePolicy="passive"
-            controlsSlot={controlsSlot}
-            touchScrollback
-          />
-          <MobileCompose key={`compose:${selected.key}`} terminalRef={terminalRef} controlsSlot={controlsSlot} />
-          <MobileFontSizeControl controlsSlot={controlsSlot} value={fontSize} onChange={changeFontSize} />
-          <MobileKeyBar terminalRef={terminalRef} />
-        </div>
+      {creatorOpen && (
+        <MobileSessionCreator
+          servers={servers}
+          initialServerId={selected?.server.id}
+          targetServerId={selected?.server.id}
+          targetDir={selected?.session.dir ?? null}
+          onCancel={closeCreator}
+          onLaunched={created}
+        />
       )}
     </div>
   );

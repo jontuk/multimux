@@ -1511,12 +1511,17 @@ a {
   .app.grid-route #page-root,
   .app.grid-route .grid-page,
   .app.grid-route .mobile-session-view,
+  .app.grid-route .mobile-session-browser,
   .app.grid-route .mobile-terminal {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+  }
+
+  .app.grid-route .mobile-session-browser[hidden] {
+    display: none;
   }
 
   .app.grid-route .mobile-session-empty {
@@ -1547,10 +1552,10 @@ a {
   .app.grid-route .mobile-session-header {
     display: grid;
     flex: none;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      "selector settings"
-      "selector controls";
+      "selector"
+      "actions";
     align-items: center;
     gap: 0.2rem 0.5rem;
     min-width: 0;
@@ -1638,14 +1643,19 @@ a {
   }
 
   .app.grid-route .mobile-terminal-controls {
-    grid-area: controls;
+    display: contents;
+  }
+
+  .app.grid-route .mobile-session-actions {
+    grid-area: actions;
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 0.35rem;
     min-width: 0;
   }
 
-  .app.grid-route .mobile-terminal-controls button,
+  .app.grid-route .mobile-session-actions button,
   .app.grid-route .mobile-font-size-select,
   .app.grid-route .mobile-compose-actions button {
     border: 1px solid var(--border);
@@ -1659,6 +1669,11 @@ a {
     padding: 0.2rem 0.4rem;
   }
 
+  .app.grid-route .mobile-new-session,
+  .app.grid-route .mobile-session-actions button {
+    padding: 0.2rem 0.4rem;
+  }
+
   .app.grid-route .mobile-font-size-select {
     min-width: 3.5rem;
     padding: 0.2rem;
@@ -1669,7 +1684,6 @@ a {
   }
 
   .app.grid-route .mobile-settings-link {
-    grid-area: settings;
     padding: 0.25rem;
     border-radius: 4px;
     color: var(--muted);
@@ -1709,6 +1723,7 @@ a {
   .app.grid-route .mobile-compose textarea:focus-visible,
   .app.grid-route .mobile-compose button:focus-visible,
   .app.grid-route .mobile-compose-toggle:focus-visible,
+  .app.grid-route .mobile-new-session:focus-visible,
   .app.grid-route .mobile-font-size-select:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;

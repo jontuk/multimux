@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { forwardRef, Profiler, useEffect, useImperativeHandle } from "react";
+import { createPortal } from "react-dom";
 import { vi } from "vitest";
 import MobileSessionView from "../grid/MobileSessionView";
 import type { MobileSession } from "../grid/mobileModel";
@@ -53,15 +54,38 @@ vi.mock("../term/TerminalTile", () => ({
     }
     useImperativeHandle(ref, () => handle, [handle]);
     useEffect(() => () => unmounted(sessionId), [sessionId]);
+    const fit = <button aria-label="Fit session to phone">Fit</button>;
     return (
-      <div
-        data-testid={`term-${sessionId}`}
-        data-size-policy={sizePolicy}
-        data-controls-slot={controlsSlot?.className}
-        data-touch-scrollback={touchScrollback ? "true" : "false"}
-      />
+      <>
+        <div
+          data-testid={`term-${sessionId}`}
+          data-size-policy={sizePolicy}
+          data-controls-slot={controlsSlot?.className}
+          data-touch-scrollback={touchScrollback ? "true" : "false"}
+        />
+        {controlsSlot ? createPortal(fit, controlsSlot) : fit}
+      </>
     );
   }),
+}));
+
+vi.mock("../grid/MobileSessionCreator", () => ({
+  default: ({
+    onCancel,
+    onLaunched,
+  }: {
+    onCancel: () => void;
+    onLaunched: (server: Server, sessions: Session[]) => void;
+  }) => (
+    <section aria-label="New session">
+      <button type="button" aria-label="Close new session creator" onClick={onCancel}>
+        Back
+      </button>
+      <button type="button" onClick={() => onLaunched(local, [session(31).session, session(32).session])}>
+        Complete grouped launch
+      </button>
+    </section>
+  ),
 }));
 
 const local: Server = {
@@ -134,9 +158,92 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+test("orders mobile actions as New, Fit, Compose, font, Settings", () => {
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  const actions = document.querySelector<HTMLElement>(".mobile-session-actions")!;
+  expect(
+    Array.from(actions.querySelectorAll("button, select, a")).map(
+      (node) => node.getAttribute("aria-label") ?? node.textContent,
+    ),
+  ).toEqual(["New session", "Fit session to phone", "Compose", "Terminal font size", "Settings"]);
+});
+
+test("New session remains available while loading and when empty", () => {
+  const props = { servers: [local], sessions: [], toolsByServer: {}, onRefresh: vi.fn() };
+  const { rerender } = render(<MobileSessionView {...props} initialLoading />);
+  expect(screen.getByRole("button", { name: "New session" })).toBeInTheDocument();
+  rerender(<MobileSessionView {...props} initialLoading={false} />);
+  expect(screen.getByRole("button", { name: "New session" })).toBeInTheDocument();
+  expect(screen.queryByText(/launching needs a wider device/i)).not.toBeInTheDocument();
+});
+
+test("opening and cancelling the creator preserves the mounted terminal and Compose draft", async () => {
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Compose" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Compose terminal input" }), {
+    target: { value: "keep me" },
+  });
+
+  await userEvent.click(screen.getByRole("button", { name: "New session" }));
+  expect(document.querySelector(".mobile-session-browser")).toHaveAttribute("hidden");
+  expect(unmounted).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Close new session creator" }));
+
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Compose terminal input" })).toHaveValue("keep me");
+  expect(screen.getByRole("button", { name: "New session" })).toHaveFocus();
+});
+
+test("selects the first grouped result only after it appears in refreshed sessions", async () => {
+  const onRefresh = vi.fn();
+  const { rerender } = render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={onRefresh}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "New session" }));
+  await userEvent.click(screen.getByRole("button", { name: "Complete grouped launch" }));
+  expect(onRefresh).toHaveBeenCalledTimes(1);
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+
+  rerender(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1), session(31), session(32)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={onRefresh}
+    />,
+  );
+  expect(screen.getByTestId("term-31")).toBeInTheDocument();
+  expect(screen.getByText("2/3")).toBeInTheDocument();
+});
+
 test("mounts the selected mobile terminal with passive sizing", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -151,6 +258,7 @@ test("mounts the selected mobile terminal with passive sizing", () => {
 test("selects and persists a mobile terminal font size", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -177,6 +285,7 @@ test("restores the mobile font size and reapplies it after session switching", (
   localStorage.setItem("multimux.mobileFontSize", "9");
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -194,22 +303,25 @@ test("restores the mobile font size and reapplies it after session switching", (
 
 test("distinguishes unresolved initial data from a settled empty session list", () => {
   const { rerender } = render(
-    <MobileSessionView sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} />,
+    <MobileSessionView servers={[local]} sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} />,
   );
 
   expect(screen.getByText("Loading sessions…")).toBeInTheDocument();
   expect(screen.queryByText(/no sessions are running/i)).not.toBeInTheDocument();
 
-  rerender(<MobileSessionView sessions={[]} toolsByServer={{}} initialLoading={false} onRefresh={vi.fn()} />);
+  rerender(
+    <MobileSessionView servers={[local]} sessions={[]} toolsByServer={{}} initialLoading={false} onRefresh={vi.fn()} />,
+  );
 
   expect(screen.getByText(/no sessions are running/i)).toBeInTheDocument();
-  expect(screen.getByText(/launching needs a wider device/i)).toBeInTheDocument();
+  expect(screen.queryByText(/launching needs a wider device/i)).not.toBeInTheDocument();
   expect(screen.queryByText("Loading sessions…")).not.toBeInTheDocument();
 });
 
 test("combines host, session context, controls, position, and Settings in one mobile header", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1, { branch: "mobile", gitState: "clean" })]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -232,6 +344,7 @@ test("combines host, session context, controls, position, and Settings in one mo
 test("keeps interactive controls outside the slider and does not capture their pointers", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -256,6 +369,7 @@ test("keeps interactive controls outside the slider and does not capture their p
 test("applies the configured host accent to the consolidated mobile header", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -271,7 +385,14 @@ test("applies the configured host accent to the consolidated mobile header", () 
 
 test("keeps identity and Settings chrome while loading and after an empty result", () => {
   const { rerender } = render(
-    <MobileSessionView sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} hostLabel="work-mac" />,
+    <MobileSessionView
+      servers={[local]}
+      sessions={[]}
+      toolsByServer={{}}
+      initialLoading
+      onRefresh={vi.fn()}
+      hostLabel="work-mac"
+    />,
   );
 
   const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
@@ -282,6 +403,7 @@ test("keeps identity and Settings chrome while loading and after an empty result
 
   rerender(
     <MobileSessionView
+      servers={[local]}
       sessions={[]}
       toolsByServer={{}}
       initialLoading={false}
@@ -311,6 +433,7 @@ test("mounts one terminal and renders label, position, branch, tracking, and dir
   ];
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={sessions}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -335,6 +458,7 @@ test("mounts one terminal and renders label, position, branch, tracking, and dir
 test("uses tool and tmux names when a session has no label", () => {
   const { rerender } = render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -345,6 +469,7 @@ test("uses tool and tmux names when a session has no label", () => {
 
   rerender(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1, { toolId: 99 })]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -357,6 +482,7 @@ test("uses tool and tmux names when a session has no label", () => {
 test("moves next on a left swipe, previous on a right swipe, and clamps at each end", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -379,6 +505,7 @@ test("moves next on a left swipe, previous on a right swipe, and clamps at each 
 test("exposes the selected session as a named keyboard-operable slider", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -409,6 +536,7 @@ test("exposes the selected session as a named keyboard-operable slider", () => {
 test("supports the complete slider keyboard navigation pattern", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2), session(3)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -446,6 +574,7 @@ test("keeps the announced ordinal synchronized during a session reorder", () => 
   const { container: rendered, rerender } = render(
     <Profiler id="mobile-session" onRender={onRender}>
       <MobileSessionView
+        servers={[local]}
         sessions={[session(1), session(2)]}
         toolsByServer={{ local: tools }}
         initialLoading={false}
@@ -460,6 +589,7 @@ test("keeps the announced ordinal synchronized during a session reorder", () => 
   rerender(
     <Profiler id="mobile-session" onRender={onRender}>
       <MobileSessionView
+        servers={[local]}
         sessions={[session(2), session(1)]}
         toolsByServer={{ local: tools }}
         initialLoading={false}
@@ -476,6 +606,7 @@ test("keeps the announced ordinal synchronized during a session reorder", () => 
 test("captures a primary swipe pointer and releases it when the gesture ends", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -497,6 +628,7 @@ test("captures a primary swipe pointer and releases it when the gesture ends", (
 test("does not replace an active capture with another primary pointer type", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -520,6 +652,7 @@ test("does not replace an active capture with another primary pointer type", () 
 test("ignores pointer-up and cancellation from a different pointer while a capture is active", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -544,6 +677,7 @@ test("ignores pointer-up and cancellation from a different pointer while a captu
 test("releases cancelled capture and clears a gesture when capture is lost", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -569,6 +703,7 @@ test("releases cancelled capture and clears a gesture when capture is lost", () 
 test("ignores vertical-dominant, short, cancelled, non-primary, and mismatched-pointer gestures", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -593,6 +728,7 @@ test("ignores vertical-dominant, short, cancelled, non-primary, and mismatched-p
 test("changing selection unmounts the former terminal", () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -610,6 +746,7 @@ test("changing selection unmounts the former terminal", () => {
 test("mounts the terminal key bar after Compose and targets the newly selected terminal", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -637,6 +774,7 @@ test("mounts the terminal key bar after Compose and targets the newly selected t
 test("terminal keys preserve Compose focus and its draft", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -661,6 +799,7 @@ test("terminal keys are a safe no-op while disconnected", () => {
   terminalConnected = false;
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -676,6 +815,7 @@ test("terminal keys are a safe no-op while disconnected", () => {
 test("Compose opens a focused multiline editor and manual close retains its draft", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -703,6 +843,7 @@ test("Compose opens a focused multiline editor and manual close retains its draf
 test("Add pastes exactly the draft and clears and closes Compose", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -725,6 +866,7 @@ test("Add pastes exactly the draft and clears and closes Compose", async () => {
 test("Add & Enter pastes first and sends exactly one separate Enter", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -748,6 +890,7 @@ test("Add & Enter reports when text was inserted but Enter was not sent", async 
   terminalInputAccepted = false;
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -770,6 +913,7 @@ test("a disconnected terminal preserves the Compose draft and reports it", async
   terminalConnected = false;
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -790,6 +934,7 @@ test("a disconnected terminal preserves the Compose draft and reports it", async
 test("empty Compose actions send nothing", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -805,6 +950,7 @@ test("empty Compose actions send nothing", async () => {
 test("switching sessions closes Compose and discards the former session draft", async () => {
   render(
     <MobileSessionView
+      servers={[local]}
       sessions={[session(1), session(2)]}
       toolsByServer={{ local: tools }}
       initialLoading={false}
@@ -826,12 +972,14 @@ test("switching sessions closes Compose and discards the former session draft", 
 
 test("loading and empty mobile states do not expose Compose", () => {
   const { rerender } = render(
-    <MobileSessionView sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} />,
+    <MobileSessionView servers={[local]} sessions={[]} toolsByServer={{}} initialLoading onRefresh={vi.fn()} />,
   );
   expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Terminal keys" })).not.toBeInTheDocument();
 
-  rerender(<MobileSessionView sessions={[]} toolsByServer={{}} initialLoading={false} onRefresh={vi.fn()} />);
+  rerender(
+    <MobileSessionView servers={[local]} sessions={[]} toolsByServer={{}} initialLoading={false} onRefresh={vi.fn()} />,
+  );
   expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Terminal keys" })).not.toBeInTheDocument();
 });
