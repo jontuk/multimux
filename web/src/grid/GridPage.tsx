@@ -28,6 +28,7 @@ import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 import { dirTintStyle } from "./dirColor";
 import DirFilterBar from "./DirFilterBar";
 import { cycleSolo, dirButtons, effectiveSolo, filterLayout, setSoloDir, soloDir } from "./dirFilter";
+import { endedTileKeys } from "./endedSessions";
 import { applyOverlay, orderOf, seedOverlay, setViewOverlay, swapOrder, viewOverlay, type Overlay } from "./viewLayout";
 
 function isLayout(v: unknown): v is Layout {
@@ -145,6 +146,7 @@ export default function GridPage({
   const [statusByServer, setStatusByServer] = useState<Record<string, EventsStatus>>({});
   const [layoutSettled, setLayoutSettled] = useState(false);
   const [settledSessionServers, setSettledSessionServers] = useState<Set<string>>(() => new Set());
+  const [loadedSessionServers, setLoadedSessionServers] = useState<Set<string>>(() => new Set());
   // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
   const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
   // Ephemeral: a just-launched tile whose terminal should grab keyboard focus
@@ -243,7 +245,15 @@ export default function GridPage({
     (settleInitial = false) => {
       for (const server of servers) {
         getJSON<Session[]>(server, "/api/sessions")
-          .then((s) => setSessionsByServer((prev) => ({ ...prev, [server.id]: s })))
+          .then((sessions) => {
+            setSessionsByServer((prev) => ({ ...prev, [server.id]: sessions }));
+            setLoadedSessionServers((prev) => {
+              if (prev.has(server.id)) return prev;
+              const next = new Set(prev);
+              next.add(server.id);
+              return next;
+            });
+          })
           // A failed poll is not "this daemon has no sessions". Dropping the
           // list would take the dir buttons, the quick-add buttons and (since
           // a solo with no button is not in effect) the user's filter with it
@@ -353,6 +363,17 @@ export default function GridPage({
   const placed = useMemo(
     () => new Set(layout.tiles.filter((t): t is NonNullable<Tile> => t !== null).map(tileKey)),
     [layout],
+  );
+  const endedByServer = useMemo(
+    () =>
+      servers.flatMap((server) => {
+        if (!loadedSessionServers.has(server.id)) return [];
+        const status = statusByServer[server.id];
+        if (status && status !== "open") return [];
+        const keys = endedTileKeys(layout, server.id, sessionsByServer[server.id] ?? []);
+        return keys.size === 0 ? [] : [{ server, keys }];
+      }),
+    [layout, loadedSessionServers, servers, sessionsByServer, statusByServer],
   );
   function attachSession(server: Server, sessionId: number) {
     if (placed.has(`${server.id}:${sessionId}`)) return;
@@ -796,6 +817,24 @@ export default function GridPage({
               ))}
           </div>
         ))}
+      {endedByServer.map(({ server, keys }) => {
+        const count = keys.size;
+        const noun = count === 1 ? "session" : "sessions";
+        return (
+          <div key={server.id} className="ended-sessions-banner" role="status">
+            <span>
+              <b>{server.name}</b>: {count} {noun} ended
+            </span>
+            <button
+              className="primary"
+              aria-label={`Dismiss all ${count} ended ${noun} on ${server.name}`}
+              onClick={() => persist((current) => removeTilesWhere(current, (tile) => keys.has(tileKey(tile))))}
+            >
+              Dismiss all
+            </button>
+          </div>
+        );
+      })}
       {narrow ? (
         <MobileSessionView
           sessions={mobileSessions}

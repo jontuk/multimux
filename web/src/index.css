@@ -218,6 +218,25 @@ a {
   font-size: 0.85rem;
 }
 
+.ended-sessions-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.ended-sessions-banner button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 /* ---- app shell ---- */
 
 .app {

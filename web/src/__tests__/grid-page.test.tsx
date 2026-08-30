@@ -191,6 +191,45 @@ test("narrow empty state waits for layout and every configured server session re
   expect(await screen.findByText("No sessions are running.")).toBeInTheDocument();
 });
 
+test("a missing tile is not called ended before a successful session response", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 99 }] };
+  let resolveSessions!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/api/layout") && method === "GET") return Promise.resolve(new Response(JSON.stringify(layout)));
+    if (url.includes("/api/sessions")) return new Promise<Response>((resolve) => (resolveSessions = resolve));
+    if (url.includes("/api/tools")) return Promise.resolve(new Response(JSON.stringify(tools)));
+    if (url.includes("/api/dirs") || url.includes("/subdirs")) return Promise.resolve(new Response("[]"));
+    return Promise.resolve(new Response("{}"));
+  });
+
+  render(<GridPage />);
+  await screen.findByTestId("term-99");
+  expect(screen.queryByRole("button", { name: /ended session/ })).not.toBeInTheDocument();
+
+  await act(async () => resolveSessions(new Response("[]")));
+  expect(await screen.findByRole("button", { name: "Dismiss all 1 ended session on local" })).toBeInTheDocument();
+});
+
+test("a failed session response does not classify a missing tile as ended", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 99 }] };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
+    if (url.includes("/api/sessions")) throw new TypeError("Failed to fetch");
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
+    if (url.includes("/api/dirs") || url.includes("/subdirs")) return new Response("[]");
+    return new Response("{}");
+  });
+
+  render(<GridPage />);
+  await screen.findByTestId("term-99");
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/sessions"))).toBe(true));
+  expect(screen.queryByRole("button", { name: /ended session/ })).not.toBeInTheDocument();
+});
+
 test("a rejected server request settles while its banner coexists with a reachable mobile terminal", async () => {
   stubMatchMedia(true);
   stubRemoteServer();
@@ -639,8 +678,58 @@ test("dead session tile shows ended state instead of mounting a terminal", async
   mockFetch(layout);
 
   render(<GridPage />);
-  await screen.findByText(/session ended/);
+  await screen.findByText(/session ended/, { selector: ".tile-body" });
   expect(screen.queryByTestId("term-4")).toBeNull();
+});
+
+test("one notice dismisses every ended local tile with one layout write", async () => {
+  const layout = {
+    shape: { rows: 2, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 4 },
+      { serverId: "local", sessionId: 99 },
+      null,
+    ],
+  };
+  const fetchMock = mockFetch(layout);
+  render(<GridPage />);
+
+  const dismiss = await screen.findByRole("button", { name: "Dismiss all 2 ended sessions on local" });
+  expect(dismiss.closest(".ended-sessions-banner")).toHaveTextContent("local: 2 sessions ended");
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(screen.getByText("session ended")).toBeInTheDocument();
+  expect(screen.getByTestId("term-99")).toBeInTheDocument();
+
+  await userEvent.click(dismiss);
+
+  await waitFor(() => expect(layoutPuts(fetchMock)).toHaveLength(1));
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(screen.queryByText("session ended")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("term-99")).not.toBeInTheDocument();
+  expect(JSON.parse(String(layoutPuts(fetchMock)[0][1]?.body)).tiles).toEqual([{ serverId: "local", sessionId: 1 }]);
+  expect(
+    fetchMock.mock.calls.some(
+      ([url, init]) => String(url).includes("/api/sessions") && ["POST", "DELETE"].includes(init?.method ?? "GET"),
+    ),
+  ).toBe(false);
+});
+
+test("a single ended maximized tile has singular accessible text and returns to the grid", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 4 }] };
+  mockFetch(layout);
+  render(<GridPage />);
+
+  const title = await screen.findByText("#4 · claude");
+  await userEvent.dblClick(title.closest(".tile-header")!);
+  expect(document.querySelector(".tile-maximized")).not.toBeNull();
+
+  const dismiss = screen.getByRole("button", { name: "Dismiss all 1 ended session on local" });
+  expect(dismiss.closest(".ended-sessions-banner")).toHaveTextContent("local: 1 session ended");
+  await userEvent.click(dismiss);
+
+  expect(document.querySelector(".tile-maximized")).toBeNull();
+  expect(screen.queryByRole("button", { name: /ended session/ })).not.toBeInTheDocument();
 });
 
 function stubRemoteServer() {
@@ -654,6 +743,47 @@ function remoteOnStatus() {
   const calls = vi.mocked(useEvents).mock.calls.filter(([s]) => s.id === "r1");
   return calls[calls.length - 1][2]!;
 }
+
+test("ended-session notices and dismissal are scoped to one server", async () => {
+  stubRemoteServer();
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 4 },
+      { serverId: "r1", sessionId: 4 },
+    ],
+  };
+  const fetchMock = mockFetch(layout);
+  render(<GridPage />);
+
+  const localDismiss = await screen.findByRole("button", { name: "Dismiss all 1 ended session on local" });
+  const remoteDismiss = await screen.findByRole("button", { name: "Dismiss all 1 ended session on box-a" });
+  expect(localDismiss).toBeInTheDocument();
+
+  await userEvent.click(remoteDismiss);
+
+  await waitFor(() => expect(layoutPuts(fetchMock)).toHaveLength(1));
+  expect(JSON.parse(String(layoutPuts(fetchMock)[0][1]?.body)).tiles).toEqual([{ serverId: "local", sessionId: 4 }]);
+  expect(screen.getByRole("button", { name: "Dismiss all 1 ended session on local" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Dismiss all 1 ended session on box-a" })).not.toBeInTheDocument();
+});
+
+test("a non-open server suppresses its ended-session notice until it reconnects", async () => {
+  stubRemoteServer();
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "r1", sessionId: 4 }] };
+  mockFetch(layout);
+  render(<GridPage />);
+
+  const actionName = "Dismiss all 1 ended session on box-a";
+  await screen.findByRole("button", { name: actionName });
+
+  act(() => remoteOnStatus()("unreachable"));
+  expect(await screen.findByText(/daemon unreachable/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: actionName })).not.toBeInTheDocument();
+
+  act(() => remoteOnStatus()("open"));
+  expect(await screen.findByRole("button", { name: actionName })).toBeInTheDocument();
+});
 
 test("expired remote auth offers Reconnect that replaces the stored token", async () => {
   stubRemoteServer();
