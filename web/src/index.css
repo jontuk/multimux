@@ -219,7 +219,10 @@ a {
 }
 
 .ended-sessions-banner {
+  position: relative;
+  z-index: 51; /* Keep the action above a maximized tile (z-index: 50). */
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   border: 1px solid var(--border);
@@ -230,6 +233,11 @@ a {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.85rem;
+}
+
+.ended-sessions-banner span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .ended-sessions-banner button {

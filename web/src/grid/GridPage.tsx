@@ -147,6 +147,8 @@ export default function GridPage({
   const [layoutSettled, setLayoutSettled] = useState(false);
   const [settledSessionServers, setSettledSessionServers] = useState<Set<string>>(() => new Set());
   const [loadedSessionServers, setLoadedSessionServers] = useState<Set<string>>(() => new Set());
+  const sessionRequestSerial = useRef<Record<string, number>>({});
+  const appliedSessionRequestSerial = useRef<Record<string, number>>({});
   // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
   const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
   // Ephemeral: a just-launched tile whose terminal should grab keyboard focus
@@ -244,8 +246,15 @@ export default function GridPage({
   const refreshSessions = useCallback(
     (settleInitial = false) => {
       for (const server of servers) {
+        const requestSerial = (sessionRequestSerial.current[server.id] ?? 0) + 1;
+        sessionRequestSerial.current[server.id] = requestSerial;
         getJSON<Session[]>(server, "/api/sessions")
           .then((sessions) => {
+            // Several triggers can overlap (hello, resume, mutations). A late
+            // older success must not replace a newer authoritative snapshot:
+            // it could make a live session look absent and therefore ended.
+            if (requestSerial < (appliedSessionRequestSerial.current[server.id] ?? 0)) return;
+            appliedSessionRequestSerial.current[server.id] = requestSerial;
             setSessionsByServer((prev) => ({ ...prev, [server.id]: sessions }));
             setLoadedSessionServers((prev) => {
               if (prev.has(server.id)) return prev;

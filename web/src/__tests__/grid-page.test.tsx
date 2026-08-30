@@ -230,6 +230,59 @@ test("a failed session response does not classify a missing tile as ended", asyn
   expect(screen.queryByRole("button", { name: /ended session/ })).not.toBeInTheDocument();
 });
 
+test("an older session response cannot replace a newer successful snapshot", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const pending: Array<(response: Response) => void> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/api/layout") && method === "GET") return Promise.resolve(new Response(JSON.stringify(layout)));
+    if (url.includes("/api/sessions")) return new Promise<Response>((resolve) => pending.push(resolve));
+    if (url.includes("/api/tools")) return Promise.resolve(new Response(JSON.stringify(tools)));
+    if (url.includes("/api/dirs") || url.includes("/subdirs")) return Promise.resolve(new Response("[]"));
+    return Promise.resolve(new Response("{}"));
+  });
+
+  render(<GridPage />);
+  await waitFor(() => expect(pending).toHaveLength(1));
+  const calls = vi.mocked(useEvents).mock.calls;
+  act(() => calls[calls.length - 1][1]("hello"));
+  await waitFor(() => expect(pending).toHaveLength(2));
+
+  await act(async () => {
+    pending[1](new Response(JSON.stringify([sessions[0]])));
+    await Promise.resolve();
+  });
+  await screen.findByTestId("term-1");
+
+  await act(async () => {
+    pending[0](new Response("[]"));
+    await Promise.resolve();
+  });
+  expect(screen.queryByRole("button", { name: "Dismiss all 1 ended session on local" })).not.toBeInTheDocument();
+});
+
+test("a failed refresh preserves the cleanup set from the last successful response", async () => {
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 4 }] };
+  const fetchMock = mockFetch(layout);
+  render(<GridPage />);
+  const actionName = "Dismiss all 1 ended session on local";
+  await screen.findByRole("button", { name: actionName });
+
+  const reachable = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/api/sessions")) throw new TypeError("Failed to fetch");
+    return reachable(input, init);
+  });
+  const sessionFetches = () => fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/sessions")).length;
+  const before = sessionFetches();
+  const calls = vi.mocked(useEvents).mock.calls;
+  act(() => calls[calls.length - 1][1]("git_changed"));
+
+  await waitFor(() => expect(sessionFetches()).toBeGreaterThan(before));
+  expect(screen.getByRole("button", { name: actionName })).toBeInTheDocument();
+});
+
 test("a rejected server request settles while its banner coexists with a reachable mobile terminal", async () => {
   stubMatchMedia(true);
   stubRemoteServer();
