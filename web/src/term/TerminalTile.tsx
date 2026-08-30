@@ -150,6 +150,10 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       }
     }
 
+    function claimForInteraction() {
+      if (sizePolicy === "follow-input") sendResize(true);
+    }
+
     // A tile the dir filter has hidden is display:none, so it has no box to
     // measure. Fitting to it would size the terminal — and, through
     // sendResize, this connection's PTY — to nothing, and that size would
@@ -178,9 +182,14 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     }
 
     operationsRef.current = {
-      input: sendInput,
+      input(data) {
+        if (ws?.readyState !== WebSocket.OPEN) return false;
+        claimForInteraction();
+        return sendInput(data);
+      },
       paste(data) {
         if (ws?.readyState !== WebSocket.OPEN) return false;
+        claimForInteraction();
         pasteAccepted = true;
         try {
           // xterm adds bracketed-paste markers only when the foreground app
@@ -254,6 +263,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     let suppressNextCR = false;
     const captureContainer = containerRef.current!;
     const shiftEnterCapture = (e: KeyboardEvent) => {
+      claimForInteraction();
       if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
         e.stopPropagation();
@@ -267,6 +277,14 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       }
     };
     captureContainer.addEventListener("keydown", shiftEnterCapture, true);
+
+    // Browser gestures are the evidence of a human at this tile. xterm's
+    // onData cannot provide that evidence because it also carries automatic
+    // terminal-protocol replies generated while parsing server output.
+    const claimInteractionCapture = () => claimForInteraction();
+    captureContainer.addEventListener("paste", claimInteractionCapture, true);
+    captureContainer.addEventListener("pointerdown", claimInteractionCapture, true);
+    captureContainer.addEventListener("wheel", claimInteractionCapture, true);
 
     // Drag-to-select without a modifier, Shift+drag to reach tmux. tmux mouse
     // mode normally owns click-drag; xterm.js's escape hatch
@@ -309,7 +327,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
 
     // Focusing this terminal claims the window size at our dims — the cheap way
     // to reclaim a window some other client shrank, without having to type.
-    // (Keyboard input claims it too, server-side, via Arbiter.ClaimInput.)
+    // Deliberate input gestures claim it through claimForInteraction too.
     // Only a focus the user caused counts: a machine waking with this tab
     // frontmost re-fires focus on the element that already had it, and a claim
     // from there resizes the window under whoever is really typing. Browsers
@@ -366,6 +384,9 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
         ws.close();
       }
       captureContainer.removeEventListener("keydown", shiftEnterCapture, true);
+      captureContainer.removeEventListener("paste", claimInteractionCapture, true);
+      captureContainer.removeEventListener("pointerdown", claimInteractionCapture, true);
+      captureContainer.removeEventListener("wheel", claimInteractionCapture, true);
       captureContainer.removeEventListener("mousedown", selectDragCapture, true);
       if (copyTimeoutId) clearTimeout(copyTimeoutId);
       selectionSub.dispose();

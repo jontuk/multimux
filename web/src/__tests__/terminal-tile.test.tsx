@@ -145,6 +145,13 @@ function decodedBinaryFrames(ws: FakeWebSocket) {
     .map((data) => decoder.decode(data));
 }
 
+function sentFrameTypes(ws: FakeWebSocket): string[] {
+  return ws.sent.map((data) => {
+    if (typeof data !== "string") return "binary";
+    return JSON.parse(data).active ? "active-resize" : "resize";
+  });
+}
+
 // Last {"type":"resize"} the tile sent, parsed.
 function lastResize(ws: FakeWebSocket) {
   return resizeFrames(ws).at(-1);
@@ -299,8 +306,11 @@ test("terminal handle sends direct input only while connected", () => {
 
   ws.readyState = FakeWebSocket.OPEN;
   act(() => ws.onopen?.());
+
+  ws.sent.length = 0;
   expect(ref.current?.input("hello 🌍")).toBe(true);
   expect(decodedBinaryFrames(ws)).toEqual(["hello 🌍"]);
+  expect(sentFrameTypes(ws)).toEqual(["active-resize", "binary"]);
 });
 
 test("terminal handle pastes multiline Unicode through xterm without adding Enter", () => {
@@ -310,9 +320,11 @@ test("terminal handle pastes multiline Unicode through xterm without adding Ente
   ws.readyState = FakeWebSocket.OPEN;
   act(() => ws.onopen?.());
 
+  ws.sent.length = 0;
   expect(ref.current?.paste("first\nsecond 🐚")).toBe(true);
   expect(pasteCalls).toEqual(["first\nsecond 🐚"]);
   expect(decodedBinaryFrames(ws)).toEqual(["first\nsecond 🐚"]);
+  expect(sentFrameTypes(ws)).toEqual(["active-resize", "binary"]);
 });
 
 test("terminal handle reports synchronous input and paste send failures", () => {
@@ -405,6 +417,37 @@ test("only terminal focus claims window-size ownership", async () => {
   expect(lastResize(ws)).toMatchObject({ active: true });
 });
 
+test("terminal-generated data is forwarded without claiming size ownership", () => {
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  act(() => dataListener?.("\x1b[?1;2c"));
+
+  expect(decodedBinaryFrames(ws)).toContain("\x1b[?1;2c");
+  expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
+});
+
+test("deliberate desktop gestures claim size ownership", () => {
+  const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  const term = container.querySelector(".terminal-tile > div")!;
+
+  for (const event of [
+    new KeyboardEvent("keydown", { bubbles: true, key: "a" }),
+    new Event("paste", { bubbles: true }),
+    new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+    new WheelEvent("wheel", { bubbles: true, deltaY: 1 }),
+  ]) {
+    ws.sent.length = 0;
+    act(() => term.dispatchEvent(event));
+    expect(resizeFrames(ws)).toEqual([expect.objectContaining({ active: true })]);
+  }
+});
+
 // A machine waking with the tab frontmost re-fires focus on the element that
 // already had it. That is not a person asking for the window.
 test("a focus the user did not cause does not claim the shared size", () => {
@@ -441,6 +484,28 @@ test("passive terminal advertises its size policy and focus does not claim", () 
 
   const term = container.querySelector(".terminal-tile > div")!;
   act(() => term.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
+
+  expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
+});
+
+test("passive terminal interaction never claims size ownership", () => {
+  const ref = createRef<TerminalHandle>();
+  const { container } = render(
+    <TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />,
+  );
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  const term = container.querySelector(".terminal-tile > div")!;
+
+  act(() => {
+    term.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "a" }));
+    term.dispatchEvent(new Event("paste", { bubbles: true }));
+    term.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    term.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 1 }));
+    ref.current?.input("a");
+    ref.current?.paste("pasted");
+  });
 
   expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
 });
