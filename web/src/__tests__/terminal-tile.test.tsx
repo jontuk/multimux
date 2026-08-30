@@ -367,6 +367,22 @@ test("terminal handle focuses, changes font size, and fits passively", () => {
   expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
 });
 
+test("terminal handle font size survives an internal reconnect", async () => {
+  mockSessions(async () => new Response("{}", { status: 401 }));
+  const ref = createRef<TerminalHandle>();
+  render(<TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
+
+  act(() => ref.current?.setFontSize(9));
+  expect(terminalOptions[0].fontSize).toBe(9);
+  await failHandshake();
+  await screen.findByText(/not logged in/);
+
+  await userEvent.click(screen.getByRole("button", { name: /reconnect/ }));
+
+  await waitFor(() => expect(terminalOptions).toHaveLength(2));
+  expect(terminalOptions[1].fontSize).toBe(9);
+});
+
 test("a captured terminal handle becomes inert after unmount", () => {
   const ref = createRef<TerminalHandle>();
   const { unmount } = render(<TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} />);

@@ -73,6 +73,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fitSharedSizeRef = useRef<() => void>(() => {});
+  const fontSizeRef = useRef(13);
   const operationsRef = useRef<TerminalHandle>(inertTerminalOperations);
   useImperativeHandle(
     ref,
@@ -111,7 +112,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
   useEffect(() => {
     const term = new Terminal({
       scrollback: 0, // tmux owns scrollback (mouse mode)
-      fontSize: 13,
+      fontSize: fontSizeRef.current,
       // On Mac, xterm.js only bypasses app mouse-mode for Option+drag (never
       // Shift — that's hardcoded Linux/Windows-only in SelectionService).
       // selectDragCapture below drives that flag, so this must stay on.
@@ -204,6 +205,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       },
       focus: () => term.focus(),
       setFontSize(size) {
+        fontSizeRef.current = size;
         term.options.fontSize = size;
         fitToBox();
         sendResize();
