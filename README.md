@@ -343,6 +343,10 @@ context, position, Settings, and terminal controls. When the software keyboard
 opens, the app follows the browser's visible viewport and refits once the
 keyboard transition settles, keeping the terminal prompt in the usable area.
 
+Use the **Terminal font size** control to choose 13, 11, 10, or 9 px. The choice
+is stored in this browser, applies across mobile sessions, and refits the
+terminal without reconnecting or changing daemon-wide settings.
+
 For longer text or phone dictation, use **Compose**. It opens a multiline editor
 for normal mobile editing and review. **Add** pastes the draft into the
 foreground application without Enter; **Add & Enter** performs the same paste

@@ -18,25 +18,26 @@ scope.
 
 ## Current state
 
-The existing mobile shell is a good foundation. On a narrow or touch-only device,
-`MobileSessionView` shows one running terminal and a compact, swipeable session
-header. Only the selected terminal is mounted, and changing the mobile selection
-does not alter the saved desktop grid.
+The mobile terminal workflow is implemented. On a narrow or touch-only device,
+`MobileSessionView` mounts one running terminal beneath a compact, swipeable
+header. The header combines host and session context, Settings, Compose, Fit
+session to phone, and a browser-local font-size selector. Changing the mobile
+selection does not alter the saved desktop grid.
 
-The terminal itself still has a desktop input model:
+Mobile terminals use passive shared-window sizing by default, while the explicit
+Fit action can deliberately hand the shared tmux window to the phone. The app
+tracks the settled visual viewport and safe areas so keyboard transitions refit
+the local terminal without ordinary mobile input reflowing a desktop client.
 
-- a 393 px-wide portrait viewport produces about 49 columns at the hardcoded
-  13 px font size;
-- tmux owns 50,000 lines of history, but a phone has no usable scroll gesture;
-- iOS and Android keyboards do not provide reliable Esc, Tab, Ctrl, or arrow
-  keys;
-- long text and dictation go directly into the live PTY with no review step; and
-- the software keyboard can either hide the prompt or resize the shared tmux
-  window for every attached client.
+Compose provides reviewed multiline paste and optional Enter. A focus-aware key
+bar supplies Esc, Tab, Ctrl-C, arrows, and Enter even while a draft is open. Font
+presets of 13, 11, 10, and 9 px persist in browser storage and apply across mobile
+sessions without reconnecting. One-finger vertical drags generate tmux wheel
+input for access to the existing 50,000-line history.
 
-The last point is the architectural constraint. Every binary input frame currently
-calls `ArbConn.ClaimInput`, so merely sending resize frames with `active: false`
-does not stop a phone from taking ownership of the shared window size.
+Automated coverage exists for each delivery item. The real-device checks below
+remain required before a release can claim validation across current iPhone and
+Android browser and installed-PWA modes.
 
 ## Recommended experience
 
@@ -125,19 +126,20 @@ sequences or an explicit protocol operation.
 
 ## Delivery sequence
 
-1. **Passive mobile size policy.** Add the connection capability, prevent mobile
-   input from claiming shared dimensions, and add the explicit Fit session to phone
-   escape hatch.
-2. **Viewport and chrome.** Enable safe areas, handle the visual viewport and
+1. [x] **Passive mobile size policy.** Add the connection capability, prevent
+   mobile input from claiming shared dimensions, and add the explicit Fit session
+   to phone escape hatch.
+2. [x] **Viewport and chrome.** Enable safe areas, handle the visual viewport and
    software keyboard, and collapse the two headers into one.
-3. **Terminal handle and Compose.** Add Insert and Insert & Enter; keyboard dictation
-   works through the textarea without a separate speech API.
-4. **Essential key bar.** Add Esc, Tab, Ctrl-C, arrows, and Enter.
-5. **Font presets.** Store them locally and refit without reconnecting.
-6. **Touch scrollback.** Translate vertical drags into tmux wheel input and verify
-   copy-mode entry and exit on real devices.
+3. [x] **Terminal handle and Compose.** Add Insert and Insert & Enter; keyboard
+   dictation works through the textarea without a separate speech API.
+4. [x] **Essential key bar.** Add Esc, Tab, Ctrl-C, arrows, and Enter.
+5. [x] **Font presets.** Store them locally and refit without reconnecting.
+6. [x] **Touch scrollback.** Translate vertical drags into tmux wheel input for
+   copy-mode history navigation.
 
-Each step should be independently usable and tested before starting the next.
+Each step is independently usable and covered by automated tests. Physical-device
+verification remains part of the release checks below.
 
 ## Deferred
 
@@ -152,7 +154,8 @@ Each step should be independently usable and tested before starting the next.
 
 ## Real-device release checks
 
-Test both browser and installed-PWA modes on a current iPhone and Android phone:
+Implementation is complete; these checks still need to be run in both browser and
+installed-PWA modes on a current iPhone and Android phone:
 
 - opening and closing the keyboard keeps the prompt visible;
 - passive mobile input does not change the shared tmux dimensions;
