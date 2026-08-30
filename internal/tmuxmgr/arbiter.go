@@ -24,13 +24,12 @@ const ownerGrace = 30 * time.Second
 const presenceWindow = 5 * time.Minute
 
 // Arbiter decides which connection may change the shared tmux window size for
-// a session. Follow-input connections keep the existing behavior: ownership
-// follows keyboard input, and the client that most recently wrote input to the
-// PTY owns the size. Passive connections only resize their own attach PTY during
-// ordinary resize and input activity. An active resize is an explicit ownership
-// claim for either policy. On a follow-input ownership transfer the new owner's
-// last-known dims are reapplied so switching machines and typing reclaims the
-// window at that machine's size.
+// a session. Follow-input connections claim ownership through explicit human-
+// interaction signals: an active resize, or ClaimInput after the caller has
+// independently established intent. Passive connections only resize their own
+// attach PTY during ordinary resize and input activity. An active resize is an
+// explicit ownership claim for either policy. On a ClaimInput ownership
+// transfer the new owner's last-known dims are reapplied.
 //
 // Ownership is keyed on the *client* id (one browser profile), not on the
 // connection, so it survives reconnects — see ownerGrace — and outlives the
@@ -227,9 +226,11 @@ func (c *ArbConn) Resize(cols, rows uint16, active bool, apply func(resizeWindow
 	return apply(allowed)
 }
 
-// ClaimInput marks this conn's client as owner (call on keyboard input). If
-// ownership changed hands and the conn has known dims, it reapplies them while
-// the ownership transfer is locked.
+// ClaimInput marks this connection's client as owner after the caller has
+// independently established deliberate human input. Raw PTY transport is not
+// sufficient evidence: terminal emulators also emit automatic protocol replies.
+// If ownership changed hands and the connection has known dims, it reapplies
+// them while the ownership transfer is locked.
 func (c *ArbConn) ClaimInput(apply func(cols, rows uint16) error) error {
 	c.session.resizeMu.Lock()
 	defer c.session.resizeMu.Unlock()
