@@ -36,7 +36,15 @@ func TestPTYSizePolicy(t *testing.T) {
 
 func dialPTY(t *testing.T, ts *httptest.Server, sessionID int64, token string) *websocket.Conn {
 	t.Helper()
+	return dialPTYAs(t, ts, sessionID, token, "")
+}
+
+func dialPTYAs(t *testing.T, ts *httptest.Server, sessionID int64, token, client string) *websocket.Conn {
+	t.Helper()
 	url := "ws" + strings.TrimPrefix(ts.URL, "http") + fmt.Sprintf("/ws/pty/%d?token=%s", sessionID, token)
+	if client != "" {
+		url += "&client=" + client
+	}
 	conn, resp, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": []string{"https://evil.example"}})
 	if err != nil {
 		body := ""
@@ -47,6 +55,71 @@ func dialPTY(t *testing.T, ts *httptest.Server, sessionID int64, token string) *
 	}
 	t.Cleanup(func() { conn.Close() })
 	return conn
+}
+
+func readPTYUntil(t *testing.T, conn *websocket.Conn, marker string) {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	var got strings.Builder
+	for {
+		mt, data, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("marker %q not seen; read err %v; got %q", marker, err, got.String())
+		}
+		if mt == websocket.BinaryMessage {
+			got.Write(data)
+			if strings.Contains(got.String(), marker) {
+				return
+			}
+		}
+	}
+}
+
+func hasWindowClaim(logged, client, why string) bool {
+	for _, line := range strings.Split(logged, "\n") {
+		var event map[string]any
+		if json.Unmarshal([]byte(line), &event) == nil &&
+			event["msg"] == "tmux window claimed" &&
+			event["client"] == client && event["why"] == why {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPTYBinaryDataDoesNotClaimWindow(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	logs := captureLogs(t)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	tool, _ := st.CreateTool("sh", "sh")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	sess := onlySession(t, w)
+
+	owner := dialPTYAs(t, ts, sess.ID, token, "owner")
+	owner.WriteJSON(map[string]any{"type": "resize", "cols": 160, "rows": 80, "active": true})
+	owner.WriteMessage(websocket.BinaryMessage, []byte("echo MMWS_OWNER_READY\r"))
+	readPTYUntil(t, owner, "MMWS_OWNER_READY")
+
+	responder := dialPTYAs(t, ts, sess.ID, token, "responder")
+	responder.WriteJSON(map[string]any{"type": "resize", "cols": 107, "rows": 58, "active": false})
+	responder.WriteMessage(websocket.BinaryMessage, []byte("echo MMWS_BINARY_READY\r"))
+	readPTYUntil(t, responder, "MMWS_BINARY_READY")
+
+	logged := logs.String()
+	if hasWindowClaim(logged, "c:responder", "input") {
+		t.Fatalf("binary PTY data claimed the shared window: %s", logged)
+	}
+
+	responder.WriteJSON(map[string]any{"type": "resize", "cols": 107, "rows": 58, "active": true})
+	responder.WriteMessage(websocket.BinaryMessage, []byte("echo MMWS_ACTIVE_READY\r"))
+	readPTYUntil(t, responder, "MMWS_ACTIVE_READY")
+	logged = logs.String()
+	if !hasWindowClaim(logged, "c:responder", "active resize") {
+		t.Fatalf("explicit active resize did not claim the shared window: %s", logged)
+	}
 }
 
 func TestPTYBridgeEcho(t *testing.T) {

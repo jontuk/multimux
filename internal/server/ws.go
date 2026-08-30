@@ -222,14 +222,10 @@ readLoop:
 		conn.SetReadDeadline(time.Now().Add(pongWait))
 		switch mt {
 		case websocket.BinaryMessage:
-			// Keyboard input claims window-size ownership; if ownership just
-			// transferred, restore this connection's window size (its earlier
-			// resize may have been denied).
-			if err := arb.ClaimInput(func(cols, rows uint16) error {
-				return ptyConn.Resize(cols, rows, true)
-			}); err != nil {
-				slog.Debug("reapply resize", "err", err)
-			}
+			// Binary data is transport, not proof of human input: xterm's
+			// onData also carries automatic replies to terminal queries. The
+			// browser reports deliberate interaction separately with an active
+			// resize before sending its bytes.
 			if _, err := ptyConn.Write(data); err != nil {
 				break readLoop
 			}
