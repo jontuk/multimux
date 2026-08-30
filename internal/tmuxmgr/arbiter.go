@@ -195,12 +195,17 @@ func (c *ArbConn) Resize(cols, rows uint16, active bool, apply func(resizeWindow
 	}
 	allowed := c.sizePolicy == SizePolicyFollowInput && c.mayResize()
 	prev := c.session.ownerID
+	repeatActive := active && prev == c.clientID && c.sizePolicy == SizePolicyFollowInput
 	claim := ""
 	if active || allowed {
 		// Whoever last sized the window owns it; taking over a lapsed
 		// ownership must also stop the old owner from silently getting it back.
 		c.session.ownerID = c.clientID
-		allowed = true
+		// Desktop interaction sends an active resize before every input. Once
+		// this client owns the window, its ordinary resizes already keep the
+		// dimensions current, so do not run tmux resize-window per keystroke.
+		// A passive active resize is the explicit Fit action and always applies.
+		allowed = !repeatActive
 		switch {
 		case prev == c.clientID:
 		case active:

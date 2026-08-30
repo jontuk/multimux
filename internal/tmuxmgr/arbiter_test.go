@@ -204,6 +204,19 @@ func TestActiveResizeClaimsAndTransfersOwnership(t *testing.T) {
 	}
 }
 
+func TestRepeatedActiveResizeByOwnerDoesNotReapplySharedWindow(t *testing.T) {
+	a := NewArbiter()
+	owner := a.Register("mm-1", "A", SizePolicyFollowInput)
+	defer owner.Unregister()
+
+	if !resizeAllowed(t, owner, 129, 76, true) {
+		t.Fatal("first active resize must claim the shared window")
+	}
+	if resizeAllowed(t, owner, 129, 76, true) {
+		t.Fatal("repeated active resize by the owner must not reapply the shared window")
+	}
+}
+
 func TestPassiveConnectionDoesNotResizeSharedWindow(t *testing.T) {
 	a := NewArbiter()
 	phone := a.Register("mm-1", "phone", SizePolicyPassive)
