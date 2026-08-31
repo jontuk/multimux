@@ -39,10 +39,7 @@ test("starts on the requested server and returns grouped sessions as one ordered
   expect(result.current.dirId).toBe(7);
   expect(result.current.subdir).toBe("web");
 
-  let batch: Awaited<ReturnType<typeof result.current.launch>>;
-  await act(async () => {
-    batch = await result.current.launch();
-  });
+  const batch = await act(() => result.current.launch());
 
   expect(batch?.server.id).toBe("remote");
   expect(batch?.sessions.map((session) => session.id)).toEqual([31, 32]);

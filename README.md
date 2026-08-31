@@ -363,11 +363,18 @@ scrollback; press **Esc** in the bottom key row to leave copy mode. A tap still
 focuses and interacts with the terminal, and scrolling stops when the finger is
 released.
 
-Only the selected terminal is mounted. The mobile view has no launcher and no
-rename, move, remove, or terminate controls; use a wider viewport for those
-actions. Selection is temporary, and neither switching sessions nor entering
-or leaving mobile view changes the saved desktop grid layout. Viewports wider
-than 560 pixels — including most tablets — keep the full grid.
+Use **+** in the mobile header to open the full-screen session creator. It has
+the same server, tool, directory, and optional subdirectory choices as the
+desktop launcher and starts from the session currently on screen. When a tool
+starts several sessions, mobile opens the first and leaves the others available
+through normal session navigation. Sessions created on mobile remain unplaced,
+so creating one never rearranges the saved desktop grid.
+
+Only the selected terminal is mounted in normal mobile browsing. The mobile
+view still has no rename, move, remove, or terminate controls; use a wider
+viewport for those actions. Selection is temporary, and neither switching
+sessions nor entering or leaving mobile view changes the saved desktop layout.
+Viewports wider than 560 pixels — including most tablets — keep the full grid.
 
 Mobile terminals use passive window sizing: ordinary phone input, focus, and
 viewport changes resize only the phone's attach PTY and do not reflow the shared

@@ -49,7 +49,6 @@ export default function MobileSessionView({
     }
     // Selection must follow asynchronous session-list changes while retaining
     // the current key when it is still present.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelection((current) => reconcileMobileSelection(current, sessions));
   }, [sessions, pendingSelectionKey]);
 
