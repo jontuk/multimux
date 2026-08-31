@@ -10,6 +10,7 @@ import type { Server } from "../servers";
 import type { TerminalHandle } from "../term/TerminalTile";
 
 const unmounted = vi.fn();
+const terminalAttached = vi.fn();
 const terminalHandles = new Map<number, TerminalHandle>();
 const terminalCalls: Array<{ sessionId: number; operation: "input" | "paste"; data: string }> = [];
 const terminalFontSizes: Array<{ sessionId: number; size: number }> = [];
@@ -53,7 +54,10 @@ vi.mock("../term/TerminalTile", () => ({
       terminalHandles.set(sessionId, handle);
     }
     useImperativeHandle(ref, () => handle, [handle]);
-    useEffect(() => () => unmounted(sessionId), [sessionId]);
+    useEffect(() => {
+      terminalAttached(sessionId);
+      return () => unmounted(sessionId);
+    }, [sessionId]);
     const fit = <button aria-label="Fit session to phone">Fit</button>;
     return (
       <>
@@ -150,6 +154,7 @@ function mockPointerCapture(header: HTMLElement) {
 
 beforeEach(() => {
   unmounted.mockClear();
+  terminalAttached.mockClear();
   terminalHandles.clear();
   terminalCalls.length = 0;
   terminalFontSizes.length = 0;
@@ -158,7 +163,9 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-test("orders mobile actions as New, Fit, Compose, font, Settings", () => {
+afterEach(() => vi.restoreAllMocks());
+
+test("orders mobile actions as New, Text, Fit, Compose, font, Settings", () => {
   render(
     <MobileSessionView
       servers={[local]}
@@ -174,7 +181,50 @@ test("orders mobile actions as New, Fit, Compose, font, Settings", () => {
     Array.from(actions.querySelectorAll("button, select, a")).map(
       (node) => node.getAttribute("aria-label") ?? node.textContent,
     ),
-  ).toEqual(["New session", "Fit session to phone", "Compose", "Terminal font size", "Settings"]);
+  ).toEqual([
+    "New session",
+    "Read text from session 1",
+    "Fit session to phone",
+    "Compose",
+    "Terminal font size",
+    "Settings",
+  ]);
+});
+
+test("mobile Text targets the selection without reconnecting its terminal", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("mobile snapshot"));
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const textButton = screen.getByRole("button", { name: "Read text from session 1" });
+  await userEvent.click(textButton);
+  expect(await screen.findByRole("dialog", { name: "Pane text for #1 · claude" })).toBeInTheDocument();
+  expect(screen.getByText("mobile snapshot")).toBeInTheDocument();
+  expect(fetchMock.mock.calls[0][0]).toBe("https://local.test/api/sessions/1/text");
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(terminalHandles.size).toBe(1);
+  expect(terminalAttached).toHaveBeenCalledTimes(1);
+  expect(unmounted).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(terminalHandles.size).toBe(1);
+  expect(terminalAttached).toHaveBeenCalledTimes(1);
+  expect(unmounted).not.toHaveBeenCalled();
+  expect(textButton).toHaveFocus();
+});
+
+test("mobile Text is absent while loading and when no session is selected", () => {
+  const props = { servers: [local], sessions: [], toolsByServer: {}, onRefresh: vi.fn() };
+  const { rerender } = render(<MobileSessionView {...props} initialLoading />);
+  expect(screen.queryByRole("button", { name: /Read text from session/ })).not.toBeInTheDocument();
+  rerender(<MobileSessionView {...props} initialLoading={false} />);
+  expect(screen.queryByRole("button", { name: /Read text from session/ })).not.toBeInTheDocument();
 });
 
 test("New session remains available while loading and when empty", () => {

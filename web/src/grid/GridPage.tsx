@@ -22,6 +22,7 @@ import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
 import { MOBILE_VIEW_QUERY, useMediaQuery } from "../useMediaQuery";
 import MobileSessionView from "./MobileSessionView";
+import PaneTextReader from "./PaneTextReader";
 import { orderMobileSessions } from "./mobileModel";
 import type { Session, Tool } from "./types";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
@@ -30,6 +31,13 @@ import DirFilterBar from "./DirFilterBar";
 import { cycleSolo, dirButtons, effectiveSolo, filterLayout, setSoloDir, soloDir } from "./dirFilter";
 import { endedTileKeys } from "./endedSessions";
 import { applyOverlay, orderOf, seedOverlay, setViewOverlay, swapOrder, viewOverlay, type Overlay } from "./viewLayout";
+
+type PaneTextTarget = {
+  server: Server;
+  sessionId: number;
+  title: string;
+  trigger: HTMLButtonElement;
+};
 
 function isLayout(v: unknown): v is Layout {
   return !!v && typeof v === "object" && "shape" in v && "tiles" in v;
@@ -166,6 +174,7 @@ export default function GridPage({
   // stable across re-renders and the events sockets don't churn; refreshed
   // explicitly after reconnect/remove changes the stored list.
   const [servers, setServers] = useState(() => listServers());
+  const [paneTextTarget, setPaneTextTarget] = useState<PaneTextTarget | null>(null);
 
   // Browser-local view filter: the one directory shown on its own, or null for
   // all of them. Not persisted server-side and never written into the layout.
@@ -745,6 +754,23 @@ export default function GridPage({
                     </a>
                   )}
                   <span className="tile-actions">
+                    {session?.status === "running" && (
+                      <button
+                        type="button"
+                        aria-label={`Read text from session ${session.id}`}
+                        title="open pane text"
+                        onClick={(event) => {
+                          setPaneTextTarget({
+                            server,
+                            sessionId: session.id,
+                            title: `#${session.id} · ${sessionTitle(toolsByServer[tile.serverId], session)}`,
+                            trigger: event.currentTarget,
+                          });
+                        }}
+                      >
+                        Text
+                      </button>
+                    )}
                     <button
                       aria-label={`remove session ${tile.sessionId} from grid`}
                       title="remove from grid"
@@ -894,6 +920,16 @@ export default function GridPage({
             />
           </div>
         </>
+      )}
+      {paneTextTarget && (
+        <PaneTextReader
+          server={paneTextTarget.server}
+          sessionId={paneTextTarget.sessionId}
+          title={paneTextTarget.title}
+          open
+          onClose={() => setPaneTextTarget(null)}
+          trigger={paneTextTarget.trigger}
+        />
       )}
     </div>
   );

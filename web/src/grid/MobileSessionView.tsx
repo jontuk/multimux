@@ -5,12 +5,20 @@ import MobileCompose from "./MobileCompose";
 import MobileFontSizeControl from "./MobileFontSizeControl";
 import MobileKeyBar from "./MobileKeyBar";
 import MobileSessionCreator from "./MobileSessionCreator";
+import PaneTextReader from "./PaneTextReader";
 import { dirTintStyle } from "./dirColor";
 import { readMobileFontSize, writeMobileFontSize, type MobileFontSize as MobileFontSizeValue } from "./mobileFontSize";
 import type { MobileSession, MobileSelection } from "./mobileModel";
 import { reconcileMobileSelection } from "./mobileModel";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 import type { Session, Tool } from "./types";
+
+type PaneTextTarget = {
+  server: Server;
+  sessionId: number;
+  title: string;
+  trigger: HTMLButtonElement;
+};
 
 export default function MobileSessionView({
   servers,
@@ -34,6 +42,7 @@ export default function MobileSessionView({
   const [fontSize, setFontSize] = useState(readMobileFontSize);
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
+  const [paneTextTarget, setPaneTextTarget] = useState<PaneTextTarget | null>(null);
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
   const newSessionRef = useRef<HTMLButtonElement>(null);
@@ -209,6 +218,22 @@ export default function MobileSessionView({
             >
               +
             </button>
+            {selected && (
+              <button
+                type="button"
+                aria-label={`Read text from session ${selected.session.id}`}
+                onClick={(event) => {
+                  setPaneTextTarget({
+                    server: selected.server,
+                    sessionId: selected.session.id,
+                    title: selectedTitle,
+                    trigger: event.currentTarget,
+                  });
+                }}
+              >
+                Text
+              </button>
+            )}
             <span className="mobile-terminal-controls" ref={setControlsSlot} />
             <a className="mobile-settings-link" href="#/settings" aria-label="Settings">
               <span aria-hidden="true">⚙</span>
@@ -247,6 +272,16 @@ export default function MobileSessionView({
           targetDir={selected?.session.dir ?? null}
           onCancel={closeCreator}
           onLaunched={created}
+        />
+      )}
+      {paneTextTarget && (
+        <PaneTextReader
+          server={paneTextTarget.server}
+          sessionId={paneTextTarget.sessionId}
+          title={paneTextTarget.title}
+          open
+          onClose={() => setPaneTextTarget(null)}
+          trigger={paneTextTarget.trigger}
         />
       )}
     </div>

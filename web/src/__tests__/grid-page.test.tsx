@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import GridPage from "../grid/GridPage";
@@ -9,9 +9,25 @@ import { MOBILE_VIEW_QUERY } from "../useMediaQuery";
 import { endReflowHold, isReflowHeld } from "../term/reflowGate";
 
 vi.mock("../useEvents", () => ({ useEvents: vi.fn() }));
-vi.mock("../term/TerminalTile", () => ({
-  default: ({ sessionId }: { sessionId: number }) => <div data-testid={`term-${sessionId}`} />,
-}));
+const terminalLifecycle = vi.hoisted(() => ({ constructed: vi.fn(), attached: vi.fn(), unmounted: vi.fn() }));
+
+vi.mock("../term/TerminalTile", async () => {
+  const { useEffect, useRef } = await import("react");
+  return {
+    default: ({ sessionId }: { sessionId: number }) => {
+      const constructed = useRef(false);
+      if (!constructed.current) {
+        constructed.current = true;
+        terminalLifecycle.constructed(sessionId);
+      }
+      useEffect(() => {
+        terminalLifecycle.attached(sessionId);
+        return () => terminalLifecycle.unmounted(sessionId);
+      }, [sessionId]);
+      return <div data-testid={`term-${sessionId}`} />;
+    },
+  };
+});
 
 const sessions = [
   {
@@ -69,6 +85,9 @@ function mockFetch(layout: unknown, sessionList: unknown[] = sessions) {
 }
 
 afterEach(() => {
+  terminalLifecycle.constructed.mockClear();
+  terminalLifecycle.attached.mockClear();
+  terminalLifecycle.unmounted.mockClear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.removeItem("multimux.servers");
@@ -76,6 +95,58 @@ afterEach(() => {
   // A failed or interrupted drag test must not leave the module-level reflow
   // gate held for other tests in this file.
   if (isReflowHeld()) endReflowHold();
+});
+
+test("desktop Text precedes destructive actions and never reconnects the terminal", async () => {
+  stubMatchMedia(false);
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/api/sessions/1/text")) return new Response("pane snapshot");
+    if (url.includes("/subdirs")) return new Response("[]");
+    if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
+    if (url.includes("/api/layout") && method === "PUT") return new Response("{}");
+    if (url.includes("/api/sessions")) return new Response(JSON.stringify([sessions[0]]));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(dirs));
+    return new Response("[]");
+  });
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  const actions = screen.getByLabelText("remove session 1 from grid").parentElement!;
+  expect(
+    within(actions)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Text", "−", "✕"]);
+  await userEvent.click(within(actions).getByRole("button", { name: "Read text from session 1" }));
+  expect(await screen.findByText("pane snapshot")).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/sessions/1/text"))).toBe(true);
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(terminalLifecycle.constructed).toHaveBeenCalledTimes(1);
+  expect(terminalLifecycle.attached).toHaveBeenCalledTimes(1);
+  expect(terminalLifecycle.unmounted).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(terminalLifecycle.constructed).toHaveBeenCalledTimes(1);
+  expect(terminalLifecycle.attached).toHaveBeenCalledTimes(1);
+  expect(terminalLifecycle.unmounted).not.toHaveBeenCalled();
+});
+
+test("desktop Text is absent for ended and unresolved sessions", async () => {
+  stubMatchMedia(false);
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 4 },
+      { serverId: "local", sessionId: 99 },
+    ],
+  };
+  mockFetch(layout);
+  render(<GridPage />);
+  await screen.findByText(/session ended/);
+  expect(screen.queryByRole("button", { name: /Read text from session (4|99)/ })).not.toBeInTheDocument();
 });
 
 function stubMatchMedia(initialMatches: boolean) {
