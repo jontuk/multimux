@@ -78,6 +78,12 @@ export async function getJSON<T>(server: Server, path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export async function getText(server: Server, path: string, init: RequestInit = {}): Promise<string> {
+  const res = await apiFetch(server, path, init);
+  if (!res.ok) throw await failed(path, res);
+  return await res.text();
+}
+
 export async function postJSON<T>(server: Server, path: string, body?: unknown): Promise<T> {
   const res = await apiFetch(server, path, {
     method: "POST",

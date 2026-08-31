@@ -1,9 +1,41 @@
 import { vi } from "vitest";
-import { ApiError, apiFetch, del, errorText, getJSON, isUnauthorized, isUnreachable, postJSON, wsURL } from "../api";
+import {
+  ApiError,
+  apiFetch,
+  del,
+  errorText,
+  getJSON,
+  getText,
+  isUnauthorized,
+  isUnreachable,
+  postJSON,
+  wsURL,
+} from "../api";
 import type { Server } from "../servers";
 
 const remote: Server = { id: "r1", origin: "https://otherbox:8686", name: "other", token: "tok" };
 const local: Server = { id: "local", origin: window.location.origin, name: "local" };
+
+afterEach(() => vi.restoreAllMocks());
+
+test("getText returns authenticated text and forwards AbortSignal", async () => {
+  const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("alpha\nβ\n"));
+  const signal = new AbortController().signal;
+  await expect(getText(remote, "/api/sessions/7/text", { signal })).resolves.toBe("alpha\nβ\n");
+  const [, init] = spy.mock.calls[0];
+  expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+  expect(init!.signal).toBe(signal);
+});
+
+test("getText converts failures through ApiError", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ error: "session is no longer available" }), { status: 409 }),
+  );
+  const err = await getText(local, "/api/sessions/7/text").catch((value: unknown) => value);
+  expect(err).toBeInstanceOf(ApiError);
+  expect((err as ApiError).status).toBe(409);
+  expect(errorText(err)).toContain("session is no longer available");
+});
 
 test("remote requests carry bearer token", async () => {
   const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
