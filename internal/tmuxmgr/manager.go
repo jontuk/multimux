@@ -3,6 +3,7 @@ package tmuxmgr
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -107,6 +108,33 @@ func sessionAbsent(msg string) bool {
 	return strings.Contains(msg, "can't find session") ||
 		strings.Contains(msg, "no server running") ||
 		strings.Contains(msg, "No such file")
+}
+
+// ErrSessionUnavailable means the requested tmux session, or its tmux server,
+// disappeared before pane text could be captured.
+var ErrSessionUnavailable = errors.New("tmux session unavailable")
+
+// CapturePaneText returns the active pane's retained history and current
+// screen as plain text. tmux owns logical boundaries: -J joins only rows tmux
+// marks wrapped, while -S/-E include all retained history and the full screen.
+func (m *Manager) CapturePaneText(name string) ([]byte, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("tmux", m.baseArgs(
+		"capture-pane", "-pJ", "-S", "-", "-E", "-", "-t", ExactTarget(name),
+	)...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if sessionAbsent(msg) {
+			return nil, fmt.Errorf("%w: %s", ErrSessionUnavailable, msg)
+		}
+		if msg != "" {
+			return nil, fmt.Errorf("tmux capture-pane: %w: %s", err, msg)
+		}
+		return nil, fmt.Errorf("tmux capture-pane: %w", err)
+	}
+	return stdout.Bytes(), nil
 }
 
 // KillSession destroys the session. A session that is already gone — or a
