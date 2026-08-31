@@ -20,13 +20,18 @@ import (
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
 
+type PaneTextCapturer interface {
+	CapturePaneText(name string) ([]byte, error)
+}
+
 type Config struct {
-	Store   *store.Store
-	Auth    *auth.Manager
-	Tmux    *tmuxmgr.Manager
-	Arbiter *tmuxmgr.Arbiter
-	WebFS   fs.FS
-	Origins []string // this daemon's own origins (cookie-auth WS origin check)
+	Store    *store.Store
+	Auth     *auth.Manager
+	Tmux     *tmuxmgr.Manager
+	PaneText PaneTextCapturer
+	Arbiter  *tmuxmgr.Arbiter
+	WebFS    fs.FS
+	Origins  []string // this daemon's own origins (cookie-auth WS origin check)
 	// NoAuth disables authentication entirely: every route is served to every
 	// caller. Set ONLY by `serve --dev`, which refuses to run against a data
 	// dir holding passkeys or against the default install directory. A daemon
@@ -56,6 +61,9 @@ type Server struct {
 }
 
 func New(cfg Config) *Server {
+	if cfg.PaneText == nil {
+		cfg.PaneText = cfg.Tmux
+	}
 	s := &Server{cfg: cfg, mux: http.NewServeMux(), hub: NewHub(), reconcileGrace: 10 * time.Second}
 	s.routes()
 	return s
@@ -102,6 +110,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/settings/preferences", s.handlePutPreferences)
 	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	s.mux.HandleFunc("GET /api/sessions/{id}/text", s.handleSessionText)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/dismiss", s.handleDismissSession)
 	s.mux.HandleFunc("PUT /api/sessions/{id}/label", s.handleRenameSession)
@@ -112,9 +121,9 @@ func (s *Server) routes() {
 	s.mux.Handle("/", s.staticHandler())
 }
 
-// Handler wraps the mux in (outermost first) logging → CORS → setup gate →
-// CSRF gate → auth → body cap. Static assets and /healthz and
-// /api/auth/{login,setup} bypass auth.
+// Handler wraps the mux in (outermost first) pane-text no-store → logging →
+// CORS → setup gate → CSRF gate → auth → body cap. Static assets and /healthz
+// and /api/auth/{login,setup} bypass auth.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
 	h = limitBody(h)
@@ -123,7 +132,17 @@ func (s *Server) Handler() http.Handler {
 	h = s.setupGate(h)
 	h = s.cors(h)
 	h = logRequests(h)
+	h = noStorePaneText(h)
 	return h
+}
+
+func noStorePaneText(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/text") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // csrfGate blocks cross-origin cookie-carrying API mutations. CORS only stops

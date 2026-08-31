@@ -16,6 +16,7 @@ import (
 
 	"github.com/jontuk/multimux/internal/gitinfo"
 	"github.com/jontuk/multimux/internal/store"
+	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
 
 // sessionJSON is a store.Session enriched with data derived from the session's
@@ -67,6 +68,41 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, 200, out)
+}
+
+func (s *Server) handleSessionText(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	id, err := pathID(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	sess, err := s.cfg.Store.GetSession(id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load session"})
+		return
+	}
+	if sess.Status != "running" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
+		return
+	}
+	text, err := s.cfg.PaneText.CapturePaneText(sess.TmuxName)
+	if errors.Is(err, tmuxmgr.ErrSessionUnavailable) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
+		return
+	}
+	if err != nil {
+		slog.Error("pane text capture failed", "session_id", sess.ID, "tmux_name", sess.TmuxName, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not capture pane text"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(text)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {

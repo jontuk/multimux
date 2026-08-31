@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,127 @@ import (
 	"github.com/jontuk/multimux/internal/store"
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
+
+type stubPaneTextCapturer struct {
+	text []byte
+	err  error
+	name string
+}
+
+func (s *stubPaneTextCapturer) CapturePaneText(name string) ([]byte, error) {
+	s.name = name
+	return append([]byte(nil), s.text...), s.err
+}
+
+func newPaneTextTestServer(t *testing.T, text []byte, captureErr error) (*Server, *store.Store, *stubPaneTextCapturer, string) {
+	t.Helper()
+	cfg, st, am := newTestServerCfg(t, true)
+	capture := &stubPaneTextCapturer{text: text, err: captureErr}
+	cfg.PaneText = capture
+	token, err := am.CreateSession("UA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(cfg), st, capture, token
+}
+
+func runningSession(t *testing.T, st *store.Store) store.Session {
+	t.Helper()
+	tool, err := st.CreateTool("shell", "sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := st.CreateSession(tool.ID, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sess
+}
+
+func TestSessionTextSuccessUsesStoredTmuxName(t *testing.T) {
+	s, st, capture, token := newPaneTextTestServer(t, []byte("oldest\nβ newest\n"), nil)
+	sess := runningSession(t, st)
+	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text?tmuxName=attacker", sess.ID), token)
+	if w.Code != http.StatusOK || w.Body.String() != "oldest\nβ newest\n" {
+		t.Fatalf("response = %d %q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if capture.name != sess.TmuxName {
+		t.Fatalf("capture name = %q, want stored %q", capture.name, sess.TmuxName)
+	}
+}
+
+func TestSessionTextAllowsEmptySnapshot(t *testing.T) {
+	s, st, _, token := newPaneTextTestServer(t, nil, nil)
+	sess := runningSession(t, st)
+	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token)
+	if w.Code != http.StatusOK || w.Body.Len() != 0 {
+		t.Fatalf("empty capture = %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestSessionTextRequiresAuth(t *testing.T) {
+	s, st, capture, _ := newPaneTextTestServer(t, []byte("secret"), nil)
+	sess := runningSession(t, st)
+	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), "")
+	if w.Code != http.StatusUnauthorized || capture.name != "" {
+		t.Fatalf("unauthenticated capture = %d, name %q", w.Code, capture.name)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("unauthenticated Cache-Control = %q", got)
+	}
+}
+
+func TestSessionTextRejectsBadMissingAndEndedRows(t *testing.T) {
+	s, st, capture, token := newPaneTextTestServer(t, []byte("unused"), nil)
+	if w := do(t, s, "GET", "/api/sessions/not-a-number/text", token); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad id = %d", w.Code)
+	}
+	if w := do(t, s, "GET", "/api/sessions/999/text", token); w.Code != http.StatusNotFound {
+		t.Fatalf("missing id = %d", w.Code)
+	}
+	sess := runningSession(t, st)
+	if err := st.SetSessionStatus(sess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token); w.Code != http.StatusConflict {
+		t.Fatalf("ended session = %d", w.Code)
+	}
+	if capture.name != "" {
+		t.Fatalf("capture called for rejected row: %q", capture.name)
+	}
+}
+
+func TestSessionTextMapsTmuxDisappearanceToConflict(t *testing.T) {
+	s, st, _, token := newPaneTextTestServer(t, nil, tmuxmgr.ErrSessionUnavailable)
+	sess := runningSession(t, st)
+	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "no longer available") {
+		t.Fatalf("disappeared capture = %d %q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("conflict Cache-Control = %q", got)
+	}
+}
+
+func TestSessionTextInternalFailureIsContentSafe(t *testing.T) {
+	s, st, _, token := newPaneTextTestServer(t, nil, errors.New("capture command failed"))
+	sess := runningSession(t, st)
+	logs := captureLogs(t)
+	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token)
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "command failed") {
+		t.Fatalf("internal capture = %d %q", w.Code, w.Body.String())
+	}
+	logged := logs.String()
+	if !strings.Contains(logged, `"msg":"pane text capture failed"`) || !strings.Contains(logged, `"session_id":`) {
+		t.Fatalf("diagnostic context missing: %s", logged)
+	}
+}
 
 // newTmuxTestServer swaps in a Manager on an isolated tmux socket.
 func newTmuxTestServer(t *testing.T) (*Server, *store.Store, string) {
