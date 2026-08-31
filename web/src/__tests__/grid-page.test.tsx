@@ -150,6 +150,19 @@ test("desktop Text is absent for ended and unresolved sessions", async () => {
   expect(screen.queryByRole("button", { name: /Read text from session (4|99)/ })).not.toBeInTheDocument();
 });
 
+test("desktop directory shortcuts stay inert while pane text is open", async () => {
+  stubMatchMedia(false);
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  mockFetch(layout);
+  render(<GridPage />);
+  await userEvent.click(await screen.findByRole("button", { name: "Read text from session 1" }));
+  await screen.findByRole("dialog", { name: "Pane text for #1 · claude" });
+
+  fireEvent.keyDown(window, { key: "ArrowRight", ctrlKey: true, altKey: true });
+
+  expect(soloDir()).toBeNull();
+});
+
 function stubMatchMedia(initialMatches: boolean) {
   let matches = initialMatches;
   const listeners = new Set<() => void>();

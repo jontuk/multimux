@@ -92,6 +92,18 @@ func TestSessionTextRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestSessionTextHeadAuthFailureIsNotCached(t *testing.T) {
+	s, st, capture, _ := newPaneTextTestServer(t, []byte("secret"), nil)
+	sess := runningSession(t, st)
+	w := do(t, s, "HEAD", fmt.Sprintf("/api/sessions/%d/text", sess.ID), "")
+	if w.Code != http.StatusUnauthorized || capture.name != "" {
+		t.Fatalf("unauthenticated HEAD capture = %d, name %q", w.Code, capture.name)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("unauthenticated HEAD Cache-Control = %q", got)
+	}
+}
+
 func TestSessionTextRejectsBadMissingAndEndedRows(t *testing.T) {
 	s, st, capture, token := newPaneTextTestServer(t, []byte("unused"), nil)
 	if w := do(t, s, "GET", "/api/sessions/not-a-number/text", token); w.Code != http.StatusBadRequest {

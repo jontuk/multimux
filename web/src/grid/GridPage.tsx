@@ -460,6 +460,7 @@ export default function GridPage({
   // `code`: with Alt held, macOS reports `key` as "º".
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (paneTextTarget) return;
       if (!e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey) return;
       let next: string | null;
       if (e.key === "ArrowRight") next = cycleSolo(activeSolo, dirs, 1);
@@ -473,7 +474,7 @@ export default function GridPage({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [activeSolo, dirs]);
+  }, [activeSolo, dirs, paneTextTarget]);
 
   // With a solo in effect a tile shows iff its session's directory is the
   // solo, whatever the session's status — an ended session in the soloed
