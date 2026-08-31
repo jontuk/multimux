@@ -13,19 +13,20 @@ const terminalLifecycle = vi.hoisted(() => ({ constructed: vi.fn(), attached: vi
 
 vi.mock("../term/TerminalTile", async () => {
   const { useEffect, useRef } = await import("react");
+  function TerminalTileMock({ sessionId }: { sessionId: number }) {
+    const constructed = useRef(false);
+    if (!constructed.current) {
+      constructed.current = true;
+      terminalLifecycle.constructed(sessionId);
+    }
+    useEffect(() => {
+      terminalLifecycle.attached(sessionId);
+      return () => terminalLifecycle.unmounted(sessionId);
+    }, [sessionId]);
+    return <div data-testid={`term-${sessionId}`} />;
+  }
   return {
-    default: ({ sessionId }: { sessionId: number }) => {
-      const constructed = useRef(false);
-      if (!constructed.current) {
-        constructed.current = true;
-        terminalLifecycle.constructed(sessionId);
-      }
-      useEffect(() => {
-        terminalLifecycle.attached(sessionId);
-        return () => terminalLifecycle.unmounted(sessionId);
-      }, [sessionId]);
-      return <div data-testid={`term-${sessionId}`} />;
-    },
+    default: TerminalTileMock,
   };
 });
 

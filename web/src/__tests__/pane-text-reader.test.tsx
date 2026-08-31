@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { vi } from "vitest";
 import PaneTextReader from "../grid/PaneTextReader";
 import type { Server } from "../servers";
@@ -10,10 +10,15 @@ const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboar
 
 function Harness() {
   const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   return (
     <>
-      <button ref={trigger} onClick={() => setOpen(true)}>
+      <button
+        onClick={(event) => {
+          setTrigger(event.currentTarget);
+          setOpen(true);
+        }}
+      >
         Open pane text
       </button>
       {open && (
@@ -23,7 +28,7 @@ function Harness() {
           title="#7 · claude"
           open
           onClose={() => setOpen(false)}
-          trigger={trigger.current}
+          trigger={trigger}
         />
       )}
     </>
@@ -40,7 +45,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   if (clipboardDescriptor) Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
-  else delete (navigator as Navigator & { clipboard?: Clipboard }).clipboard;
+  else Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
 });
 
 test("opens immediately, loads escaped text, and scrolls to newest output", async () => {
@@ -152,7 +157,7 @@ test("missing Clipboard API gives manual-copy guidance", async () => {
 });
 
 test("close aborts, discards the snapshot, and restores trigger focus", async () => {
-  let signal: AbortSignal | undefined;
+  let signal: AbortSignal | null | undefined;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
     signal = init?.signal;
     return Promise.resolve(new Response("secret snapshot"));

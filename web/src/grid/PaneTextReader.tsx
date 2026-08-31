@@ -25,6 +25,12 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   const generationRef = useRef(0);
   const snapshotRef = useRef<string | null>(null);
 
+  const invalidateRequests = useCallback((clearController = false) => {
+    ++generationRef.current;
+    abortRef.current?.abort();
+    if (clearController) abortRef.current = null;
+  }, []);
+
   const load = useCallback(async () => {
     const generation = ++generationRef.current;
     abortRef.current?.abort();
@@ -53,13 +59,11 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
     void load();
     closeRef.current?.focus();
     return () => {
-      ++generationRef.current;
-      abortRef.current?.abort();
-      abortRef.current = null;
+      invalidateRequests(true);
       snapshotRef.current = null;
       trigger?.focus();
     };
-  }, [load, open, trigger]);
+  }, [invalidateRequests, load, open, trigger]);
 
   useLayoutEffect(() => {
     if (scrollGeneration > 0 && contentRef.current) {
@@ -104,8 +108,7 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   }
 
   function close() {
-    ++generationRef.current;
-    abortRef.current?.abort();
+    invalidateRequests();
     snapshotRef.current = null;
     setSnapshot(null);
     setRequestError("");
