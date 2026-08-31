@@ -543,20 +543,7 @@ test("a passive terminal portals Fit into the supplied controls target", () => {
   controls.remove();
 });
 
-test("cancelled phone fit does not claim the shared size", async () => {
-  vi.spyOn(window, "confirm").mockReturnValue(false);
-  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
-  const ws = FakeWebSocket.instances[0];
-  ws.readyState = FakeWebSocket.OPEN;
-  act(() => ws.onopen?.());
-
-  await userEvent.click(screen.getByRole("button", { name: "Fit session to phone" }));
-
-  expect(resizeFrames(ws)).not.toContainEqual(expect.objectContaining({ active: true }));
-});
-
-test("confirmed phone fit sends one active resize and later reflow stays passive", async () => {
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+test("phone fit sends one active resize and later reflow stays passive", async () => {
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} sizePolicy="passive" />);
   const ws = FakeWebSocket.instances[0];
   ws.readyState = FakeWebSocket.OPEN;

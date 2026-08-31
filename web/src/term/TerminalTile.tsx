@@ -412,9 +412,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       aria-label="Fit session to phone"
       disabled={state !== "open"}
       onClick={() => {
-        if (window.confirm("Fit this session to your phone? Other attached clients will reflow.")) {
-          fitSharedSizeRef.current();
-        }
+        fitSharedSizeRef.current();
       }}
     >
       Fit
