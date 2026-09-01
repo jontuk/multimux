@@ -24,6 +24,9 @@ echo "== web =="
 echo "== go build =="
 go build -o "$tmpdir/multimux" .
 
+echo "== release script =="
+./scripts/release_test.sh
+
 echo "== smoke =="
 ./scripts/smoke.sh "$tmpdir/multimux"
 
