@@ -36,9 +36,10 @@ current="$(git rev-parse --abbrev-ref HEAD)"
 echo "release: fetching from origin..."
 git fetch --quiet --tags origin
 
-if ! git merge-base --is-ancestor origin/"$BRANCH" HEAD; then
-  err "local $BRANCH is behind origin/$BRANCH; pull first"
-fi
+local_head="$(git rev-parse HEAD)"
+remote_head="$(git rev-parse origin/"$BRANCH")"
+[ "$local_head" = "$remote_head" ] || \
+  err "local $BRANCH does not match origin/$BRANCH; push or pull first"
 
 # --- compute next minor tag --------------------------------------------------
 latest="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
