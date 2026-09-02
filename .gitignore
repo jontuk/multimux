@@ -5,5 +5,5 @@ web/dist/*
 dist/
 *.log
 .superpowers/
+.worktrees/
 docs/superpowers/plans
-
