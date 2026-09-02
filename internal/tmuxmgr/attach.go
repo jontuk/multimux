@@ -53,6 +53,9 @@ func (m *Manager) Attach(name string) (PTYConn, error) {
 	// Re-assert manual sizing for pre-existing sessions too, so a stale
 	// client from another machine cannot shrink the window under us.
 	_ = m.run("set-option", "-t", ExactTarget(name), "window-size", "manual")
+	// The tmux server survives daemon upgrades, so repair the former "on"
+	// value for already-running sessions as soon as their client reconnects.
+	_ = m.run("set-option", "-s", "extended-keys", "always")
 
 	cmd := exec.Command("tmux", m.baseArgs("attach-session", "-t", ExactTarget(name))...)
 	cmd.Env = append(cmd.Environ(), "TERM=xterm-256color", "LANG=en_US.UTF-8")

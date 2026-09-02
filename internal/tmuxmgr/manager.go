@@ -85,7 +85,12 @@ func (m *Manager) CreateSession(name, dir, command string) error {
 	// browser selection.
 	_ = m.run("set-option", "-t", target, "mouse", "on")
 	_ = m.run("set-option", "-s", "-a", "terminal-features", "xterm*:extkeys")
-	_ = m.run("set-option", "-s", "extended-keys", "on")
+	// The browser sends Shift+Enter as CSI u. "on" only preserves extended
+	// keys while the pane application has requested the protocol; "always"
+	// also preserves them at ordinary prompts and in applications unaware of
+	// extended keys. Claude Code requests the protocol itself, which otherwise
+	// masks this difference.
+	_ = m.run("set-option", "-s", "extended-keys", "always")
 	// OSC 52 passthrough: copy-mode yanks reach the browser clipboard via
 	// xterm.js ClipboardAddon. terminal-features tells tmux the attached
 	// client (xterm.js) supports the clipboard escape sequence.
