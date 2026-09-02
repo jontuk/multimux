@@ -95,7 +95,7 @@ func commandFor(ctx context.Context, a agent, schemaPath string) *exec.Cmd {
 		if cmd.Process == nil {
 			return os.ErrProcessDone
 		}
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		if err := killProcessGroup(cmd.Process.Pid); err != nil {
 			if errors.Is(err, syscall.ESRCH) {
 				return os.ErrProcessDone
 			}
@@ -104,6 +104,13 @@ func commandFor(ctx context.Context, a agent, schemaPath string) *exec.Cmd {
 		return nil
 	}
 	return cmd
+}
+
+func killProcessGroup(processGroupID int) error {
+	if processGroupID <= 1 || processGroupID == syscall.Getpgrp() {
+		return errors.New("unsafe cleanup process group")
+	}
+	return syscall.Kill(-processGroupID, syscall.SIGKILL)
 }
 
 func runAgent(ctx context.Context, a agent, chunk promptChunk) (map[int]bool, error) {
@@ -127,14 +134,26 @@ func runAgent(ctx context.Context, a agent, chunk promptChunk) (map[int]bool, er
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	runErr := cmd.Run()
+	startErr := cmd.Start()
+	if startErr != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, cleanupError(a)
+	}
+	processGroupID := cmd.Process.Pid
+	runErr := cmd.Wait()
+	groupErr := killProcessGroup(processGroupID)
+	if errors.Is(groupErr, syscall.ESRCH) {
+		groupErr = nil
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	if stdout.truncated || stderr.truncated {
 		return nil, errors.New(a.name + " output exceeded limit")
 	}
-	if runErr != nil {
+	if runErr != nil || groupErr != nil {
 		return nil, cleanupError(a)
 	}
 

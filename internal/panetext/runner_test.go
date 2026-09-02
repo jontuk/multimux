@@ -292,6 +292,47 @@ wait
 	}
 }
 
+func TestRunAgentKillsDescendantsAfterSuccessfulExit(t *testing.T) {
+	temp := t.TempDir()
+	childPIDPath := filepath.Join(temp, "child-pid")
+	executable := writeFakeAgent(t, temp, "codex", fmt.Sprintf(`
+cat >/dev/null
+(trap '' HUP; exec sleep 10) </dev/null >/dev/null 2>&1 &
+child=$!
+printf '%%s' "$child" > %s
+printf '%%s' '{"join":[1]}'
+`, shellQuote(childPIDPath)))
+	chunk := promptChunk{prompt: []byte("prompt"), ids: map[int]struct{}{1: {}}}
+
+	joins, err := runAgent(context.Background(), agent{name: "codex", model: "gpt-5.6-luna", path: executable}, chunk)
+	if err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+	if !reflect.DeepEqual(joins, map[int]bool{1: true}) {
+		t.Fatalf("joins = %v, want map[1:true]", joins)
+	}
+	childPID, err := strconv.Atoi(readFile(t, childPIDPath))
+	if err != nil {
+		t.Fatalf("parse child PID: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(childPID, syscall.SIGKILL)
+	})
+	deadline := time.Now().Add(time.Second)
+	for processExists(childPID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if processExists(childPID) {
+		t.Fatalf("child process %d survived successful agent exit", childPID)
+	}
+}
+
+func TestRunAgentRefusesToKillControllerProcessGroup(t *testing.T) {
+	if err := killProcessGroup(syscall.Getpgrp()); err == nil {
+		t.Fatal("killProcessGroup accepted the controller process group")
+	}
+}
+
 func processExists(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
