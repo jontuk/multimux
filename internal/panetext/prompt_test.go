@@ -166,6 +166,18 @@ func TestValidateJoinsAcceptsUnorderedValidList(t *testing.T) {
 	}
 }
 
+func TestValidateJoinsDoesNotEchoModelOutput(t *testing.T) {
+	const secret = "pane_secret_DO_NOT_LEAK"
+	chunk := promptChunk{ids: map[int]struct{}{0: {}}}
+	_, err := validateJoins([]byte(`{"join":[],"`+secret+`":true}`), chunk)
+	if err == nil {
+		t.Fatal("validateJoins accepted an unknown field")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("validation error exposed model output: %q", err)
+	}
+}
+
 func TestApplyJoinsChangesOnlyAuthorizedNewlines(t *testing.T) {
 	raw := []byte("αβ\nγδ\n\n終わり\n")
 	want := []byte("αβ γδ\n 終わり\n")

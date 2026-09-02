@@ -3,6 +3,7 @@ package panetext
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -132,30 +133,27 @@ func validateJoins(body []byte, chunk promptChunk) (map[int]bool, error) {
 
 	var response boundaryResponse
 	if err := decoder.Decode(&response); err != nil {
-		return nil, fmt.Errorf("decode boundary response: %w", err)
+		return nil, errors.New("invalid boundary response JSON")
 	}
 
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return nil, fmt.Errorf("decode boundary response: extra JSON value")
-		}
-		return nil, fmt.Errorf("decode boundary response: trailing data: %w", err)
+		return nil, errors.New("boundary response must contain exactly one JSON object")
 	}
 	if err := validateResponseShape(body); err != nil {
 		return nil, err
 	}
 	if response.Join == nil {
-		return nil, fmt.Errorf("decode boundary response: join must be an array")
+		return nil, errors.New("boundary response join must be an array")
 	}
 
 	joins := make(map[int]bool, len(response.Join))
 	for _, id := range response.Join {
 		if _, ok := chunk.ids[id]; !ok {
-			return nil, fmt.Errorf("boundary response ID %d is outside chunk authority", id)
+			return nil, errors.New("boundary response ID is outside chunk authority")
 		}
 		if joins[id] {
-			return nil, fmt.Errorf("boundary response contains duplicate ID %d", id)
+			return nil, errors.New("boundary response contains a duplicate ID")
 		}
 		joins[id] = true
 	}
@@ -166,34 +164,34 @@ func validateResponseShape(body []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
 	if err != nil {
-		return fmt.Errorf("decode boundary response object: %w", err)
+		return errors.New("invalid boundary response JSON object")
 	}
 	if opening != json.Delim('{') {
-		return fmt.Errorf("decode boundary response: expected object")
+		return errors.New("boundary response must be a JSON object")
 	}
 
 	seenJoin := false
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
-			return fmt.Errorf("decode boundary response field: %w", err)
+			return errors.New("invalid boundary response field")
 		}
 		name, ok := token.(string)
 		if !ok || name != "join" {
-			return fmt.Errorf("decode boundary response: unknown field %q", name)
+			return errors.New("boundary response contains an unknown field")
 		}
 		if seenJoin {
-			return fmt.Errorf("decode boundary response: duplicate join field")
+			return errors.New("boundary response contains a duplicate join field")
 		}
 		seenJoin = true
 
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
-			return fmt.Errorf("decode boundary response join: %w", err)
+			return errors.New("invalid boundary response join field")
 		}
 	}
 	if _, err := decoder.Token(); err != nil {
-		return fmt.Errorf("decode boundary response object: %w", err)
+		return errors.New("invalid boundary response JSON object")
 	}
 	return nil
 }
