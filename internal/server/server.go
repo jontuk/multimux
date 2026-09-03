@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jontuk/multimux/internal/auth"
+	"github.com/jontuk/multimux/internal/panetext"
 	"github.com/jontuk/multimux/internal/store"
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
@@ -24,14 +26,19 @@ type PaneTextCapturer interface {
 	CapturePaneText(name string) ([]byte, error)
 }
 
+type PaneTextCleaner interface {
+	Clean(context.Context, []byte) panetext.Result
+}
+
 type Config struct {
-	Store    *store.Store
-	Auth     *auth.Manager
-	Tmux     *tmuxmgr.Manager
-	PaneText PaneTextCapturer
-	Arbiter  *tmuxmgr.Arbiter
-	WebFS    fs.FS
-	Origins  []string // this daemon's own origins (cookie-auth WS origin check)
+	Store           *store.Store
+	Auth            *auth.Manager
+	Tmux            *tmuxmgr.Manager
+	PaneText        PaneTextCapturer
+	PaneTextCleaner PaneTextCleaner
+	Arbiter         *tmuxmgr.Arbiter
+	WebFS           fs.FS
+	Origins         []string // this daemon's own origins (cookie-auth WS origin check)
 	// NoAuth disables authentication entirely: every route is served to every
 	// caller. Set ONLY by `serve --dev`, which refuses to run against a data
 	// dir holding passkeys or against the default install directory. A daemon
@@ -63,6 +70,9 @@ type Server struct {
 func New(cfg Config) *Server {
 	if cfg.PaneText == nil {
 		cfg.PaneText = cfg.Tmux
+	}
+	if cfg.PaneTextCleaner == nil {
+		cfg.PaneTextCleaner = panetext.New()
 	}
 	s := &Server{cfg: cfg, mux: http.NewServeMux(), hub: NewHub(), reconcileGrace: 10 * time.Second}
 	s.routes()
@@ -111,6 +121,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	s.mux.HandleFunc("GET /api/sessions/{id}/text", s.handleSessionText)
+	s.mux.HandleFunc("POST /api/sessions/{id}/text/clean", s.handleSessionCleanText)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/dismiss", s.handleDismissSession)
 	s.mux.HandleFunc("PUT /api/sessions/{id}/label", s.handleRenameSession)
@@ -138,8 +149,8 @@ func (s *Server) Handler() http.Handler {
 
 func noStorePaneText(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
-			strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/text") {
+		if strings.HasPrefix(r.URL.Path, "/api/sessions/") &&
+			(strings.HasSuffix(r.URL.Path, "/text") || strings.HasSuffix(r.URL.Path, "/text/clean")) {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)

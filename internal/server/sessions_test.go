@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,22 +12,83 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jontuk/multimux/internal/panetext"
 	"github.com/jontuk/multimux/internal/store"
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
 
 type stubPaneTextCapturer struct {
-	text []byte
-	err  error
-	name string
+	mu    sync.Mutex
+	text  []byte
+	err   error
+	name  string
+	calls int
 }
 
 func (s *stubPaneTextCapturer) CapturePaneText(name string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.name = name
+	s.calls++
 	return append([]byte(nil), s.text...), s.err
+}
+
+func (s *stubPaneTextCapturer) observation() (string, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.name, s.calls
+}
+
+type stubPaneTextCleaner struct {
+	mu                 sync.Mutex
+	result             panetext.Result
+	inputs             [][]byte
+	started            chan struct{}
+	startedOnce        sync.Once
+	blockUntilCanceled bool
+	contextErr         error
+}
+
+func (s *stubPaneTextCleaner) Clean(ctx context.Context, raw []byte) panetext.Result {
+	s.mu.Lock()
+	s.inputs = append(s.inputs, append([]byte(nil), raw...))
+	s.mu.Unlock()
+	if s.started != nil {
+		s.startedOnce.Do(func() { close(s.started) })
+	}
+	if s.blockUntilCanceled {
+		<-ctx.Done()
+		s.mu.Lock()
+		s.contextErr = ctx.Err()
+		s.mu.Unlock()
+	}
+	return s.result
+}
+
+func (s *stubPaneTextCleaner) observation() ([][]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inputs := make([][]byte, len(s.inputs))
+	for i := range s.inputs {
+		inputs[i] = append([]byte(nil), s.inputs[i]...)
+	}
+	return inputs, s.contextErr
+}
+
+func newPaneTextCleanTestServer(t *testing.T, capture *stubPaneTextCapturer, cleaner *stubPaneTextCleaner) (*Server, *store.Store, string) {
+	t.Helper()
+	cfg, st, am := newTestServerCfg(t, true)
+	cfg.PaneText = capture
+	cfg.PaneTextCleaner = cleaner
+	token, err := am.CreateSession("UA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(cfg), st, token
 }
 
 func newPaneTextTestServer(t *testing.T, text []byte, captureErr error) (*Server, *store.Store, *stubPaneTextCapturer, string) {
@@ -147,6 +210,196 @@ func TestSessionTextInternalFailureIsContentSafe(t *testing.T) {
 	logged := logs.String()
 	if !strings.Contains(logged, `"msg":"pane text capture failed"`) || !strings.Contains(logged, `"session_id":`) {
 		t.Fatalf("diagnostic context missing: %s", logged)
+	}
+}
+
+func TestSessionCleanTextSuccessUsesStoredTmuxNameAndReturnsMetadata(t *testing.T) {
+	raw := []byte("wrapped pane\ntext\n")
+	capture := &stubPaneTextCapturer{text: raw}
+	cleaner := &stubPaneTextCleaner{result: panetext.Result{
+		Text:      "wrapped pane text\n",
+		Processor: "codex",
+		Model:     "gpt-5.6-luna",
+		Warning:   "cleanup note",
+	}}
+	s, st, token := newPaneTextCleanTestServer(t, capture, cleaner)
+	sess := runningSession(t, st)
+
+	w := do(t, s, http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean?tmuxName=attacker", sess.ID), token)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("response status = %d, body %q", w.Code, w.Body.String())
+	}
+	if got, want := w.Body.String(), `{"text":"wrapped pane text\n","processor":"codex","model":"gpt-5.6-luna","warning":"cleanup note"}`+"\n"; got != want {
+		t.Fatalf("response body = %q, want %q", got, want)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	name, calls := capture.observation()
+	if name != sess.TmuxName || calls != 1 {
+		t.Fatalf("capture = (%q, %d calls), want (%q, 1 call)", name, calls, sess.TmuxName)
+	}
+	inputs, _ := cleaner.observation()
+	if len(inputs) != 1 || !bytes.Equal(inputs[0], raw) {
+		t.Fatalf("cleaner inputs = %q, want one exact input %q", inputs, raw)
+	}
+}
+
+func TestSessionCleanTextRawFallbackIsStillSuccessfulJSON(t *testing.T) {
+	raw := []byte("unaltered\npane\n")
+	capture := &stubPaneTextCapturer{text: raw}
+	cleaner := &stubPaneTextCleaner{result: panetext.Result{
+		Text:      string(raw),
+		Processor: "raw",
+		Warning:   "Automatic cleanup unavailable. Showing raw pane text.",
+	}}
+	s, st, token := newPaneTextCleanTestServer(t, capture, cleaner)
+	sess := runningSession(t, st)
+
+	w := do(t, s, http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), token)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("response status = %d, body %q", w.Code, w.Body.String())
+	}
+	if got, want := w.Body.String(), `{"text":"unaltered\npane\n","processor":"raw","model":"","warning":"Automatic cleanup unavailable. Showing raw pane text."}`+"\n"; got != want {
+		t.Fatalf("response body = %q, want %q", got, want)
+	}
+}
+
+func TestSessionCleanTextRequiresAuthWithoutDoingWork(t *testing.T) {
+	capture := &stubPaneTextCapturer{text: []byte("secret")}
+	cleaner := &stubPaneTextCleaner{result: panetext.Result{Text: "must not run"}}
+	s, st, _ := newPaneTextCleanTestServer(t, capture, cleaner)
+	sess := runningSession(t, st)
+
+	w := do(t, s, http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), "")
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("unauthenticated Cache-Control = %q", got)
+	}
+	if _, calls := capture.observation(); calls != 0 {
+		t.Fatalf("unauthenticated capture calls = %d", calls)
+	}
+	if inputs, _ := cleaner.observation(); len(inputs) != 0 {
+		t.Fatalf("unauthenticated cleaner inputs = %q", inputs)
+	}
+}
+
+func TestSessionCleanTextRejectsInvalidOrUnavailableSessionsBeforeCleaning(t *testing.T) {
+	capture := &stubPaneTextCapturer{text: []byte("unused")}
+	cleaner := &stubPaneTextCleaner{result: panetext.Result{Text: "must not run"}}
+	s, st, token := newPaneTextCleanTestServer(t, capture, cleaner)
+
+	for _, tc := range []struct {
+		name string
+		path string
+		code int
+		body string
+	}{
+		{name: "malformed id", path: "/api/sessions/not-a-number/text/clean", code: http.StatusBadRequest, body: `{"error":"bad id"}` + "\n"},
+		{name: "missing session", path: "/api/sessions/999/text/clean", code: http.StatusNotFound, body: `{"error":"not found"}` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := do(t, s, http.MethodPost, tc.path, token)
+			if w.Code != tc.code || w.Body.String() != tc.body {
+				t.Fatalf("response = %d %q, want %d %q", w.Code, w.Body.String(), tc.code, tc.body)
+			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+		})
+	}
+
+	sess := runningSession(t, st)
+	if err := st.SetSessionStatus(sess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	w := do(t, s, http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), token)
+	if got, want := w.Body.String(), `{"error":"session is no longer available"}`+"\n"; w.Code != http.StatusConflict || got != want {
+		t.Fatalf("ended response = %d %q, want 409 %q", w.Code, got, want)
+	}
+	if _, calls := capture.observation(); calls != 0 {
+		t.Fatalf("capture calls for rejected rows = %d", calls)
+	}
+	if inputs, _ := cleaner.observation(); len(inputs) != 0 {
+		t.Fatalf("cleaner inputs for rejected rows = %q", inputs)
+	}
+}
+
+func TestSessionCleanTextMapsCaptureFailuresWithoutCleaning(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		code int
+		body string
+	}{
+		{name: "tmux disappeared", err: tmuxmgr.ErrSessionUnavailable, code: http.StatusConflict, body: `{"error":"session is no longer available"}` + "\n"},
+		{name: "capture failed", err: errors.New("capture command failed"), code: http.StatusInternalServerError, body: `{"error":"could not capture pane text"}` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capture := &stubPaneTextCapturer{err: tc.err}
+			cleaner := &stubPaneTextCleaner{result: panetext.Result{Text: "must not run"}}
+			s, st, token := newPaneTextCleanTestServer(t, capture, cleaner)
+			sess := runningSession(t, st)
+
+			w := do(t, s, http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), token)
+
+			if w.Code != tc.code || w.Body.String() != tc.body {
+				t.Fatalf("response = %d %q, want %d %q", w.Code, w.Body.String(), tc.code, tc.body)
+			}
+			if _, calls := capture.observation(); calls != 1 {
+				t.Fatalf("capture calls = %d, want 1", calls)
+			}
+			if inputs, _ := cleaner.observation(); len(inputs) != 0 {
+				t.Fatalf("cleaner inputs after capture failure = %q", inputs)
+			}
+		})
+	}
+}
+
+func TestSessionCleanTextPropagatesCancellationAndReturnsPromptly(t *testing.T) {
+	capture := &stubPaneTextCapturer{text: []byte("pane text")}
+	cleaner := &stubPaneTextCleaner{
+		result:             panetext.Result{Text: "fallback", Processor: "raw"},
+		started:            make(chan struct{}),
+		blockUntilCanceled: true,
+	}
+	s, st, token := newPaneTextCleanTestServer(t, capture, cleaner)
+	sess := runningSession(t, st)
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), nil).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		s.Handler().ServeHTTP(w, r)
+		close(done)
+	}()
+
+	select {
+	case <-cleaner.started:
+	case <-time.After(time.Second):
+		t.Fatal("cleaner did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not return after request cancellation")
+	}
+	inputs, contextErr := cleaner.observation()
+	if len(inputs) != 1 || !bytes.Equal(inputs[0], []byte("pane text")) {
+		t.Fatalf("cleaner inputs = %q", inputs)
+	}
+	if !errors.Is(contextErr, context.Canceled) {
+		t.Fatalf("cleaner context error = %v, want context.Canceled", contextErr)
 	}
 }
 
