@@ -91,6 +91,11 @@ func (m *Manager) CreateSession(name, dir, command string) error {
 	// extended keys. Claude Code requests the protocol itself, which otherwise
 	// masks this difference.
 	_ = m.run("set-option", "-s", "extended-keys", "always")
+	// tmux defaults extended-keys-format to "xterm", which re-encodes the CSI u
+	// the browser sent as the older CSI 27;mods;key~ form before handing it to
+	// the pane. Pin the format so applications see the sequence xterm.js
+	// actually produced, whatever the user's own tmux.conf says.
+	_ = m.run("set-option", "-s", "extended-keys-format", "csi-u")
 	// OSC 52 passthrough: copy-mode yanks reach the browser clipboard via
 	// xterm.js ClipboardAddon. terminal-features tells tmux the attached
 	// client (xterm.js) supports the clipboard escape sequence.

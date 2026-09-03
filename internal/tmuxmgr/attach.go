@@ -55,7 +55,11 @@ func (m *Manager) Attach(name string) (PTYConn, error) {
 	_ = m.run("set-option", "-t", ExactTarget(name), "window-size", "manual")
 	// The tmux server survives daemon upgrades, so repair the former "on"
 	// value for already-running sessions as soon as their client reconnects.
+	// extended-keys-format goes with it: tmux's "xterm" default rewrites the
+	// browser's CSI u into the older CSI 27;mods;key~ form on the way to the
+	// pane, so both options have to hold for Shift+Enter to arrive intact.
 	_ = m.run("set-option", "-s", "extended-keys", "always")
+	_ = m.run("set-option", "-s", "extended-keys-format", "csi-u")
 
 	cmd := exec.Command("tmux", m.baseArgs("attach-session", "-t", ExactTarget(name))...)
 	cmd.Env = append(cmd.Environ(), "TERM=xterm-256color", "LANG=en_US.UTF-8")
