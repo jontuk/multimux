@@ -192,7 +192,13 @@ test("orders mobile actions as New, Text, Fit, Compose, font, Settings", () => {
 });
 
 test("mobile Text targets the selection without reconnecting its terminal", async () => {
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("mobile snapshot"));
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).endsWith("/api/sessions/1/text/clean"))
+      return new Response(
+        JSON.stringify({ text: "mobile snapshot", processor: "claude", model: "sonnet-5", warning: "" }),
+      );
+    return new Response("[]");
+  });
   render(
     <MobileSessionView
       servers={[local]}
@@ -203,16 +209,30 @@ test("mobile Text targets the selection without reconnecting its terminal", asyn
     />,
   );
   const textButton = screen.getByRole("button", { name: "Read text from session 1" });
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(terminalHandles.size).toBe(1);
+  expect(terminalAttached).toHaveBeenCalledTimes(1);
+  expect(unmounted).not.toHaveBeenCalled();
   await userEvent.click(textButton);
   expect(await screen.findByRole("dialog", { name: "Pane text for #1 · claude" })).toBeInTheDocument();
   expect(screen.getByText("mobile snapshot")).toBeInTheDocument();
-  expect(fetchMock.mock.calls[0][0]).toBe("https://local.test/api/sessions/1/text");
+  const cleanFetches = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/sessions/1/text/clean"));
+  expect(cleanFetches()).toHaveLength(1);
+  expect(cleanFetches()[0][0]).toBe("https://local.test/api/sessions/1/text/clean");
+  expect(cleanFetches()[0][1]).toMatchObject({ method: "POST" });
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
   expect(terminalHandles.size).toBe(1);
   expect(terminalAttached).toHaveBeenCalledTimes(1);
   expect(unmounted).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(cleanFetches()).toHaveLength(2);
+  expect(cleanFetches()[1][1]).toMatchObject({ method: "POST" });
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+  expect(terminalHandles.size).toBe(1);
+  expect(terminalAttached).toHaveBeenCalledTimes(1);
+  expect(unmounted).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
   expect(terminalHandles.size).toBe(1);
   expect(terminalAttached).toHaveBeenCalledTimes(1);
   expect(unmounted).not.toHaveBeenCalled();
