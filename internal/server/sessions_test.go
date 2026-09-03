@@ -333,6 +333,33 @@ func TestSessionCleanTextRejectsInvalidOrUnavailableSessionsBeforeCleaning(t *te
 	}
 }
 
+func TestSessionCleanTextMapsStoreFailureWithoutDoingWork(t *testing.T) {
+	capture := &stubPaneTextCapturer{text: []byte("unused")}
+	cleaner := &stubPaneTextCleaner{result: panetext.Result{Text: "must not run"}}
+	s, st, _ := newPaneTextCleanTestServer(t, capture, cleaner)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/sessions/1/text/clean", nil)
+	r.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	s.handleSessionCleanText(w, r)
+
+	if got, want := w.Body.String(), `{"error":"could not load session"}`+"\n"; w.Code != http.StatusInternalServerError || got != want {
+		t.Fatalf("response = %d %q, want 500 %q", w.Code, got, want)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if _, calls := capture.observation(); calls != 0 {
+		t.Fatalf("capture calls after store failure = %d", calls)
+	}
+	if inputs, _ := cleaner.observation(); len(inputs) != 0 {
+		t.Fatalf("cleaner inputs after store failure = %q", inputs)
+	}
+}
+
 func TestSessionCleanTextMapsCaptureFailuresWithoutCleaning(t *testing.T) {
 	for _, tc := range []struct {
 		name string
