@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jontuk/multimux/internal/gitinfo"
 	"github.com/jontuk/multimux/internal/store"
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
@@ -676,6 +677,125 @@ func TestCheckGitInfoBroadcastsOnChange(t *testing.T) {
 	}
 	if evs := drain(); len(evs) != 1 || evs[0] != "git_changed" {
 		t.Fatalf("changed tick broadcast %v, want [git_changed]", evs)
+	}
+}
+
+func TestListSessionsSkipsDeadDirs(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	// Set up two distinct git repos.
+	deadRepo := t.TempDir()
+	liveRepo := t.TempDir()
+	for _, repo := range []string{deadRepo, liveRepo} {
+		for _, args := range [][]string{
+			{"-C", repo, "init"},
+			{"-C", repo, "remote", "add", "origin", "git@github.com:org/repo.git"},
+			{"-C", repo, "checkout", "-b", "main"},
+		} {
+			if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+	}
+
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	deadSess, _ := st.CreateSession(tool.ID, deadRepo)
+	if err := st.SetSessionStatus(deadSess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	liveSess, _ := st.CreateSession(tool.ID, liveRepo)
+
+	// Also add a dead session sharing the live directory.
+	sharedDeadSess, _ := st.CreateSession(tool.ID, liveRepo)
+	if err := st.SetSessionStatus(sharedDeadSess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(t, s, "GET", "/api/sessions", token)
+	if w.Code != 200 {
+		t.Fatalf("list = %d: %s", w.Code, w.Body.String())
+	}
+	var got []struct {
+		ID      int64  `json:"id"`
+		Dir     string `json:"dir"`
+		Status  string `json:"status"`
+		RepoURL string `json:"repoUrl"`
+		Branch  string `json:"branch"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+
+	// deadRepo has no running session: git resolution must be skipped.
+	if got[0].ID != deadSess.ID || got[0].RepoURL != "" || got[0].Branch != "" {
+		t.Errorf("dead-only repo session = (%q, %q), want empty", got[0].RepoURL, got[0].Branch)
+	}
+	// liveRepo has a running session: git resolution runs.
+	if got[1].ID != liveSess.ID || got[1].RepoURL != "https://github.com/org/repo" || got[1].Branch != "main" {
+		t.Errorf("live repo session = (%q, %q), want github/main", got[1].RepoURL, got[1].Branch)
+	}
+	// sharedDeadSess shares liveRepo: receives resolved info from the live directory.
+	if got[2].ID != sharedDeadSess.ID || got[2].RepoURL != "https://github.com/org/repo" || got[2].Branch != "main" {
+		t.Errorf("shared dead repo session = (%q, %q), want github/main", got[2].RepoURL, got[2].Branch)
+	}
+
+	// Ensure deadRepo was never cached in gitSeen.
+	s.gitMu.RLock()
+	defer s.gitMu.RUnlock()
+	if _, ok := s.gitSeen[deadRepo]; ok {
+		t.Errorf("deadRepo was cached in gitSeen, want skipped")
+	}
+	if _, ok := s.gitSeen[liveRepo]; !ok {
+		t.Errorf("liveRepo missing from gitSeen cache")
+	}
+}
+
+func TestListSessionsServesFromCache(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	repo := t.TempDir()
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	st.CreateSession(tool.ID, repo)
+
+	// Pre-populate the cache with custom info.
+	s.gitMu.Lock()
+	s.gitSeen = map[string]dirGitInfo{
+		repo: {
+			url: "https://github.com/custom/cache",
+			Status: gitinfo.Status{
+				Branch: "cached-branch",
+				State:  "clean",
+			},
+		},
+	}
+	s.gitMu.Unlock()
+
+	// GET /api/sessions should serve directly from the cache without running git.
+	w := do(t, s, "GET", "/api/sessions", token)
+	if w.Code != 200 {
+		t.Fatalf("list = %d: %s", w.Code, w.Body.String())
+	}
+	var got []struct {
+		RepoURL  string `json:"repoUrl"`
+		Branch   string `json:"branch"`
+		GitState string `json:"gitState"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].RepoURL != "https://github.com/custom/cache" || got[0].Branch != "cached-branch" || got[0].GitState != "clean" {
+		t.Errorf("got cached values (%q, %q, %q), want custom cache values",
+			got[0].RepoURL, got[0].Branch, got[0].GitState)
 	}
 }
 

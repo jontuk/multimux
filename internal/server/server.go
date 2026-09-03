@@ -51,9 +51,11 @@ type Server struct {
 	// exists, and a reconcile tick in that window must not race it.
 	reconcileGrace time.Duration
 
-	// gitSeen is the per-dir git state as of the last CheckGitInfo tick.
-	// Touched only by the maintenance ticker goroutine; nil until the baseline
-	// check runs.
+	// gitMu guards gitSeen.
+	gitMu sync.RWMutex
+
+	// gitSeen is the per-dir git state as of the last CheckGitInfo tick or
+	// on-demand resolution. Guarded by gitMu.
 	gitSeen map[string]dirGitInfo
 
 	buildIDOnce  sync.Once

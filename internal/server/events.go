@@ -160,6 +160,10 @@ func (s *Server) StartBackground() {
 		slog.Error("startup reconcile", "err", err)
 	}
 	go func() {
+		// Run initial git check immediately so cache is warm without waiting 5s.
+		if err := s.CheckGitInfo(); err != nil {
+			slog.Error("startup git check", "err", err)
+		}
 		for range time.Tick(5 * time.Second) {
 			if _, err := s.Reconcile(); err != nil {
 				slog.Error("reconcile", "err", err)

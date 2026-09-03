@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 )
 
 func TestWebURL(t *testing.T) {
@@ -176,5 +177,30 @@ func TestRepoWebURL(t *testing.T) {
 	run("remote", "add", "origin", "git@github.com:org/repo.git")
 	if got, want := RepoWebURL(dir), "https://github.com/org/repo"; got != want {
 		t.Errorf("with origin: got %q, want %q", got, want)
+	}
+}
+
+func TestGitTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// Create a fake git that hangs sleeping 2 seconds.
+	script := "#!/bin/sh\nsleep 2\n"
+	if err := os.WriteFile(dir+"/git", []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	orig := gitTimeout
+	gitTimeout = 50 * time.Millisecond
+	defer func() { gitTimeout = orig }()
+
+	start := time.Now()
+	_, err := gitOutput(dir, "status")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error on timed out git call, got nil")
+	}
+	if elapsed >= 1500*time.Millisecond {
+		t.Fatalf("gitOutput took %v, want under 1.5s", elapsed)
 	}
 }
