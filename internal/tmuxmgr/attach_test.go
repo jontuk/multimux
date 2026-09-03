@@ -58,10 +58,10 @@ func TestAttachForwardsExtendedKeyToUnawareApplication(t *testing.T) {
 	}
 	// tmux's own default, and what a server started before multimux pinned the
 	// format is left holding. Set it explicitly so the test does not pass just
-	// because the developer's tmux.conf already chose csi-u.
-	if err := m.run("set-option", "-s", "extended-keys-format", "xterm"); err != nil {
-		t.Fatal(err)
-	}
+	// because the developer's tmux.conf already chose csi-u. tmux only grew the
+	// option in 3.5 -- older builds emit CSI u unconditionally, so there is
+	// nothing to pin there and nothing to assert.
+	hasFormat := m.run("set-option", "-s", "extended-keys-format", "xterm") == nil
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		if _, err := os.Stat(readyPath); err == nil {
@@ -85,12 +85,14 @@ func TestAttachForwardsExtendedKeyToUnawareApplication(t *testing.T) {
 	if got := strings.TrimSpace(string(option)); got != "always" {
 		t.Fatalf("extended-keys after Attach = %q, want always", got)
 	}
-	format, err := exec.Command("tmux", m.baseArgs("show-options", "-s", "-v", "extended-keys-format")...).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(string(format)); got != "csi-u" {
-		t.Fatalf("extended-keys-format after Attach = %q, want csi-u", got)
+	if hasFormat {
+		format, err := exec.Command("tmux", m.baseArgs("show-options", "-s", "-v", "extended-keys-format")...).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(format)); got != "csi-u" {
+			t.Fatalf("extended-keys-format after Attach = %q, want csi-u", got)
+		}
 	}
 	const shiftEnter = "\x1b[13;2u"
 	if _, err := conn.Write([]byte(shiftEnter + "abcdefg")); err != nil {
