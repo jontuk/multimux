@@ -182,16 +182,19 @@ func TestRepoWebURL(t *testing.T) {
 
 func TestGitTimeout(t *testing.T) {
 	dir := t.TempDir()
-	// Create a fake git that hangs sleeping 2 seconds.
-	script := "#!/bin/sh\nsleep 2\n"
+	// A fake git that hangs for 2 seconds in a background child, so the sleep
+	// survives the kill still holding the inherited output pipe -- the shape a
+	// real git leaves behind when it has started an fsmonitor daemon. Killing
+	// the git process alone does not unblock Output; only WaitDelay does.
+	script := "#!/bin/sh\nsleep 2 &\nwait\n"
 	if err := os.WriteFile(dir+"/git", []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	orig := gitTimeout
-	gitTimeout = 50 * time.Millisecond
-	defer func() { gitTimeout = orig }()
+	origTimeout, origDelay := gitTimeout, gitWaitDelay
+	gitTimeout, gitWaitDelay = 50*time.Millisecond, 50*time.Millisecond
+	defer func() { gitTimeout, gitWaitDelay = origTimeout, origDelay }()
 
 	start := time.Now()
 	_, err := gitOutput(dir, "status")
@@ -200,7 +203,8 @@ func TestGitTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on timed out git call, got nil")
 	}
-	if elapsed >= 1500*time.Millisecond {
-		t.Fatalf("gitOutput took %v, want under 1.5s", elapsed)
+	// Well under the script's 2s: the call must not wait out the orphan.
+	if elapsed >= time.Second {
+		t.Fatalf("gitOutput took %v, want under 1s", elapsed)
 	}
 }

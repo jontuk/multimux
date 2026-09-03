@@ -17,6 +17,13 @@ import (
 // tests can verify timeout behaviour without waiting out the full duration.
 var gitTimeout = 10 * time.Second
 
+// gitWaitDelay bounds the wait after the timeout kills git. Killing git does not
+// kill its children, and one of them may hold the output pipe open -- git spawns
+// an fsmonitor daemon on repos configured for it, and credential helpers outlive
+// the parent too. Output only returns once that pipe closes, so without a delay
+// the timeout above buys nothing. Also a var so tests need not wait it out.
+var gitWaitDelay = time.Second
+
 // gitOutput executes a read-only git command against dir with a bounded timeout.
 // --no-optional-locks stops git taking .git/index.lock to write back a refreshed
 // index: this package polls every few seconds, and on a large repo that lock is
@@ -25,7 +32,9 @@ var gitTimeout = 10 * time.Second
 func gitOutput(dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-C", dir}, args...)...).Output()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-C", dir}, args...)...)
+	cmd.WaitDelay = gitWaitDelay
+	return cmd.Output()
 }
 
 // RepoWebURL returns the web URL for dir's origin remote, or "" when dir is
