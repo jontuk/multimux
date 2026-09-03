@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jontuk/multimux/internal/auth"
 	"github.com/jontuk/multimux/internal/panetext"
 	"github.com/jontuk/multimux/internal/store"
 	"github.com/jontuk/multimux/internal/tmuxmgr"
@@ -289,6 +290,91 @@ func TestSessionCleanTextRequiresAuthWithoutDoingWork(t *testing.T) {
 	}
 	if inputs, _ := cleaner.observation(); len(inputs) != 0 {
 		t.Fatalf("unauthenticated cleaner inputs = %q", inputs)
+	}
+}
+
+func TestSessionCleanTextCookieAuthRequiresOwnOrigin(t *testing.T) {
+	const ownOrigin = "https://localhost:8686"
+	for _, tc := range []struct {
+		name       string
+		origin     string
+		wantStatus int
+		wantBody   string
+		wantWork   bool
+	}{
+		{
+			name:       "own origin succeeds",
+			origin:     ownOrigin,
+			wantStatus: http.StatusOK,
+			wantBody:   `{"text":"clean","processor":"raw","model":"","warning":""}` + "\n",
+			wantWork:   true,
+		},
+		{
+			name:       "foreign origin is forbidden",
+			origin:     "https://evil.example",
+			wantStatus: http.StatusForbidden,
+			wantBody:   `{"error":"forbidden origin"}` + "\n",
+		},
+		{
+			name:       "absent origin is forbidden",
+			wantStatus: http.StatusForbidden,
+			wantBody:   `{"error":"forbidden origin"}` + "\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capture := &stubPaneTextCapturer{text: []byte("pane")}
+			cleaner := &stubPaneTextCleaner{result: panetext.Result{Text: "clean", Processor: "raw"}}
+			s, st, cookie := newPaneTextCleanTestServer(t, capture, cleaner)
+			sess := runningSession(t, st)
+			r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), nil)
+			r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: cookie})
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			w := httptest.NewRecorder()
+
+			s.Handler().ServeHTTP(w, r)
+
+			if w.Code != tc.wantStatus || w.Body.String() != tc.wantBody {
+				t.Fatalf("response = %d %q, want %d %q", w.Code, w.Body.String(), tc.wantStatus, tc.wantBody)
+			}
+			if got := w.Header().Get("Content-Type"); got != "application/json" {
+				t.Fatalf("Content-Type = %q", got)
+			}
+			if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+				t.Fatalf("Access-Control-Allow-Origin = %q", got)
+			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+			_, captureCalls := capture.observation()
+			cleanerInputs, _ := cleaner.observation()
+			if tc.wantWork {
+				if captureCalls != 1 || len(cleanerInputs) != 1 {
+					t.Fatalf("successful work = %d captures, %d cleaner calls; want one each", captureCalls, len(cleanerInputs))
+				}
+				return
+			}
+			if captureCalls != 0 || len(cleanerInputs) != 0 {
+				t.Fatalf("rejected work = %d captures, %d cleaner calls; want zero", captureCalls, len(cleanerInputs))
+			}
+		})
+	}
+}
+
+func TestNewDefaultsPaneTextCleaner(t *testing.T) {
+	cfg, _, _ := newTestServerCfg(t, true)
+	if cfg.PaneTextCleaner != nil {
+		t.Fatal("test precondition failed: PaneTextCleaner is already configured")
+	}
+
+	s := New(cfg)
+
+	if s.cfg.PaneTextCleaner == nil {
+		t.Fatal("New left PaneTextCleaner nil")
+	}
+	if _, ok := s.cfg.PaneTextCleaner.(*panetext.Cleaner); !ok {
+		t.Fatalf("default PaneTextCleaner = %T, want *panetext.Cleaner", s.cfg.PaneTextCleaner)
 	}
 }
 
