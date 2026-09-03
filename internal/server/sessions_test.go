@@ -552,6 +552,7 @@ func TestSessionCleanTextCancelsCaptureAndSkipsCleaner(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), nil).WithContext(ctx)
 	r.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
+	logs := captureLogs(t)
 	done := make(chan struct{})
 	go func() {
 		s.Handler().ServeHTTP(w, r)
@@ -569,8 +570,8 @@ func TestSessionCleanTextCancelsCaptureAndSkipsCleaner(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("handler did not return after request cancellation")
 	}
-	if got, want := w.Body.String(), `{"error":"could not capture pane text"}`+"\n"; w.Code != http.StatusInternalServerError || got != want {
-		t.Fatalf("response = %d %q, want 500 %q", w.Code, got, want)
+	if w.Code == http.StatusInternalServerError || w.Body.Len() != 0 {
+		t.Fatalf("canceled response = %d %q, want no 500 or error body", w.Code, w.Body.String())
 	}
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q", got)
@@ -580,6 +581,12 @@ func TestSessionCleanTextCancelsCaptureAndSkipsCleaner(t *testing.T) {
 	}
 	if inputs, _ := cleaner.observation(); len(inputs) != 0 {
 		t.Fatalf("cleaner inputs after canceled capture = %q", inputs)
+	}
+	logged := logs.String()
+	for _, unwanted := range []string{`"level":"ERROR"`, `"msg":"pane text capture failed"`, `"status":500`} {
+		if strings.Contains(logged, unwanted) {
+			t.Fatalf("canceled capture logged %q: %s", unwanted, logged)
+		}
 	}
 }
 
