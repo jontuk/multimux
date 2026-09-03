@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -323,7 +324,9 @@ func TestCleanerLimitsConcurrentChunks(t *testing.T) {
 func TestCleanerLimitsConcurrentClassificationsAcrossCleanCalls(t *testing.T) {
 	raw := []byte("wrapped\nprose\n")
 	release := make(chan struct{})
+	defer close(release)
 	started := make(chan struct{}, 3)
+	finished := make(chan struct{}, 3)
 	var active atomic.Int32
 	var maximum atomic.Int32
 	cleaner := testCleaner(t, "codex", func(context.Context, agent, promptChunk) (map[int]bool, error) {
@@ -337,24 +340,29 @@ func TestCleanerLimitsConcurrentClassificationsAcrossCleanCalls(t *testing.T) {
 		started <- struct{}{}
 		<-release
 		active.Add(-1)
+		finished <- struct{}{}
 		return map[int]bool{}, nil
 	})
 
 	results := make(chan Result, 3)
-	for range 3 {
+	for range workerLimit {
 		go func() {
 			results <- cleaner.Clean(context.Background(), raw)
 		}()
 	}
 	waitForSignal(t, started, "first Clean classifier to start")
 	waitForSignal(t, started, "second Clean classifier to start")
-	select {
-	case <-started:
-		close(release)
-		t.Fatal("third Clean classifier started while two shared slots were occupied")
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(release)
+	go func() {
+		results <- cleaner.Clean(context.Background(), raw)
+	}()
+	waitForCondition(t, func() bool {
+		return cleaner.classificationWaiters.Load() == 1
+	}, "third Clean to wait for a shared classification slot")
+	release <- struct{}{}
+	waitForSignal(t, finished, "one of the first two Clean classifiers to finish")
+	waitForSignal(t, started, "third Clean classifier to start after a shared slot was released")
+	release <- struct{}{}
+	release <- struct{}{}
 
 	for range 3 {
 		select {
@@ -374,6 +382,8 @@ func TestCleanerLimitsConcurrentClassificationsAcrossCleanCalls(t *testing.T) {
 func TestCleanerCanceledWhileWaitingForSharedSlotSkipsClassifier(t *testing.T) {
 	raw := []byte("wrapped\nprose\n")
 	release := make(chan struct{})
+	releaseAll := sync.OnceFunc(func() { close(release) })
+	defer releaseAll()
 	occupied := make(chan struct{}, workerLimit)
 	thirdStarted := make(chan struct{}, 1)
 	type callKey struct{}
@@ -399,17 +409,14 @@ func TestCleanerCanceledWhileWaitingForSharedSlotSkipsClassifier(t *testing.T) {
 	}
 
 	queuedCtx, cancel := context.WithCancel(context.WithValue(context.Background(), callKey{}, "queued"))
+	defer cancel()
 	queuedResult := make(chan Result, 1)
 	go func() {
 		queuedResult <- cleaner.Clean(queuedCtx, raw)
 	}()
-	select {
-	case <-thirdStarted:
-		cancel()
-		close(release)
-		t.Fatal("queued Clean called its classifier while both shared slots were occupied")
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitForCondition(t, func() bool {
+		return cleaner.classificationWaiters.Load() == 1
+	}, "third Clean to wait for a shared classification slot")
 	cancel()
 
 	select {
@@ -419,17 +426,18 @@ func TestCleanerCanceledWhileWaitingForSharedSlotSkipsClassifier(t *testing.T) {
 			t.Fatalf("canceled queued Clean() = %#v, want raw fallback %#v", got, want)
 		}
 	case <-time.After(time.Second):
-		close(release)
 		t.Fatal("canceled queued Clean did not return promptly")
 	}
 	select {
 	case <-thirdStarted:
-		close(release)
 		t.Fatal("canceled queued Clean called its classifier")
 	default:
 	}
+	if got := cleaner.classificationWaiters.Load(); got != 0 {
+		t.Fatalf("classification waiters after queued Clean cancellation = %d, want 0", got)
+	}
 
-	close(release)
+	releaseAll()
 	for range workerLimit {
 		select {
 		case got := <-results:
@@ -439,6 +447,81 @@ func TestCleanerCanceledWhileWaitingForSharedSlotSkipsClassifier(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("slot-occupying Clean calls did not finish after release")
 		}
+	}
+}
+
+func TestCleanerAcquireClassificationSlotStopsWhenQueuedContextIsCanceled(t *testing.T) {
+	cleaner := New()
+	firstRelease, ok := cleaner.acquireClassificationSlot(context.Background())
+	if !ok {
+		t.Fatal("first classification slot acquisition failed")
+	}
+	secondRelease, ok := cleaner.acquireClassificationSlot(context.Background())
+	if !ok {
+		firstRelease()
+		t.Fatal("second classification slot acquisition failed")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	doneObserved := make(chan struct{})
+	observedCtx := &doneObservedContext{
+		Context:  ctx,
+		observed: doneObserved,
+	}
+	type acquisition struct {
+		release func()
+		ok      bool
+	}
+	result := make(chan acquisition, 1)
+	go func() {
+		release, acquired := cleaner.acquireClassificationSlot(observedCtx)
+		result <- acquisition{release: release, ok: acquired}
+	}()
+	waitForSignal(t, doneObserved, "queued acquisition to evaluate its cancellation channel")
+	cancel()
+
+	select {
+	case got := <-result:
+		if got.ok || got.release != nil {
+			if got.release != nil {
+				got.release()
+			}
+			firstRelease()
+			secondRelease()
+			t.Fatalf("canceled queued acquisition = %#v, want no slot", got)
+		}
+	case <-time.After(time.Second):
+		firstRelease()
+		secondRelease()
+		t.Fatal("canceled queued acquisition did not return promptly")
+	}
+	if got := len(cleaner.classificationSlots); got != workerLimit {
+		firstRelease()
+		secondRelease()
+		t.Fatalf("occupied classification slots after queued cancellation = %d, want %d", got, workerLimit)
+	}
+
+	firstRelease()
+	secondRelease()
+	if got := len(cleaner.classificationSlots); got != 0 {
+		t.Fatalf("occupied classification slots after release = %d, want 0", got)
+	}
+}
+
+func TestCleanerAcquireClassificationSlotAlreadyCanceledLeavesSlotAvailable(t *testing.T) {
+	cleaner := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	release, ok := cleaner.acquireClassificationSlot(ctx)
+	if release != nil {
+		release()
+	}
+	if ok || release != nil {
+		t.Fatalf("already-canceled acquisition = (non-nil release: %t, acquired: %t), want (false, false)", release != nil, ok)
+	}
+	if got := len(cleaner.classificationSlots); got != 0 {
+		t.Fatalf("occupied classification slots after already-canceled acquisition = %d, want 0", got)
 	}
 }
 
@@ -585,4 +668,33 @@ func waitForSignal(t *testing.T, signal <-chan struct{}, description string) {
 	case <-time.After(time.Second):
 		t.Fatalf("timed out waiting for %s", description)
 	}
+}
+
+func waitForCondition(t *testing.T, condition func() bool, description string) {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for %s", description)
+		}
+	}
+}
+
+type doneObservedContext struct {
+	context.Context
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (c *doneObservedContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.observed) })
+	return c.Context.Done()
 }

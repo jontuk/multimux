@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,10 +22,11 @@ type Result struct {
 }
 
 type Cleaner struct {
-	lookPath            func(string) (string, error)
-	classify            func(context.Context, agent, promptChunk) (map[int]bool, error)
-	timeout             time.Duration
-	classificationSlots chan struct{}
+	lookPath              func(string) (string, error)
+	classify              func(context.Context, agent, promptChunk) (map[int]bool, error)
+	timeout               time.Duration
+	classificationSlots   chan struct{}
+	classificationWaiters atomic.Int32
 }
 
 func New() *Cleaner {
@@ -42,6 +44,21 @@ func rawResult(raw []byte, warning string) Result {
 		Processor: "raw",
 		Warning:   warning,
 	}
+}
+
+func (c *Cleaner) acquireClassificationSlot(ctx context.Context) (func(), bool) {
+	c.classificationWaiters.Add(1)
+	defer c.classificationWaiters.Add(-1)
+	select {
+	case c.classificationSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, false
+	}
+	if ctx.Err() != nil {
+		<-c.classificationSlots
+		return nil, false
+	}
+	return func() { <-c.classificationSlots }, true
 }
 
 func (c *Cleaner) Clean(ctx context.Context, raw []byte) Result {
@@ -81,18 +98,13 @@ func (c *Cleaner) Clean(ctx context.Context, raw []byte) Result {
 					return
 				}
 
-				select {
-				case c.classificationSlots <- struct{}{}:
-				case <-workCtx.Done():
-					return
-				}
-				if workCtx.Err() != nil {
-					<-c.classificationSlots
+				release, ok := c.acquireClassificationSlot(workCtx)
+				if !ok {
 					return
 				}
 
 				joins, err := func() (map[int]bool, error) {
-					defer func() { <-c.classificationSlots }()
+					defer release()
 					chunkCtx, stop := context.WithTimeout(workCtx, c.timeout)
 					defer stop()
 					return c.classify(chunkCtx, selected, chunks[index])
