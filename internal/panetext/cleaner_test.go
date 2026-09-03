@@ -1,6 +1,7 @@
 package panetext
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,17 +39,30 @@ func TestCleanerNewUsesProductionDefaults(t *testing.T) {
 
 func TestCleanerJoinsOnlyClassifiedBoundaries(t *testing.T) {
 	raw := []byte("wrapped prose\ncontinues\n\n- item\ncode\n")
+	type observation struct {
+		agent        agent
+		ownsBoundary bool
+	}
+	observed := make(chan observation, 1)
 	cleaner := testCleaner(t, "codex", func(_ context.Context, gotAgent agent, chunk promptChunk) (map[int]bool, error) {
-		if gotAgent.name != "codex" || gotAgent.model != "gpt-5.6-luna" {
-			t.Fatalf("agent = %#v, want Codex with gpt-5.6-luna", gotAgent)
-		}
-		if _, ok := chunk.ids[0]; !ok {
-			t.Fatalf("chunk does not own boundary 0: %v", chunk.ids)
-		}
+		_, ownsBoundary := chunk.ids[0]
+		observed <- observation{agent: gotAgent, ownsBoundary: ownsBoundary}
 		return map[int]bool{0: true}, nil
 	})
 
 	got := cleaner.Clean(context.Background(), raw)
+	var classifierObservation observation
+	select {
+	case classifierObservation = <-observed:
+	case <-time.After(time.Second):
+		t.Fatal("classifier did not report its observation")
+	}
+	if classifierObservation.agent.name != "codex" || classifierObservation.agent.model != "gpt-5.6-luna" {
+		t.Fatalf("agent = %#v, want Codex with gpt-5.6-luna", classifierObservation.agent)
+	}
+	if !classifierObservation.ownsBoundary {
+		t.Fatal("classifier chunk does not own boundary 0")
+	}
 	want := Result{
 		Text:      "wrapped prose continues\n\n- item\ncode\n",
 		Processor: "codex",
@@ -62,8 +76,9 @@ func TestCleanerJoinsOnlyClassifiedBoundaries(t *testing.T) {
 func TestCleanerSkipsDiscoveryWithoutEligibleBoundaries(t *testing.T) {
 	raw := []byte("one line\n\n")
 	discoveryCalled := false
+	var classifierCalled atomic.Bool
 	cleaner := testCleaner(t, "codex", func(context.Context, agent, promptChunk) (map[int]bool, error) {
-		t.Fatal("classifier called without eligible boundaries")
+		classifierCalled.Store(true)
 		return nil, nil
 	})
 	cleaner.lookPath = func(string) (string, error) {
@@ -75,6 +90,9 @@ func TestCleanerSkipsDiscoveryWithoutEligibleBoundaries(t *testing.T) {
 	if discoveryCalled {
 		t.Fatal("Clean called executable discovery without eligible boundaries")
 	}
+	if classifierCalled.Load() {
+		t.Fatal("Clean called classifier without eligible boundaries")
+	}
 	if want := (Result{Text: string(raw), Processor: "raw"}); got != want {
 		t.Fatalf("Clean() = %#v, want %#v", got, want)
 	}
@@ -82,12 +100,16 @@ func TestCleanerSkipsDiscoveryWithoutEligibleBoundaries(t *testing.T) {
 
 func TestCleanerReturnsByteExactRawWhenNoAgentExists(t *testing.T) {
 	raw := []byte{'b', 'e', 'f', 'o', 'r', 'e', 0xff, '\n', 'a', 'f', 't', 'e', 'r', '\n'}
+	var classifierCalled atomic.Bool
 	cleaner := testCleaner(t, "", func(context.Context, agent, promptChunk) (map[int]bool, error) {
-		t.Fatal("classifier called without an installed agent")
+		classifierCalled.Store(true)
 		return nil, nil
 	})
 
 	got := cleaner.Clean(context.Background(), raw)
+	if classifierCalled.Load() {
+		t.Fatal("Clean called classifier without an installed agent")
+	}
 	if !reflect.DeepEqual([]byte(got.Text), raw) {
 		t.Fatalf("Clean text bytes = %v, want %v", []byte(got.Text), raw)
 	}
@@ -161,6 +183,70 @@ func TestCleanerChunkFailureCancelsSiblingAndWaitsForIt(t *testing.T) {
 	want := rawResult(raw, "Automatic cleanup failed with Codex. Showing raw pane text.")
 	if got != want {
 		t.Fatalf("Clean() = %#v, want atomic fallback %#v", got, want)
+	}
+}
+
+func TestCleanerChunkFailureCancelsSiblingAndSkipsQueuedChunk(t *testing.T) {
+	raw := multiChunkRaw(maxSamplesPerChunk*2 + 2)
+	if got := len(buildChunks(raw)); got != 3 {
+		t.Fatalf("buildChunks returned %d chunks, want exactly 3", got)
+	}
+	failingStarted := make(chan struct{})
+	siblingStarted := make(chan struct{})
+	releaseFailure := make(chan struct{})
+	siblingCanceled := make(chan struct{})
+	thirdStarted := make(chan struct{})
+	cleaner := testCleaner(t, "claude", func(ctx context.Context, _ agent, chunk promptChunk) (map[int]bool, error) {
+		if _, firstChunk := chunk.ids[0]; firstChunk {
+			close(failingStarted)
+			<-releaseFailure
+			return map[int]bool{0: true}, errors.New("classification failed")
+		}
+		if _, secondChunk := chunk.ids[maxSamplesPerChunk]; secondChunk {
+			close(siblingStarted)
+			<-ctx.Done()
+			close(siblingCanceled)
+			return nil, ctx.Err()
+		}
+
+		close(thirdStarted)
+		return map[int]bool{}, nil
+	})
+
+	result := make(chan Result, 1)
+	go func() {
+		result <- cleaner.Clean(context.Background(), raw)
+	}()
+	waitForSignal(t, failingStarted, "failing chunk to start")
+	waitForSignal(t, siblingStarted, "sibling chunk to start")
+	select {
+	case <-thirdStarted:
+		t.Fatal("third queued chunk started while the first two were blocked")
+	default:
+	}
+	close(releaseFailure)
+
+	var got Result
+	select {
+	case got = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("Clean did not return after chunk failure")
+	}
+	select {
+	case <-siblingCanceled:
+	default:
+		t.Fatal("Clean returned before canceled sibling finished")
+	}
+	select {
+	case <-thirdStarted:
+		t.Fatal("third queued chunk started after sibling cancellation")
+	default:
+	}
+	if !bytes.Equal([]byte(got.Text), raw) {
+		t.Fatalf("Clean text bytes differ from raw snapshot\n got: %v\nwant: %v", []byte(got.Text), raw)
+	}
+	if got.Processor != "raw" || got.Model != "" || got.Warning != "Automatic cleanup failed with Claude. Showing raw pane text." {
+		t.Fatalf("Clean fallback metadata = %#v, want exact Claude raw fallback", got)
 	}
 }
 
@@ -250,8 +336,9 @@ func TestCleanerTimesOutChunkClassification(t *testing.T) {
 	cleaner := testCleaner(t, "codex", func(ctx context.Context, _ agent, _ promptChunk) (map[int]bool, error) {
 		_, hasDeadline := ctx.Deadline()
 		if !hasDeadline {
-			observed <- errors.New("classifier context has no deadline")
-			return nil, <-observed
+			err := errors.New("classifier context has no deadline")
+			observed <- err
+			return nil, err
 		}
 		<-ctx.Done()
 		observed <- ctx.Err()
@@ -259,9 +346,23 @@ func TestCleanerTimesOutChunkClassification(t *testing.T) {
 	})
 	cleaner.timeout = 20 * time.Millisecond
 
-	got := cleaner.Clean(context.Background(), raw)
-	if err := <-observed; !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("classifier context error = %v, want deadline exceeded", err)
+	result := make(chan Result, 1)
+	go func() {
+		result <- cleaner.Clean(context.Background(), raw)
+	}()
+	var got Result
+	select {
+	case got = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("Clean did not return after classifier timeout")
+	}
+	select {
+	case err := <-observed:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("classifier context error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("classifier did not report timeout observation")
 	}
 	want := rawResult(raw, "Automatic cleanup failed with Codex. Showing raw pane text.")
 	if got != want {
