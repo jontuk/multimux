@@ -131,10 +131,10 @@ func (m *Manager) CapturePaneText(ctx context.Context, name string) ([]byte, err
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			err = ctxErr
+			return nil, fmt.Errorf("tmux capture-pane: %w", ctxErr)
 		}
+		msg := strings.TrimSpace(stderr.String())
 		if sessionAbsent(msg) {
 			return nil, fmt.Errorf("%w: %s", ErrSessionUnavailable, msg)
 		}

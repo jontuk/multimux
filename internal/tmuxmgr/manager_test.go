@@ -83,12 +83,32 @@ func TestCapturePaneTextStopsWhenContextDeadlineExpires(t *testing.T) {
 	started := time.Now()
 
 	_, err := m.CapturePaneText(ctx, "mm-1")
-
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("CapturePaneText returned after %v, want within 1s", elapsed)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestCapturePaneTextCancellationTakesPrecedenceOverSessionAbsentStderr(t *testing.T) {
+	m, _ := fakeCaptureTmux(t, "printf \"can't find session: mm-1\\n\" >&2\nexec /bin/sleep 60\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+
+	_, err := m.CapturePaneText(ctx, "mm-1")
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("CapturePaneText returned after %v, want within 1s", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+	if errors.Is(err, ErrSessionUnavailable) {
+		t.Fatalf("error = %v, must not classify canceled capture as ErrSessionUnavailable", err)
+	}
+	if strings.Contains(err.Error(), "can't find session") {
+		t.Fatalf("canceled capture error exposed stderr: %v", err)
 	}
 }
 
