@@ -109,7 +109,7 @@ func (s *Server) captureSessionText(w http.ResponseWriter, r *http.Request) ([]b
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
 		return nil, false
 	}
-	text, err := s.cfg.PaneText.CapturePaneText(sess.TmuxName)
+	text, err := s.cfg.PaneText.CapturePaneText(r.Context(), sess.TmuxName)
 	if errors.Is(err, tmuxmgr.ErrSessionUnavailable) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
 		return nil, false

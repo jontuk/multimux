@@ -23,7 +23,7 @@ import (
 )
 
 type PaneTextCapturer interface {
-	CapturePaneText(name string) ([]byte, error)
+	CapturePaneText(context.Context, string) ([]byte, error)
 }
 
 type PaneTextCleaner interface {

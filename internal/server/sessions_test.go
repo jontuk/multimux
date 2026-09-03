@@ -23,25 +23,49 @@ import (
 )
 
 type stubPaneTextCapturer struct {
-	mu    sync.Mutex
-	text  []byte
-	err   error
-	name  string
-	calls int
+	mu                 sync.Mutex
+	text               []byte
+	err                error
+	name               string
+	calls              int
+	started            chan struct{}
+	startedOnce        sync.Once
+	blockUntilCanceled bool
+	contextErr         error
 }
 
-func (s *stubPaneTextCapturer) CapturePaneText(name string) ([]byte, error) {
+func (s *stubPaneTextCapturer) CapturePaneText(ctx context.Context, name string) ([]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.name = name
 	s.calls++
-	return append([]byte(nil), s.text...), s.err
+	text := append([]byte(nil), s.text...)
+	err := s.err
+	started := s.started
+	blockUntilCanceled := s.blockUntilCanceled
+	s.mu.Unlock()
+	if started != nil {
+		s.startedOnce.Do(func() { close(started) })
+	}
+	if blockUntilCanceled {
+		<-ctx.Done()
+		s.mu.Lock()
+		s.contextErr = ctx.Err()
+		s.mu.Unlock()
+		return nil, ctx.Err()
+	}
+	return text, err
 }
 
 func (s *stubPaneTextCapturer) observation() (string, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.name, s.calls
+}
+
+func (s *stubPaneTextCapturer) observedContextError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.contextErr
 }
 
 type stubPaneTextCleaner struct {
@@ -513,6 +537,49 @@ func TestSessionCleanTextPropagatesCancellationAndReturnsPromptly(t *testing.T) 
 	}
 	if !errors.Is(contextErr, context.Canceled) {
 		t.Fatalf("cleaner context error = %v, want context.Canceled", contextErr)
+	}
+}
+
+func TestSessionCleanTextCancelsCaptureAndSkipsCleaner(t *testing.T) {
+	capture := &stubPaneTextCapturer{
+		started:            make(chan struct{}),
+		blockUntilCanceled: true,
+	}
+	cleaner := &stubPaneTextCleaner{result: panetext.Result{Text: "must not run"}}
+	s, st, token := newPaneTextCleanTestServer(t, capture, cleaner)
+	sess := runningSession(t, st)
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/sessions/%d/text/clean", sess.ID), nil).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		s.Handler().ServeHTTP(w, r)
+		close(done)
+	}()
+
+	select {
+	case <-capture.started:
+	case <-time.After(time.Second):
+		t.Fatal("capture did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not return after request cancellation")
+	}
+	if got, want := w.Body.String(), `{"error":"could not capture pane text"}`+"\n"; w.Code != http.StatusInternalServerError || got != want {
+		t.Fatalf("response = %d %q, want 500 %q", w.Code, got, want)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if !errors.Is(capture.observedContextError(), context.Canceled) {
+		t.Fatalf("capture context error = %v, want context.Canceled", capture.observedContextError())
+	}
+	if inputs, _ := cleaner.observation(); len(inputs) != 0 {
+		t.Fatalf("cleaner inputs after canceled capture = %q", inputs)
 	}
 }
 
