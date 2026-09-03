@@ -21,16 +21,18 @@ type Result struct {
 }
 
 type Cleaner struct {
-	lookPath func(string) (string, error)
-	classify func(context.Context, agent, promptChunk) (map[int]bool, error)
-	timeout  time.Duration
+	lookPath            func(string) (string, error)
+	classify            func(context.Context, agent, promptChunk) (map[int]bool, error)
+	timeout             time.Duration
+	classificationSlots chan struct{}
 }
 
 func New() *Cleaner {
 	return &Cleaner{
-		lookPath: exec.LookPath,
-		classify: runAgent,
-		timeout:  agentTimeout,
+		lookPath:            exec.LookPath,
+		classify:            runAgent,
+		timeout:             agentTimeout,
+		classificationSlots: make(chan struct{}, workerLimit),
 	}
 }
 
@@ -79,9 +81,22 @@ func (c *Cleaner) Clean(ctx context.Context, raw []byte) Result {
 					return
 				}
 
-				chunkCtx, stop := context.WithTimeout(workCtx, c.timeout)
-				joins, err := c.classify(chunkCtx, selected, chunks[index])
-				stop()
+				select {
+				case c.classificationSlots <- struct{}{}:
+				case <-workCtx.Done():
+					return
+				}
+				if workCtx.Err() != nil {
+					<-c.classificationSlots
+					return
+				}
+
+				joins, err := func() (map[int]bool, error) {
+					defer func() { <-c.classificationSlots }()
+					chunkCtx, stop := context.WithTimeout(workCtx, c.timeout)
+					defer stop()
+					return c.classify(chunkCtx, selected, chunks[index])
+				}()
 				outcomes[index] = outcome{joins: joins, err: err, ran: true}
 				if err != nil || joins == nil {
 					cancel()

@@ -24,6 +24,12 @@ func TestCleanerNewUsesProductionDefaults(t *testing.T) {
 	if cleaner.timeout != agentTimeout {
 		t.Fatalf("New timeout = %v, want %v", cleaner.timeout, agentTimeout)
 	}
+	if cleaner.classificationSlots == nil {
+		t.Fatal("New returned a Cleaner with no classification limiter")
+	}
+	if got := cap(cleaner.classificationSlots); got != workerLimit {
+		t.Fatalf("New classification limiter capacity = %d, want %d", got, workerLimit)
+	}
 	if workerLimit != 2 {
 		t.Fatalf("workerLimit = %d, want 2", workerLimit)
 	}
@@ -314,6 +320,128 @@ func TestCleanerLimitsConcurrentChunks(t *testing.T) {
 	}
 }
 
+func TestCleanerLimitsConcurrentClassificationsAcrossCleanCalls(t *testing.T) {
+	raw := []byte("wrapped\nprose\n")
+	release := make(chan struct{})
+	started := make(chan struct{}, 3)
+	var active atomic.Int32
+	var maximum atomic.Int32
+	cleaner := testCleaner(t, "codex", func(context.Context, agent, promptChunk) (map[int]bool, error) {
+		current := active.Add(1)
+		for {
+			prior := maximum.Load()
+			if current <= prior || maximum.CompareAndSwap(prior, current) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		active.Add(-1)
+		return map[int]bool{}, nil
+	})
+
+	results := make(chan Result, 3)
+	for range 3 {
+		go func() {
+			results <- cleaner.Clean(context.Background(), raw)
+		}()
+	}
+	waitForSignal(t, started, "first Clean classifier to start")
+	waitForSignal(t, started, "second Clean classifier to start")
+	select {
+	case <-started:
+		close(release)
+		t.Fatal("third Clean classifier started while two shared slots were occupied")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+
+	for range 3 {
+		select {
+		case got := <-results:
+			if got.Processor != "codex" || got.Warning != "" {
+				t.Fatalf("Clean() = %#v, want successful Codex result", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("concurrent Clean calls did not finish after releasing classifiers")
+		}
+	}
+	if got := maximum.Load(); got != workerLimit {
+		t.Fatalf("maximum concurrent classifiers = %d, want %d across Clean calls", got, workerLimit)
+	}
+}
+
+func TestCleanerCanceledWhileWaitingForSharedSlotSkipsClassifier(t *testing.T) {
+	raw := []byte("wrapped\nprose\n")
+	release := make(chan struct{})
+	occupied := make(chan struct{}, workerLimit)
+	thirdStarted := make(chan struct{}, 1)
+	type callKey struct{}
+	cleaner := testCleaner(t, "codex", func(ctx context.Context, _ agent, _ promptChunk) (map[int]bool, error) {
+		if ctx.Value(callKey{}) == "queued" {
+			thirdStarted <- struct{}{}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		occupied <- struct{}{}
+		<-release
+		return map[int]bool{}, nil
+	})
+
+	results := make(chan Result, workerLimit)
+	for range workerLimit {
+		go func() {
+			results <- cleaner.Clean(context.Background(), raw)
+		}()
+	}
+	for range workerLimit {
+		waitForSignal(t, occupied, "shared classification slot to be occupied")
+	}
+
+	queuedCtx, cancel := context.WithCancel(context.WithValue(context.Background(), callKey{}, "queued"))
+	queuedResult := make(chan Result, 1)
+	go func() {
+		queuedResult <- cleaner.Clean(queuedCtx, raw)
+	}()
+	select {
+	case <-thirdStarted:
+		cancel()
+		close(release)
+		t.Fatal("queued Clean called its classifier while both shared slots were occupied")
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+
+	select {
+	case got := <-queuedResult:
+		want := rawResult(raw, "Automatic cleanup failed with Codex. Showing raw pane text.")
+		if got != want {
+			t.Fatalf("canceled queued Clean() = %#v, want raw fallback %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("canceled queued Clean did not return promptly")
+	}
+	select {
+	case <-thirdStarted:
+		close(release)
+		t.Fatal("canceled queued Clean called its classifier")
+	default:
+	}
+
+	close(release)
+	for range workerLimit {
+		select {
+		case got := <-results:
+			if got.Processor != "codex" || got.Warning != "" {
+				t.Fatalf("slot-occupying Clean() = %#v, want successful Codex result", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("slot-occupying Clean calls did not finish after release")
+		}
+	}
+}
+
 func TestCleanerUnionsSuccessfulChunkJoins(t *testing.T) {
 	raw := multiChunkRaw(maxSamplesPerChunk + 2)
 	cleaner := testCleaner(t, "claude", func(_ context.Context, _ agent, chunk promptChunk) (map[int]bool, error) {
@@ -430,16 +558,16 @@ func TestCleanerPropagatesRequestCancellation(t *testing.T) {
 
 func testCleaner(t *testing.T, provider string, classify func(context.Context, agent, promptChunk) (map[int]bool, error)) *Cleaner {
 	t.Helper()
-	return &Cleaner{
-		lookPath: func(name string) (string, error) {
-			if name == provider {
-				return "/fake/" + name, nil
-			}
-			return "", os.ErrNotExist
-		},
-		classify: classify,
-		timeout:  time.Second,
+	cleaner := New()
+	cleaner.lookPath = func(name string) (string, error) {
+		if name == provider {
+			return "/fake/" + name, nil
+		}
+		return "", os.ErrNotExist
 	}
+	cleaner.classify = classify
+	cleaner.timeout = time.Second
+	return cleaner
 }
 
 func multiChunkRaw(boundaries int) []byte {
