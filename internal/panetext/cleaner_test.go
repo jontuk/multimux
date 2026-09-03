@@ -195,6 +195,7 @@ func TestCleanerChunkFailureCancelsSiblingAndSkipsQueuedChunk(t *testing.T) {
 	siblingStarted := make(chan struct{})
 	releaseFailure := make(chan struct{})
 	siblingCanceled := make(chan struct{})
+	releaseSibling := make(chan struct{})
 	thirdStarted := make(chan struct{})
 	cleaner := testCleaner(t, "claude", func(ctx context.Context, _ agent, chunk promptChunk) (map[int]bool, error) {
 		if _, firstChunk := chunk.ids[0]; firstChunk {
@@ -206,6 +207,7 @@ func TestCleanerChunkFailureCancelsSiblingAndSkipsQueuedChunk(t *testing.T) {
 			close(siblingStarted)
 			<-ctx.Done()
 			close(siblingCanceled)
+			<-releaseSibling
 			return nil, ctx.Err()
 		}
 
@@ -226,21 +228,32 @@ func TestCleanerChunkFailureCancelsSiblingAndSkipsQueuedChunk(t *testing.T) {
 	}
 	close(releaseFailure)
 
+	waitForSignal(t, siblingCanceled, "sibling to observe cancellation")
 	var got Result
+	returnedEarly := false
+	select {
+	case got = <-result:
+		returnedEarly = true
+	default:
+	}
+	thirdRan := false
+	select {
+	case <-thirdStarted:
+		thirdRan = true
+	default:
+	}
+	close(releaseSibling)
+	if returnedEarly {
+		t.Fatal("Clean returned while canceled sibling was still blocked")
+	}
+	if thirdRan {
+		t.Fatal("third queued chunk started after sibling cancellation")
+	}
+
 	select {
 	case got = <-result:
 	case <-time.After(time.Second):
-		t.Fatal("Clean did not return after chunk failure")
-	}
-	select {
-	case <-siblingCanceled:
-	default:
-		t.Fatal("Clean returned before canceled sibling finished")
-	}
-	select {
-	case <-thirdStarted:
-		t.Fatal("third queued chunk started after sibling cancellation")
-	default:
+		t.Fatal("Clean did not return after canceled sibling finished")
 	}
 	if !bytes.Equal([]byte(got.Text), raw) {
 		t.Fatalf("Clean text bytes differ from raw snapshot\n got: %v\nwant: %v", []byte(got.Text), raw)
