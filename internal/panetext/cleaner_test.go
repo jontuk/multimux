@@ -234,7 +234,7 @@ func TestCleanerChunkFailureCancelsSiblingAndSkipsQueuedChunk(t *testing.T) {
 	select {
 	case got = <-result:
 		returnedEarly = true
-	default:
+	case <-time.After(100 * time.Millisecond):
 	}
 	thirdRan := false
 	select {
@@ -254,6 +254,11 @@ func TestCleanerChunkFailureCancelsSiblingAndSkipsQueuedChunk(t *testing.T) {
 	case got = <-result:
 	case <-time.After(time.Second):
 		t.Fatal("Clean did not return after canceled sibling finished")
+	}
+	select {
+	case <-thirdStarted:
+		t.Fatal("third queued chunk started after Clean returned")
+	default:
 	}
 	if !bytes.Equal([]byte(got.Text), raw) {
 		t.Fatalf("Clean text bytes differ from raw snapshot\n got: %v\nwant: %v", []byte(got.Text), raw)
