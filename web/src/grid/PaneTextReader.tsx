@@ -73,7 +73,11 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
     return () => {
       invalidateRequests(true);
       snapshotRef.current = null;
+      setSnapshot(null);
       setCleanup(null);
+      setRequestError("");
+      setRefreshing(false);
+      setCopyStatus("");
       trigger?.focus();
     };
   }, [invalidateRequests, load, open, trigger]);
@@ -111,11 +115,14 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
 
   async function copyAll() {
     if (!snapshotRef.current) return;
+    const generation = generationRef.current;
     try {
       if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
       await navigator.clipboard.writeText(snapshotRef.current);
+      if (generation !== generationRef.current) return;
       setCopyStatus("Copied pane text.");
     } catch {
+      if (generation !== generationRef.current) return;
       setCopyStatus("Clipboard unavailable. Select the text and copy it manually.");
     }
   }
@@ -133,14 +140,9 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   if (!open) return null;
   const loading = snapshot === null && requestError === "";
   const initialFailure = snapshot === null && requestError !== "";
-  const feedback =
-    snapshot !== null && requestError
-      ? { text: requestError, error: true }
-      : refreshing
-        ? { text: "Refreshing and cleaning…", error: false }
-        : copyStatus
-          ? { text: copyStatus, error: false }
-          : { text: cleanupStatus(cleanup), error: Boolean(cleanup?.warning) };
+  const refreshError = snapshot !== null ? requestError : "";
+  const announcement = refreshError || (refreshing ? "Refreshing and cleaning…" : copyStatus);
+  const disclosure = refreshError ? "" : cleanupStatus(cleanup);
   return (
     <div className="pane-text-backdrop">
       <div
@@ -166,7 +168,9 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
           </div>
         </header>
         <div className="pane-text-feedback" aria-live="polite">
-          {feedback.text && <span className={feedback.error ? "error" : undefined}>{feedback.text}</span>}
+          {disclosure && <span className={cleanup?.warning ? "error" : undefined}>{disclosure}</span>}
+          {disclosure && announcement && " "}
+          {announcement && <span className={refreshError ? "error" : undefined}>{announcement}</span>}
         </div>
         {loading ? (
           <div className="pane-text-loading" role="status">

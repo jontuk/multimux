@@ -35,6 +35,24 @@ function Harness() {
   );
 }
 
+function PersistentHarness() {
+  const [open, setOpen] = useState(true);
+  return (
+    <>
+      <button onClick={() => setOpen(true)}>Open reader</button>
+      <button onClick={() => setOpen(false)}>Hide reader</button>
+      <PaneTextReader
+        server={local}
+        sessionId={7}
+        title="#7 · claude"
+        open={open}
+        onClose={() => setOpen(false)}
+        trigger={null}
+      />
+    </>
+  );
+}
+
 function deferredResponse() {
   let resolve!: (response: Response) => void;
   const promise = new Promise<Response>((done) => (resolve = done));
@@ -100,18 +118,26 @@ test("initial failure offers Retry and Close", async () => {
 
 test("refresh retains the old snapshot and leaves it after failure", async () => {
   const refresh = deferredResponse();
+  const retry = deferredResponse();
   vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(paneTextResponse("old snapshot"))
-    .mockReturnValueOnce(refresh.promise);
+    .mockReturnValueOnce(refresh.promise)
+    .mockReturnValueOnce(retry.promise);
   render(<Harness />);
   await userEvent.click(screen.getByRole("button", { name: "Open pane text" }));
   const content = await screen.findByTestId("pane-text-content");
+  expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(content).toHaveTextContent("old snapshot");
   expect(screen.getByText("Refreshing and cleaning…")).toBeInTheDocument();
+  expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
   await act(async () => refresh.resolve(new Response('{"error":"session is no longer available"}', { status: 409 })));
   expect(content).toHaveTextContent("old snapshot");
   expect(await screen.findByText(/session is no longer available/)).toBeInTheDocument();
+  expect(screen.queryByText("Cleaned with Codex (gpt-5.6-luna).")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(screen.getByText("Refreshing and cleaning…")).toBeInTheDocument();
+  expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
 });
 
 test("successful refresh replaces text and scrolls to the new bottom", async () => {
@@ -130,6 +156,8 @@ test("successful refresh replaces text and scrolls to the new bottom", async () 
 
 test("reports Claude cleanup and then an explicit raw fallback warning", async () => {
   const warning = "Automatic cleanup failed with Codex. Showing raw pane text.";
+  const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(paneTextResponse("cleaned by Claude\n", "claude"))
     .mockResolvedValueOnce(paneTextResponse("raw\npane\ntext\n", "raw", warning));
@@ -140,19 +168,50 @@ test("reports Claude cleanup and then an explicit raw fallback warning", async (
   const content = await screen.findByTestId("pane-text-content");
   await waitFor(() => expect(content.textContent).toBe("raw\npane\ntext\n"));
   expect(screen.getByText(warning)).toHaveClass("error");
+  await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
+  expect(screen.getByText("Copied pane text.")).toBeInTheDocument();
+  expect(screen.getByText(warning)).toHaveClass("error");
+  await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
+  expect(screen.getByText(/select the text and copy it manually/i)).toBeInTheDocument();
+  expect(screen.getByText(warning)).toHaveClass("error");
 });
 
-test("a slow older generation cannot overwrite a newer one", async () => {
+test("a slow older generation cannot overwrite newer text or cleanup metadata", async () => {
   const first = deferredResponse();
   const second = deferredResponse();
   vi.spyOn(globalThis, "fetch").mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   render(<Harness />);
   await userEvent.click(screen.getByRole("button", { name: "Open pane text" }));
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  await act(async () => second.resolve(paneTextResponse("new generation")));
+  await act(async () => second.resolve(paneTextResponse("new generation", "claude")));
   expect(await screen.findByTestId("pane-text-content")).toHaveTextContent("new generation");
-  await act(async () => first.resolve(paneTextResponse("stale generation")));
+  expect(screen.getByText("Cleaned with Claude (sonnet-5).")).toBeInTheDocument();
+  const staleWarning = "Automatic cleanup failed with Codex. Showing stale raw pane text.";
+  await act(async () => first.resolve(paneTextResponse("stale generation", "raw", staleWarning)));
   expect(screen.getByTestId("pane-text-content")).toHaveTextContent("new generation");
+  expect(screen.getByText("Cleaned with Claude (sonnet-5).")).toBeInTheDocument();
+  expect(screen.queryByText(staleWarning)).not.toBeInTheDocument();
+});
+
+test("a clipboard completion from an older generation cannot mask a refresh warning", async () => {
+  let resolveCopy!: () => void;
+  const pendingCopy = new Promise<void>((resolve) => (resolveCopy = resolve));
+  const writeText = vi.fn().mockReturnValue(pendingCopy);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  const warning = "Automatic cleanup failed with Codex. Showing raw pane text.";
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(paneTextResponse("old cleaned text"))
+    .mockResolvedValueOnce(paneTextResponse("new raw text", "raw", warning));
+  render(<Harness />);
+  await userEvent.click(screen.getByRole("button", { name: "Open pane text" }));
+  await screen.findByText("old cleaned text");
+  await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByText("new raw text")).toBeInTheDocument();
+  expect(screen.getByText(warning)).toHaveClass("error");
+  await act(async () => resolveCopy());
+  expect(screen.getByText(warning)).toHaveClass("error");
+  expect(screen.queryByText("Copied pane text.")).not.toBeInTheDocument();
 });
 
 test("Copy all announces success and preserves text on rejection", async () => {
@@ -165,9 +224,11 @@ test("Copy all announces success and preserves text on rejection", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
   expect(writeText).toHaveBeenCalledWith("copy me");
   expect(screen.getByText("Copied pane text.")).toBeInTheDocument();
+  expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
   expect(screen.getByTestId("pane-text-content")).toHaveTextContent("copy me");
   expect(screen.getByText(/select the text and copy it manually/i)).toBeInTheDocument();
+  expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
 });
 
 test("missing Clipboard API gives manual-copy guidance", async () => {
@@ -204,14 +265,33 @@ test("close aborts, discards the snapshot, and restores trigger focus", async ()
 
 test("a result that resolves after close stays inert", async () => {
   const pending = deferredResponse();
-  vi.spyOn(globalThis, "fetch").mockReturnValue(pending.promise);
+  let signal: AbortSignal | null | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+    signal = init?.signal;
+    return pending.promise;
+  });
   render(<Harness />);
   const trigger = screen.getByRole("button", { name: "Open pane text" });
   await userEvent.click(trigger);
   await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(signal?.aborted).toBe(true);
   await act(async () => pending.resolve(paneTextResponse("late secret")));
   expect(screen.queryByText("late secret")).not.toBeInTheDocument();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+test("an externally hidden reader clears its snapshot before reopening", async () => {
+  const reopened = deferredResponse();
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(paneTextResponse("previous snapshot"))
+    .mockReturnValueOnce(reopened.promise);
+  render(<PersistentHarness />);
+  expect(await screen.findByText("previous snapshot")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Hide reader" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Open reader" }));
+  expect(screen.getByText("Capturing and cleaning pane text…")).toBeInTheDocument();
+  expect(screen.queryByText("previous snapshot")).not.toBeInTheDocument();
 });
 
 test("Escape closes and Tab wraps inside the modal", async () => {
