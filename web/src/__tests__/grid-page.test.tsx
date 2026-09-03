@@ -105,13 +105,22 @@ afterEach(() => {
 test("desktop Text precedes destructive actions and never reconnects the terminal", async () => {
   stubMatchMedia(false);
   const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const cleanUrl = `${window.location.origin}/api/sessions/1/text/clean`;
+  let cleanRequestCount = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (url.endsWith("/api/sessions/1/text/clean"))
+    if (url.endsWith("/api/sessions/1/text/clean")) {
+      cleanRequestCount += 1;
       return new Response(
-        JSON.stringify({ text: "pane snapshot", processor: "codex", model: "gpt-5.6-luna", warning: "" }),
+        JSON.stringify({
+          text: cleanRequestCount === 1 ? "pane snapshot" : "refreshed pane snapshot",
+          processor: "codex",
+          model: "gpt-5.6-luna",
+          warning: "",
+        }),
       );
+    }
     if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
     if (url.includes("/api/layout") && method === "PUT") return new Response("{}");
@@ -128,6 +137,7 @@ test("desktop Text precedes destructive actions and never reconnects the termina
       .getAllByRole("button")
       .map((button) => button.textContent),
   ).toEqual(["Text", "−", "✕"]);
+  await waitFor(() => expect(terminalLifecycle.attached).toHaveBeenCalledTimes(1));
   expect(terminalLifecycle.constructed).toHaveBeenCalledTimes(1);
   expect(terminalLifecycle.attached).toHaveBeenCalledTimes(1);
   expect(terminalLifecycle.unmounted).not.toHaveBeenCalled();
@@ -135,19 +145,25 @@ test("desktop Text precedes destructive actions and never reconnects the termina
   expect(await screen.findByText("pane snapshot")).toBeInTheDocument();
   const cleanFetches = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/sessions/1/text/clean"));
   expect(cleanFetches()).toHaveLength(1);
+  expect(cleanFetches()[0][0]).toBe(cleanUrl);
   expect(cleanFetches()[0][1]).toMatchObject({ method: "POST" });
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
   expect(terminalLifecycle.constructed).toHaveBeenCalledTimes(1);
   expect(terminalLifecycle.attached).toHaveBeenCalledTimes(1);
   expect(terminalLifecycle.unmounted).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByText("refreshed pane snapshot")).toBeInTheDocument();
   await waitFor(() => expect(cleanFetches()).toHaveLength(2));
+  expect(cleanFetches()[1][0]).toBe(cleanUrl);
   expect(cleanFetches()[1][1]).toMatchObject({ method: "POST" });
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
   expect(terminalLifecycle.constructed).toHaveBeenCalledTimes(1);
   expect(terminalLifecycle.attached).toHaveBeenCalledTimes(1);
   expect(terminalLifecycle.unmounted).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(cleanFetches()).toHaveLength(2);
+  expect(cleanFetches()[1][0]).toBe(cleanUrl);
+  expect(cleanFetches()[1][1]).toMatchObject({ method: "POST" });
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
   expect(terminalLifecycle.constructed).toHaveBeenCalledTimes(1);
   expect(terminalLifecycle.attached).toHaveBeenCalledTimes(1);
