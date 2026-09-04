@@ -1,12 +1,5 @@
 import type { Server } from "./servers";
 
-export type PaneTextResult = {
-  text: string;
-  processor: "codex" | "claude" | "raw";
-  model: string;
-  warning: string;
-};
-
 /**
  * A failed request. `status` is the HTTP status, or 0 when the request never
  * got an answer at all (daemon down, TLS refused, DNS failure) — the case the
@@ -89,17 +82,6 @@ export async function getText(server: Server, path: string, init: RequestInit = 
   const res = await apiFetch(server, path, init);
   if (!res.ok) throw await failed(path, res);
   return await res.text();
-}
-
-export async function cleanPaneText(server: Server, sessionId: number, signal: AbortSignal): Promise<PaneTextResult> {
-  const path = `/api/sessions/${sessionId}/text/clean`;
-  const res = await apiFetch(server, path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal,
-  });
-  if (!res.ok) throw await failed(path, res);
-  return (await res.json()) as PaneTextResult;
 }
 
 export async function postJSON<T>(server: Server, path: string, body?: unknown): Promise<T> {

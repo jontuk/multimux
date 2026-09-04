@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { forwardRef, Profiler, useEffect, useImperativeHandle } from "react";
 import { createPortal } from "react-dom";
@@ -10,7 +10,6 @@ import type { Server } from "../servers";
 import type { TerminalHandle } from "../term/TerminalTile";
 
 const unmounted = vi.fn();
-const terminalConstructed = vi.fn();
 const terminalAttached = vi.fn();
 const terminalHandles = new Map<number, TerminalHandle>();
 const terminalCalls: Array<{ sessionId: number; operation: "input" | "paste"; data: string }> = [];
@@ -35,7 +34,6 @@ vi.mock("../term/TerminalTile", () => ({
   ) {
     let handle = terminalHandles.get(sessionId);
     if (!handle) {
-      terminalConstructed(sessionId);
       handle = {
         input(data) {
           if (!terminalConnected || !terminalInputAccepted) return false;
@@ -156,7 +154,6 @@ function mockPointerCapture(header: HTMLElement) {
 
 beforeEach(() => {
   unmounted.mockClear();
-  terminalConstructed.mockClear();
   terminalAttached.mockClear();
   terminalHandles.clear();
   terminalCalls.length = 0;
@@ -195,22 +192,7 @@ test("orders mobile actions as New, Text, Fit, Compose, font, Settings", () => {
 });
 
 test("mobile Text targets the selection without reconnecting its terminal", async () => {
-  const cleanUrl = `${local.origin}/api/sessions/1/text/clean`;
-  let cleanRequestCount = 0;
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input).endsWith("/api/sessions/1/text/clean")) {
-      cleanRequestCount += 1;
-      return new Response(
-        JSON.stringify({
-          text: cleanRequestCount === 1 ? "mobile snapshot" : "refreshed mobile snapshot",
-          processor: "claude",
-          model: "sonnet-5",
-          warning: "",
-        }),
-      );
-    }
-    return new Response("[]");
-  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("mobile snapshot"));
   render(
     <MobileSessionView
       servers={[local]}
@@ -221,40 +203,16 @@ test("mobile Text targets the selection without reconnecting its terminal", asyn
     />,
   );
   const textButton = screen.getByRole("button", { name: "Read text from session 1" });
-  expect(screen.getByTestId("term-1")).toBeInTheDocument();
-  await waitFor(() => expect(terminalAttached).toHaveBeenCalledTimes(1));
-  expect(terminalConstructed).toHaveBeenCalledTimes(1);
-  expect(terminalHandles.size).toBe(1);
-  expect(terminalAttached).toHaveBeenCalledTimes(1);
-  expect(unmounted).not.toHaveBeenCalled();
   await userEvent.click(textButton);
   expect(await screen.findByRole("dialog", { name: "Pane text for #1 · claude" })).toBeInTheDocument();
   expect(screen.getByText("mobile snapshot")).toBeInTheDocument();
-  const cleanFetches = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/sessions/1/text/clean"));
-  expect(cleanFetches()).toHaveLength(1);
-  expect(cleanFetches()[0][0]).toBe(cleanUrl);
-  expect(cleanFetches()[0][1]).toMatchObject({ method: "POST" });
+  expect(fetchMock.mock.calls[0][0]).toBe("https://local.test/api/sessions/1/text");
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
-  expect(terminalConstructed).toHaveBeenCalledTimes(1);
   expect(terminalHandles.size).toBe(1);
   expect(terminalAttached).toHaveBeenCalledTimes(1);
   expect(unmounted).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(await screen.findByText("refreshed mobile snapshot")).toBeInTheDocument();
-  await waitFor(() => expect(cleanFetches()).toHaveLength(2));
-  expect(cleanFetches()[1][0]).toBe(cleanUrl);
-  expect(cleanFetches()[1][1]).toMatchObject({ method: "POST" });
-  expect(screen.getByTestId("term-1")).toBeInTheDocument();
-  expect(terminalConstructed).toHaveBeenCalledTimes(1);
-  expect(terminalHandles.size).toBe(1);
-  expect(terminalAttached).toHaveBeenCalledTimes(1);
-  expect(unmounted).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(cleanFetches()).toHaveLength(2);
-  expect(cleanFetches()[1][0]).toBe(cleanUrl);
-  expect(cleanFetches()[1][1]).toMatchObject({ method: "POST" });
-  expect(screen.getByTestId("term-1")).toBeInTheDocument();
-  expect(terminalConstructed).toHaveBeenCalledTimes(1);
   expect(terminalHandles.size).toBe(1);
   expect(terminalAttached).toHaveBeenCalledTimes(1);
   expect(unmounted).not.toHaveBeenCalled();

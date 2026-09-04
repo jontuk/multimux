@@ -1490,10 +1490,6 @@ a {
   font: 0.75rem var(--mono);
 }
 
-.pane-text-feedback .error {
-  color: var(--error);
-}
-
 .pane-text-loading,
 .pane-text-initial-error {
   display: flex;

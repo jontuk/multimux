@@ -115,57 +115,37 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionText(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	text, ok := s.captureSessionText(w, r)
-	if !ok {
+	id, err := pathID(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	sess, err := s.cfg.Store.GetSession(id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load session"})
+		return
+	}
+	if sess.Status != "running" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
+		return
+	}
+	text, err := s.cfg.PaneText.CapturePaneText(sess.TmuxName)
+	if errors.Is(err, tmuxmgr.ErrSessionUnavailable) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
+		return
+	}
+	if err != nil {
+		slog.Error("pane text capture failed", "session_id", sess.ID, "tmux_name", sess.TmuxName, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not capture pane text"})
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(text)
-}
-
-func (s *Server) handleSessionCleanText(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	text, ok := s.captureSessionText(w, r)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, s.cfg.PaneTextCleaner.Clean(r.Context(), text))
-}
-
-func (s *Server) captureSessionText(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	id, err := pathID(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
-		return nil, false
-	}
-	sess, err := s.cfg.Store.GetSession(id)
-	if errors.Is(err, store.ErrNotFound) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return nil, false
-	}
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load session"})
-		return nil, false
-	}
-	if sess.Status != "running" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
-		return nil, false
-	}
-	text, err := s.cfg.PaneText.CapturePaneText(r.Context(), sess.TmuxName)
-	if ctxErr := r.Context().Err(); ctxErr != nil && errors.Is(err, ctxErr) {
-		return nil, false
-	}
-	if errors.Is(err, tmuxmgr.ErrSessionUnavailable) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
-		return nil, false
-	}
-	if err != nil {
-		slog.Error("pane text capture failed", "session_id", sess.ID, "tmux_name", sess.TmuxName, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not capture pane text"})
-		return nil, false
-	}
-	return text, true
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {

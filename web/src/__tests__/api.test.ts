@@ -2,7 +2,6 @@ import { vi } from "vitest";
 import {
   ApiError,
   apiFetch,
-  cleanPaneText,
   del,
   errorText,
   getJSON,
@@ -18,41 +17,6 @@ const remote: Server = { id: "r1", origin: "https://otherbox:8686", name: "other
 const local: Server = { id: "local", origin: window.location.origin, name: "local" };
 
 afterEach(() => vi.restoreAllMocks());
-
-test("cleanPaneText posts an authenticated abortable request and returns the result", async () => {
-  const expected = {
-    text: "clean output",
-    processor: "codex" as const,
-    model: "gpt-5",
-    warning: "",
-  };
-  const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(expected));
-  const signal = new AbortController().signal;
-
-  await expect(cleanPaneText(remote, 7, signal)).resolves.toEqual(expected);
-
-  expect(spy).toHaveBeenCalledOnce();
-  const [url, init] = spy.mock.calls[0];
-  expect(url).toBe("https://otherbox:8686/api/sessions/7/text/clean");
-  expect(init!.method).toBe("POST");
-  expect(init!.signal).toBe(signal);
-  expect(init!.credentials).toBe("omit");
-  expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer tok");
-  expect((init!.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
-  expect(init!.body).toBeUndefined();
-});
-
-test("cleanPaneText converts failures through ApiError", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify({ error: "pane text is no longer available" }), { status: 409 }),
-  );
-
-  const err = await cleanPaneText(local, 7, new AbortController().signal).catch((value: unknown) => value);
-
-  expect(err).toBeInstanceOf(ApiError);
-  expect((err as ApiError).status).toBe(409);
-  expect((err as Error).message).toContain("pane text is no longer available");
-});
 
 test("getText returns authenticated text and forwards AbortSignal", async () => {
   const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("alpha\nβ\n"));
