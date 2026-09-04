@@ -142,7 +142,7 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   const initialFailure = snapshot === null && requestError !== "";
   const refreshError = snapshot !== null ? requestError : "";
   const announcement = refreshError || (refreshing ? "Refreshing and cleaning…" : copyStatus);
-  const disclosure = refreshError ? "" : cleanupStatus(cleanup);
+  const disclosure = cleanupStatus(cleanup);
   return (
     <div className="pane-text-backdrop">
       <div

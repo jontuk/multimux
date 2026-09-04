@@ -133,11 +133,31 @@ test("refresh retains the old snapshot and leaves it after failure", async () =>
   expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
   await act(async () => refresh.resolve(new Response('{"error":"session is no longer available"}', { status: 409 })));
   expect(content).toHaveTextContent("old snapshot");
-  expect(await screen.findByText(/session is no longer available/)).toBeInTheDocument();
-  expect(screen.queryByText("Cleaned with Codex (gpt-5.6-luna).")).not.toBeInTheDocument();
+  const refreshError = await screen.findByText(/session is no longer available/);
+  expect(refreshError).toHaveClass("error");
+  expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(screen.getByText("Refreshing and cleaning…")).toBeInTheDocument();
   expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
+});
+
+test("a raw fallback warning remains alongside a later refresh error", async () => {
+  const warning = "Automatic cleanup failed with Codex. Showing raw pane text.";
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(paneTextResponse("retained raw snapshot", "raw", warning))
+    .mockResolvedValueOnce(new Response('{"error":"new capture failed"}', { status: 500 }));
+  render(<Harness />);
+  await userEvent.click(screen.getByRole("button", { name: "Open pane text" }));
+  const content = await screen.findByTestId("pane-text-content");
+  expect(screen.getByText(warning)).toHaveClass("error");
+
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+  expect(content).toHaveTextContent("retained raw snapshot");
+  expect(screen.getByText(warning)).toHaveClass("error");
+  const refreshError = await screen.findByText(/new capture failed/);
+  expect(refreshError).toHaveClass("error");
+  expect(refreshError.closest(".pane-text-feedback")).toContainElement(screen.getByText(warning));
 });
 
 test("successful refresh replaces text and scrolls to the new bottom", async () => {
