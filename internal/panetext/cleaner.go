@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -22,11 +21,10 @@ type Result struct {
 }
 
 type Cleaner struct {
-	lookPath              func(string) (string, error)
-	classify              func(context.Context, agent, promptChunk) (map[int]bool, error)
-	timeout               time.Duration
-	classificationSlots   chan struct{}
-	classificationWaiters atomic.Int32
+	lookPath            func(string) (string, error)
+	classify            func(context.Context, agent, promptChunk) (map[int]bool, error)
+	timeout             time.Duration
+	classificationSlots chan struct{}
 }
 
 func New() *Cleaner {
@@ -47,8 +45,6 @@ func rawResult(raw []byte, warning string) Result {
 }
 
 func (c *Cleaner) acquireClassificationSlot(ctx context.Context) (func(), bool) {
-	c.classificationWaiters.Add(1)
-	defer c.classificationWaiters.Add(-1)
 	select {
 	case c.classificationSlots <- struct{}{}:
 	case <-ctx.Done():
