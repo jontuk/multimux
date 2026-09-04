@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { useState } from "react";
 import { vi } from "vitest";
 import PaneTextReader from "../grid/PaneTextReader";
@@ -69,6 +71,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
   if (clipboardDescriptor) Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
   else Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+});
+
+test("pane text feedback errors use the error color", () => {
+  const styles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+  const errorRule = styles.match(/\.pane-text-feedback \.error\s*\{([^}]*)\}/s)?.[1];
+
+  expect(errorRule).toMatch(/color:\s*var\(--error\)/);
 });
 
 test("opens immediately, cleans pane text with Codex, and posts to the clean endpoint", async () => {
