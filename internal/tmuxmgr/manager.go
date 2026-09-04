@@ -3,7 +3,6 @@ package tmuxmgr
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -128,17 +127,14 @@ var ErrSessionUnavailable = errors.New("tmux session unavailable")
 // CapturePaneText returns the active pane's retained history and current
 // screen as plain text. tmux owns logical boundaries: -J joins only rows tmux
 // marks wrapped, while -S/-E include all retained history and the full screen.
-func (m *Manager) CapturePaneText(ctx context.Context, name string) ([]byte, error) {
+func (m *Manager) CapturePaneText(name string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "tmux", m.baseArgs(
+	cmd := exec.Command("tmux", m.baseArgs(
 		"capture-pane", "-pJ", "-S", "-", "-E", "-", "-t", ExactTarget(name),
 	)...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, fmt.Errorf("tmux capture-pane: %w", ctxErr)
-		}
 		msg := strings.TrimSpace(stderr.String())
 		if sessionAbsent(msg) {
 			return nil, fmt.Errorf("%w: %s", ErrSessionUnavailable, msg)
