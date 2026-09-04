@@ -1,6 +1,7 @@
 package tmuxmgr
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -26,7 +27,7 @@ func fakeCaptureTmux(t *testing.T, script string) (*Manager, string) {
 
 func TestCapturePaneTextUsesExactJoinedHistoryCapture(t *testing.T) {
 	m, logPath := fakeCaptureTmux(t, "printf 'alpha β\\n'\nprintf 'ignored warning\\n' >&2\n")
-	got, err := m.CapturePaneText("mm-7")
+	got, err := m.CapturePaneText(context.Background(), "mm-7")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestCapturePaneTextUsesExactJoinedHistoryCapture(t *testing.T) {
 
 func TestCapturePaneTextAllowsEmptyOutput(t *testing.T) {
 	m, _ := fakeCaptureTmux(t, "exit 0\n")
-	got, err := m.CapturePaneText("mm-1")
+	got, err := m.CapturePaneText(context.Background(), "mm-1")
 	if err != nil || len(got) != 0 {
 		t.Fatalf("CapturePaneText = %q, %v; want empty success", got, err)
 	}
@@ -56,7 +57,7 @@ func TestCapturePaneTextClassifiesMissingSessionAndServer(t *testing.T) {
 		t.Run(stderr, func(t *testing.T) {
 			script := fmt.Sprintf("printf '%%s\\n' %q >&2\nexit 1\n", stderr)
 			m, _ := fakeCaptureTmux(t, script)
-			_, err := m.CapturePaneText("mm-1")
+			_, err := m.CapturePaneText(context.Background(), "mm-1")
 			if !errors.Is(err, ErrSessionUnavailable) {
 				t.Fatalf("error = %v, want ErrSessionUnavailable", err)
 			}
@@ -66,7 +67,7 @@ func TestCapturePaneTextClassifiesMissingSessionAndServer(t *testing.T) {
 
 func TestCapturePaneTextFailureDoesNotExposeStdout(t *testing.T) {
 	m, _ := fakeCaptureTmux(t, "printf 'pane-secret'\nprintf 'permission denied' >&2\nexit 2\n")
-	_, err := m.CapturePaneText("mm-1")
+	_, err := m.CapturePaneText(context.Background(), "mm-1")
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("error = %v", err)
 	}
@@ -75,17 +76,53 @@ func TestCapturePaneTextFailureDoesNotExposeStdout(t *testing.T) {
 	}
 }
 
+func TestCapturePaneTextStopsWhenContextDeadlineExpires(t *testing.T) {
+	m, _ := fakeCaptureTmux(t, "exec /bin/sleep 60\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+
+	_, err := m.CapturePaneText(ctx, "mm-1")
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("CapturePaneText returned after %v, want within 1s", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestCapturePaneTextCancellationTakesPrecedenceOverSessionAbsentStderr(t *testing.T) {
+	m, _ := fakeCaptureTmux(t, "printf \"can't find session: mm-1\\n\" >&2\nexec /bin/sleep 60\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+
+	_, err := m.CapturePaneText(ctx, "mm-1")
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("CapturePaneText returned after %v, want within 1s", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+	if errors.Is(err, ErrSessionUnavailable) {
+		t.Fatalf("error = %v, must not classify canceled capture as ErrSessionUnavailable", err)
+	}
+	if strings.Contains(err.Error(), "can't find session") {
+		t.Fatalf("canceled capture error exposed stderr: %v", err)
+	}
+}
+
 func waitForCapture(t *testing.T, m *Manager, name, want string) string {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		got, err := m.CapturePaneText(name)
+		got, err := m.CapturePaneText(context.Background(), name)
 		if err == nil && strings.Contains(string(got), want) {
 			return string(got)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	got, err := m.CapturePaneText(name)
+	got, err := m.CapturePaneText(context.Background(), name)
 	t.Fatalf("capture never contained %q: %q, %v", want, got, err)
 	return ""
 }
@@ -118,7 +155,7 @@ func TestCapturePaneTextTargetsExactSession(t *testing.T) {
 	if err := m.KillSession(m.SessionName(4)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CapturePaneText(m.SessionName(4)); !errors.Is(err, ErrSessionUnavailable) {
+	if _, err := m.CapturePaneText(context.Background(), m.SessionName(4)); !errors.Is(err, ErrSessionUnavailable) {
 		t.Fatalf("capture prefix-matched mm-42: %v", err)
 	}
 }

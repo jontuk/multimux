@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { errorText, getText } from "../api";
+import { cleanPaneText, errorText, type PaneTextResult } from "../api";
 import type { Server } from "../servers";
+
+type Cleanup = Pick<PaneTextResult, "processor" | "model" | "warning">;
+
+function cleanupStatus(cleanup: Cleanup | null): string {
+  if (!cleanup) return "";
+  if (cleanup.warning) return cleanup.warning;
+  if (cleanup.processor === "raw") return "No cleanup needed.";
+  const name = cleanup.processor === "codex" ? "Codex" : "Claude";
+  return `Cleaned with ${name} (${cleanup.model}).`;
+}
 
 type Props = {
   server: Server;
@@ -13,6 +23,7 @@ type Props = {
 
 export default function PaneTextReader({ server, sessionId, title, open, onClose, trigger }: Props) {
   const [snapshot, setSnapshot] = useState<string | null>(null);
+  const [cleanup, setCleanup] = useState<Cleanup | null>(null);
   const [requestError, setRequestError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
@@ -41,10 +52,11 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
     setRequestError("");
     setCopyStatus("");
     try {
-      const text = await getText(server, `/api/sessions/${sessionId}/text`, { signal: controller.signal });
+      const result = await cleanPaneText(server, sessionId, controller.signal);
       if (controller.signal.aborted || generation !== generationRef.current) return;
-      snapshotRef.current = text;
-      setSnapshot(text);
+      snapshotRef.current = result.text;
+      setSnapshot(result.text);
+      setCleanup({ processor: result.processor, model: result.model, warning: result.warning });
       setScrollGeneration((value) => value + 1);
     } catch (err) {
       if (controller.signal.aborted || generation !== generationRef.current) return;
@@ -61,6 +73,11 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
     return () => {
       invalidateRequests(true);
       snapshotRef.current = null;
+      setSnapshot(null);
+      setCleanup(null);
+      setRequestError("");
+      setRefreshing(false);
+      setCopyStatus("");
       trigger?.focus();
     };
   }, [invalidateRequests, load, open, trigger]);
@@ -97,12 +114,16 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   }
 
   async function copyAll() {
-    if (!snapshotRef.current) return;
+    const capturedSnapshot = snapshotRef.current;
+    if (!capturedSnapshot) return;
+    const generation = generationRef.current;
     try {
       if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(snapshotRef.current);
+      await navigator.clipboard.writeText(capturedSnapshot);
+      if (generation !== generationRef.current || capturedSnapshot !== snapshotRef.current) return;
       setCopyStatus("Copied pane text.");
     } catch {
+      if (generation !== generationRef.current || capturedSnapshot !== snapshotRef.current) return;
       setCopyStatus("Clipboard unavailable. Select the text and copy it manually.");
     }
   }
@@ -111,6 +132,7 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
     invalidateRequests();
     snapshotRef.current = null;
     setSnapshot(null);
+    setCleanup(null);
     setRequestError("");
     setCopyStatus("");
     onClose();
@@ -119,6 +141,9 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   if (!open) return null;
   const loading = snapshot === null && requestError === "";
   const initialFailure = snapshot === null && requestError !== "";
+  const refreshError = snapshot !== null ? requestError : "";
+  const activityStatus = refreshing ? "Refreshing and cleaning…" : copyStatus;
+  const disclosure = cleanupStatus(cleanup);
   return (
     <div className="pane-text-backdrop">
       <div
@@ -135,7 +160,11 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
             <button type="button" onClick={() => void load()} disabled={refreshing}>
               Refresh
             </button>
-            <button type="button" onClick={() => void copyAll()} disabled={snapshot === null || snapshot.length === 0}>
+            <button
+              type="button"
+              onClick={() => void copyAll()}
+              disabled={refreshing || snapshot === null || snapshot.length === 0}
+            >
               Copy all
             </button>
             <button ref={closeRef} type="button" onClick={close}>
@@ -144,13 +173,15 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
           </div>
         </header>
         <div className="pane-text-feedback" aria-live="polite">
-          {refreshing && <span>Refreshing…</span>}
-          {copyStatus && <span>{copyStatus}</span>}
-          {snapshot !== null && requestError && <span className="error">{requestError}</span>}
+          {disclosure && <span className={cleanup?.warning ? "error" : undefined}>{disclosure}</span>}
+          {disclosure && refreshError && " "}
+          {refreshError && <span className="error">{refreshError}</span>}
+          {(disclosure || refreshError) && activityStatus && " "}
+          {activityStatus && <span>{activityStatus}</span>}
         </div>
         {loading ? (
           <div className="pane-text-loading" role="status">
-            Loading pane text…
+            Capturing and cleaning pane text…
           </div>
         ) : initialFailure ? (
           <div className="pane-text-initial-error">
