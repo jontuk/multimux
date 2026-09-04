@@ -114,15 +114,16 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   }
 
   async function copyAll() {
-    if (!snapshotRef.current) return;
+    const capturedSnapshot = snapshotRef.current;
+    if (!capturedSnapshot) return;
     const generation = generationRef.current;
     try {
       if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(snapshotRef.current);
-      if (generation !== generationRef.current) return;
+      await navigator.clipboard.writeText(capturedSnapshot);
+      if (generation !== generationRef.current || capturedSnapshot !== snapshotRef.current) return;
       setCopyStatus("Copied pane text.");
     } catch {
-      if (generation !== generationRef.current) return;
+      if (generation !== generationRef.current || capturedSnapshot !== snapshotRef.current) return;
       setCopyStatus("Clipboard unavailable. Select the text and copy it manually.");
     }
   }
@@ -141,7 +142,7 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   const loading = snapshot === null && requestError === "";
   const initialFailure = snapshot === null && requestError !== "";
   const refreshError = snapshot !== null ? requestError : "";
-  const announcement = refreshError || (refreshing ? "Refreshing and cleaning…" : copyStatus);
+  const activityStatus = refreshing ? "Refreshing and cleaning…" : copyStatus;
   const disclosure = cleanupStatus(cleanup);
   return (
     <div className="pane-text-backdrop">
@@ -159,7 +160,11 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
             <button type="button" onClick={() => void load()} disabled={refreshing}>
               Refresh
             </button>
-            <button type="button" onClick={() => void copyAll()} disabled={snapshot === null || snapshot.length === 0}>
+            <button
+              type="button"
+              onClick={() => void copyAll()}
+              disabled={refreshing || snapshot === null || snapshot.length === 0}
+            >
               Copy all
             </button>
             <button ref={closeRef} type="button" onClick={close}>
@@ -169,8 +174,10 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
         </header>
         <div className="pane-text-feedback" aria-live="polite">
           {disclosure && <span className={cleanup?.warning ? "error" : undefined}>{disclosure}</span>}
-          {disclosure && announcement && " "}
-          {announcement && <span className={refreshError ? "error" : undefined}>{announcement}</span>}
+          {disclosure && refreshError && " "}
+          {refreshError && <span className="error">{refreshError}</span>}
+          {(disclosure || refreshError) && activityStatus && " "}
+          {activityStatus && <span>{activityStatus}</span>}
         </div>
         {loading ? (
           <div className="pane-text-loading" role="status">

@@ -128,6 +128,8 @@ test("initial failure offers Retry and Close", async () => {
 test("refresh retains the old snapshot and leaves it after failure", async () => {
   const refresh = deferredResponse();
   const retry = deferredResponse();
+  const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(paneTextResponse("old snapshot"))
     .mockReturnValueOnce(refresh.promise)
@@ -145,9 +147,33 @@ test("refresh retains the old snapshot and leaves it after failure", async () =>
   const refreshError = await screen.findByText(/session is no longer available/);
   expect(refreshError).toHaveClass("error");
   expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
+  expect(writeText).toHaveBeenCalledWith("old snapshot");
+  expect(screen.getByText(/select the text and copy it manually/i)).toBeInTheDocument();
+  expect(screen.getByText(/session is no longer available/)).toHaveClass("error");
+  expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(screen.getByText("Refreshing and cleaning…")).toBeInTheDocument();
   expect(screen.getByText("Cleaned with Codex (gpt-5.6-luna).")).toBeInTheDocument();
+});
+
+test("Copy all is disabled while a refresh is pending", async () => {
+  const refresh = deferredResponse();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(paneTextResponse("old snapshot"))
+    .mockReturnValueOnce(refresh.promise);
+  render(<Harness />);
+  await userEvent.click(screen.getByRole("button", { name: "Open pane text" }));
+  await screen.findByTestId("pane-text-content");
+  const copy = screen.getByRole("button", { name: "Copy all" });
+
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+  expect(copy).toBeDisabled();
+  await userEvent.click(copy);
+  expect(writeText).not.toHaveBeenCalled();
 });
 
 test("a raw fallback warning remains alongside a later refresh error", async () => {
