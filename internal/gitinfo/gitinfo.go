@@ -4,25 +4,44 @@
 package gitinfo
 
 import (
+	"context"
 	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// git builds a read-only git command against dir. --no-optional-locks stops
-// git taking .git/index.lock to write back a refreshed index: this package
-// polls every few seconds, and on a large repo that lock is held long enough
-// to make a user's concurrent commit or stash fail with "index.lock exists".
-func git(dir string, args ...string) *exec.Cmd {
-	return exec.Command("git", append([]string{"--no-optional-locks", "-C", dir}, args...)...)
+// gitTimeout bounds every git subprocess so a hung repo on a stale NFS mount
+// or slow network filesystem cannot wedge the daemon indefinitely. A var so
+// tests can verify timeout behaviour without waiting out the full duration.
+var gitTimeout = 10 * time.Second
+
+// gitWaitDelay bounds the wait after the timeout kills git. Killing git does not
+// kill its children, and one of them may hold the output pipe open -- git spawns
+// an fsmonitor daemon on repos configured for it, and credential helpers outlive
+// the parent too. Output only returns once that pipe closes, so without a delay
+// the timeout above buys nothing. Also a var so tests need not wait it out.
+var gitWaitDelay = time.Second
+
+// gitOutput executes a read-only git command against dir with a bounded timeout.
+// --no-optional-locks stops git taking .git/index.lock to write back a refreshed
+// index: this package polls every few seconds, and on a large repo that lock is
+// held long enough to make a user's concurrent commit or stash fail with
+// "index.lock exists".
+func gitOutput(dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-C", dir}, args...)...)
+	cmd.WaitDelay = gitWaitDelay
+	return cmd.Output()
 }
 
 // RepoWebURL returns the web URL for dir's origin remote, or "" when dir is
 // not a git repo, has no origin, or the remote is not GitHub/GHE. git being
 // absent is treated the same as no repo.
 func RepoWebURL(dir string) string {
-	out, err := git(dir, "config", "--get", "remote.origin.url").Output()
+	out, err := gitOutput(dir, "config", "--get", "remote.origin.url")
 	if err != nil {
 		return ""
 	}
@@ -53,7 +72,7 @@ type Status struct {
 func BranchStatus(dir string) Status {
 	// --branch adds a "## " header carrying the upstream and the ahead/behind
 	// counts, so divergence costs no extra git process.
-	out, err := git(dir, "status", "--porcelain", "--branch").Output()
+	out, err := gitOutput(dir, "status", "--porcelain", "--branch")
 	if err != nil {
 		return Status{}
 	}
@@ -73,7 +92,7 @@ func BranchStatus(dir string) Status {
 	}
 	// symbolic-ref works on an unborn branch (fresh init); it fails on a
 	// detached HEAD, where we leave the branch empty.
-	if b, err := git(dir, "symbolic-ref", "--short", "-q", "HEAD").Output(); err == nil {
+	if b, err := gitOutput(dir, "symbolic-ref", "--short", "-q", "HEAD"); err == nil {
 		st.Branch = strings.TrimSpace(string(b))
 	}
 	return st

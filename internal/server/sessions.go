@@ -48,14 +48,57 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]sessionJSON, 0, len(sessions))
-	// The same dir often backs several sessions; resolve each dir once.
-	infos := map[string]dirGitInfo{}
+
+	// Collect directories backing at least one running session.
+	// Directories that back no live session are skipped entirely.
+	liveDirs := make(map[string]bool)
 	for _, sess := range sessions {
-		info, ok := infos[sess.Dir]
-		if !ok {
-			info.url = gitinfo.RepoWebURL(sess.Dir)
-			info.Status = gitinfo.BranchStatus(sess.Dir)
-			infos[sess.Dir] = info
+		if sess.Status == "running" {
+			liveDirs[sess.Dir] = true
+		}
+	}
+
+	// Read cached git info for live directories.
+	s.gitMu.RLock()
+	infos := make(map[string]dirGitInfo, len(s.gitSeen))
+	for k, v := range s.gitSeen {
+		infos[k] = v
+	}
+	s.gitMu.RUnlock()
+
+	// For any live directory not yet in cache (e.g. cold start, unit tests,
+	// or a newly launched session before the next 5s ticker tick), resolve
+	// synchronously and update the cache so this and subsequent requests
+	// have full info without waiting for the next tick.
+	var newlyResolved map[string]dirGitInfo
+	for dir := range liveDirs {
+		if _, ok := infos[dir]; !ok {
+			info := dirGitInfo{
+				url:    gitinfo.RepoWebURL(dir),
+				Status: gitinfo.BranchStatus(dir),
+			}
+			infos[dir] = info
+			if newlyResolved == nil {
+				newlyResolved = make(map[string]dirGitInfo)
+			}
+			newlyResolved[dir] = info
+		}
+	}
+	if len(newlyResolved) > 0 {
+		s.gitMu.Lock()
+		if s.gitSeen == nil {
+			s.gitSeen = make(map[string]dirGitInfo)
+		}
+		for dir, info := range newlyResolved {
+			s.gitSeen[dir] = info
+		}
+		s.gitMu.Unlock()
+	}
+
+	for _, sess := range sessions {
+		var info dirGitInfo
+		if liveDirs[sess.Dir] {
+			info = infos[sess.Dir]
 		}
 		out = append(out, sessionJSON{
 			Session:    sess,
@@ -476,13 +519,19 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 // CheckGitInfo recomputes branch and working-tree state for every running
 // session's dir and broadcasts git_changed when any of it differs from the
 // previous check, prompting clients to refetch the session list. The first
-// check only records a baseline. Called from the maintenance ticker goroutine
-// only, so gitSeen needs no locking.
+// check only records a baseline.
 func (s *Server) CheckGitInfo() error {
 	sessions, err := s.cfg.Store.ListSessions()
 	if err != nil {
 		return err
 	}
+	s.gitMu.RLock()
+	prevURLs := make(map[string]string, len(s.gitSeen))
+	for dir, info := range s.gitSeen {
+		prevURLs[dir] = info.url
+	}
+	s.gitMu.RUnlock()
+
 	seen := map[string]dirGitInfo{}
 	for _, sess := range sessions {
 		if sess.Status != "running" {
@@ -491,9 +540,17 @@ func (s *Server) CheckGitInfo() error {
 		if _, ok := seen[sess.Dir]; ok {
 			continue
 		}
-		seen[sess.Dir] = dirGitInfo{Status: gitinfo.BranchStatus(sess.Dir)}
+		url := prevURLs[sess.Dir]
+		if url == "" {
+			url = gitinfo.RepoWebURL(sess.Dir)
+		}
+		seen[sess.Dir] = dirGitInfo{
+			url:    url,
+			Status: gitinfo.BranchStatus(sess.Dir),
+		}
 	}
 	changed := false
+	s.gitMu.Lock()
 	if s.gitSeen != nil {
 		for dir, info := range seen {
 			if prev, ok := s.gitSeen[dir]; !ok || prev != info {
@@ -503,6 +560,7 @@ func (s *Server) CheckGitInfo() error {
 		}
 	}
 	s.gitSeen = seen
+	s.gitMu.Unlock()
 	if changed {
 		s.broadcast("git_changed", nil)
 	}
