@@ -127,6 +127,9 @@ var ErrSessionUnavailable = errors.New("tmux session unavailable")
 // CapturePaneText returns the active pane's retained history and current
 // screen as plain text. tmux owns logical boundaries: -J joins only rows tmux
 // marks wrapped, while -S/-E include all retained history and the full screen.
+// Leading and trailing whitespace is stripped: retained history that has not
+// filled yet pads the top with blank lines, and the unused rows below the
+// cursor pad the bottom, neither of which is pane content.
 func (m *Manager) CapturePaneText(name string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("tmux", m.baseArgs(
@@ -144,7 +147,7 @@ func (m *Manager) CapturePaneText(name string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("tmux capture-pane: %w", err)
 	}
-	return stdout.Bytes(), nil
+	return bytes.TrimSpace(stdout.Bytes()), nil
 }
 
 // KillSession destroys the session. A session that is already gone — or a

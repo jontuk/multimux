@@ -30,7 +30,7 @@ func TestCapturePaneTextUsesExactJoinedHistoryCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "alpha β\n" {
+	if string(got) != "alpha β" {
 		t.Fatalf("CapturePaneText = %q", got)
 	}
 	args, err := os.ReadFile(logPath)
@@ -40,6 +40,17 @@ func TestCapturePaneTextUsesExactJoinedHistoryCapture(t *testing.T) {
 	want := "-u\n-L\nprivate-socket\ncapture-pane\n-pJ\n-S\n-\n-E\n-\n-t\n=mm-7:\n"
 	if string(args) != want {
 		t.Fatalf("tmux args = %q, want %q", args, want)
+	}
+}
+
+func TestCapturePaneTextTrimsSurroundingBlankLines(t *testing.T) {
+	m, _ := fakeCaptureTmux(t, "printf '\n \nalpha\n\nbeta\n \n\n'\n")
+	got, err := m.CapturePaneText("mm-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "alpha\n\nbeta" {
+		t.Fatalf("CapturePaneText = %q", got)
 	}
 }
 
