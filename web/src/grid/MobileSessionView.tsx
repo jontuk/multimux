@@ -252,6 +252,7 @@ export default function MobileSessionView({
                 Text
               </button>
             )}
+            <span className="mobile-terminal-controls" ref={setControlsSlot} />
             {selected && (
               <button
                 className="danger"
@@ -264,7 +265,6 @@ export default function MobileSessionView({
                 ✕
               </button>
             )}
-            <span className="mobile-terminal-controls" ref={setControlsSlot} />
             <a className="mobile-settings-link" href="#/settings" aria-label="Settings">
               <span aria-hidden="true">⚙</span>
             </a>

@@ -165,7 +165,7 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks());
 
-test("orders mobile actions as New, Text, terminate, Fit, Compose, font, Settings", () => {
+test("orders mobile actions as New, Text, Fit, Compose, font, terminate, Settings", () => {
   render(
     <MobileSessionView
       servers={[local]}
@@ -184,10 +184,10 @@ test("orders mobile actions as New, Text, terminate, Fit, Compose, font, Setting
   ).toEqual([
     "New session",
     "Read text from session 1",
-    "terminate session 1",
     "Fit session to phone",
     "Compose",
     "Terminal font size",
+    "terminate session 1",
     "Settings",
   ]);
 });
