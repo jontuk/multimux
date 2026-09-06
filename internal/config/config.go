@@ -38,7 +38,7 @@ var Keys = []Key{{
 	Name:    ConfirmTerminate,
 	Kind:    KindBool,
 	Default: "false",
-	Help:    "ask for confirmation before terminating a session",
+	Help:    "ask for confirmation before terminating a session (the mobile view always asks)",
 }}
 
 // Lookup finds a key by its CLI name.

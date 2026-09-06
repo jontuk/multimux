@@ -55,6 +55,9 @@ export default function PreferencesPanel() {
               />
               Ask before terminating a session
             </label>
+            <p className="settings-hint">
+              Applies to the desktop grid only. The mobile view always asks, whatever this is set to.
+            </p>
           </div>
           <button className="primary" disabled={saving} onClick={save}>
             Save
