@@ -1831,6 +1831,15 @@ a {
     padding: 0.2rem 0.4rem;
   }
 
+  .app.grid-route .mobile-session-actions button.danger {
+    color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 55%, transparent);
+  }
+
+  .app.grid-route .mobile-session-actions button.danger:disabled {
+    opacity: 0.5;
+  }
+
   .app.grid-route .mobile-font-size-select {
     min-width: 3.5rem;
     padding: 0.2rem;

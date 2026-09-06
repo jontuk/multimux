@@ -222,7 +222,8 @@ test("narrow mode renders the mobile session view without desktop controls", asy
   expect(screen.queryByText("+ New")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("more columns")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("remove session 1 from grid")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("terminate session 1")).not.toBeInTheDocument();
+  // Terminate is the one tile action the mobile header keeps.
+  expect(screen.getByLabelText("terminate session 1")).toBeInTheDocument();
 });
 
 test("mobile creation selects the first grouped session and leaves every result unplaced", async () => {

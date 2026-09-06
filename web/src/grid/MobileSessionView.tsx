@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { del } from "../api";
 import type { Server } from "../servers";
 import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
 import MobileCompose from "./MobileCompose";
@@ -43,6 +44,7 @@ export default function MobileSessionView({
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const [paneTextTarget, setPaneTextTarget] = useState<PaneTextTarget | null>(null);
+  const [terminating, setTerminating] = useState(false);
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
   const newSessionRef = useRef<HTMLButtonElement>(null);
@@ -77,6 +79,22 @@ export default function MobileSessionView({
     const first = started[0];
     if (first) setPendingSelectionKey(`${server.id}:${first.id}`);
     closeCreator();
+    onRefresh();
+  }
+
+  // Mobile always confirms: the terminate control sits a thumb-width from the
+  // other header actions, and a mistap here kills a session for good. The
+  // desktop `confirmTerminate` preference does not gate it.
+  async function terminateSelected(server: Server, sessionId: number) {
+    if (!window.confirm(`Terminate session #${sessionId}?`)) return;
+    setTerminating(true);
+    try {
+      await del(server, `/api/sessions/${sessionId}`);
+    } catch {
+      // Session may already be gone; refresh either way.
+    } finally {
+      setTerminating(false);
+    }
     onRefresh();
   }
 
@@ -232,6 +250,18 @@ export default function MobileSessionView({
                 }}
               >
                 Text
+              </button>
+            )}
+            {selected && (
+              <button
+                className="danger"
+                type="button"
+                disabled={terminating}
+                aria-label={`terminate session ${selected.session.id}`}
+                title="terminate session"
+                onClick={() => terminateSelected(selected.server, selected.session.id)}
+              >
+                ✕
               </button>
             )}
             <span className="mobile-terminal-controls" ref={setControlsSlot} />

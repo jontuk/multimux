@@ -165,7 +165,7 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks());
 
-test("orders mobile actions as New, Text, Fit, Compose, font, Settings", () => {
+test("orders mobile actions as New, Text, terminate, Fit, Compose, font, Settings", () => {
   render(
     <MobileSessionView
       servers={[local]}
@@ -184,11 +184,56 @@ test("orders mobile actions as New, Text, Fit, Compose, font, Settings", () => {
   ).toEqual([
     "New session",
     "Read text from session 1",
+    "terminate session 1",
     "Fit session to phone",
     "Compose",
     "Terminal font size",
     "Settings",
   ]);
+});
+
+test("mobile terminate asks first and keeps the session when declined", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(""));
+  const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const onRefresh = vi.fn();
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={onRefresh}
+    />,
+  );
+
+  await userEvent.click(screen.getByLabelText("terminate session 1"));
+
+  expect(confirmMock).toHaveBeenCalledWith("Terminate session #1?");
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(onRefresh).not.toHaveBeenCalled();
+});
+
+test("mobile terminate deletes the selected session once confirmed", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(""));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const onRefresh = vi.fn();
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1), session(2)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={onRefresh}
+    />,
+  );
+
+  await userEvent.click(screen.getByLabelText("terminate session 1"));
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+  expect(String(url)).toBe("https://local.test/api/sessions/1");
+  expect(init.method).toBe("DELETE");
+  expect(onRefresh).toHaveBeenCalled();
 });
 
 test("mobile Text targets the selection without reconnecting its terminal", async () => {
