@@ -272,21 +272,28 @@ its own passkey login and its CA trusted on this client.
 
 ## Using it
 
-**Launching.** The header launcher starts a session from a **tool** (the command
-to run) and a **directory**, both managed on the Settings page. On first run the
-daemon seeds one tool (`zsh` on macOS, `bash` on Linux) and your home directory,
-so you can launch immediately. The optional **subdir** field is a path relative
-to the chosen directory, so one directory entry covers a whole tree of repos
-instead of needing one entry per project; the subdirectory must already exist
-and must stay inside the chosen directory. With more than one server configured,
+**Launching.** The header carries a **tool** (the command to run) and **+ New**;
+where the session goes is chosen in the picker that **+ New** opens. On first
+run the daemon seeds one tool (`zsh` on macOS, `bash` on Linux) and your home
+directory, so you can launch immediately. With more than one server configured,
 a server picker appears first.
 
-The launcher follows the grid: it aims itself at the directory you are working
-in — the soloed directory, or the working directory of the tile you last
-focused — and fills the subdir field to match, so **+ New** opens another
-session where you already are. Only the directory moves; the tool stays
-whatever you picked. A target belonging to another server is ignored, because
-the same path on another daemon is a different machine's directory.
+The picker opens on the directories you have launched into before, then the
+**places** — the directories configured on the Settings page. Clicking a name
+launches there; the **›** beside it descends into that directory instead, and
+the breadcrumb walks back up, so a couple of broad places (your home directory,
+wherever you keep source) cover a whole machine and no per-project entry is
+needed. **Launch here** starts a session in the directory you have descended
+into, the filter box narrows the listing (type a leading `.` to see hidden
+directories), and the arrow keys walk (**↑↓**), descend (**→**), go back up
+(**←**), and launch (**Enter**). The **×** on a remembered directory forgets it.
+
+The picker follows the grid: it opens inside the directory you are working in —
+the soloed directory, or the working directory of the tile you last focused — so
+**+ New** opens another session where you already are. Only the location moves;
+the tool stays whatever you picked. A target belonging to another server is
+ignored, because the same path on another daemon is a different machine's
+directory.
 
 **The grid.** Tiles are laid out in a column count you set with the header
 stepper; rows follow, and row/column boundaries can be dragged to resize the
@@ -364,8 +371,9 @@ focuses and interacts with the terminal, and scrolling stops when the finger is
 released.
 
 Use **+** in the mobile header to open the full-screen session creator. It has
-the same server, tool, directory, and optional subdirectory choices as the
-desktop launcher and starts from the session currently on screen. When a tool
+the same server and tool choices as the desktop launcher, with the same
+directory picker filling the rest of the screen, and starts from the session
+currently on screen. When a tool
 starts several sessions, mobile opens the first and leaves the others available
 through normal session navigation. Sessions created on mobile remain unplaced,
 so creating one never rearranges the saved desktop grid.

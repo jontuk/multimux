@@ -69,7 +69,7 @@ function mockFetch(layout: unknown, sessionList: unknown[] = sessions) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (url.includes("/subdirs")) return new Response("[]");
+    if (url.includes("/subdirs") || url.includes("/children")) return new Response("[]");
     if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
     if (url.includes("/api/layout") && method === "PUT") return new Response("{}");
     if (url.includes("/label") && method === "PUT")
@@ -105,7 +105,7 @@ test("desktop Text precedes destructive actions and never reconnects the termina
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.endsWith("/api/sessions/1/text")) return new Response("pane snapshot");
-    if (url.includes("/subdirs")) return new Response("[]");
+    if (url.includes("/subdirs") || url.includes("/children")) return new Response("[]");
     if (url.includes("/api/layout") && method === "GET") return new Response(JSON.stringify(layout));
     if (url.includes("/api/layout") && method === "PUT") return new Response("{}");
     if (url.includes("/api/sessions")) return new Response(JSON.stringify([sessions[0]]));
@@ -252,7 +252,7 @@ test("mobile creation selects the first grouped session and leaves every result 
   render(<GridPage />);
   await screen.findByTestId("term-1");
   await userEvent.click(screen.getByRole("button", { name: "New session" }));
-  await userEvent.click(await screen.findByRole("button", { name: "Create session" }));
+  await userEvent.click(await screen.findByRole("button", { name: /^multimux — launch in/ }));
 
   await screen.findByTestId("term-31");
   expect(
@@ -454,18 +454,17 @@ test("attach dropdown hides sessions already placed in a tile", async () => {
   expect(options).not.toContain("mm-1");
 });
 
-test("launcher defaults to first tool and dir, launches into first empty tile", async () => {
+test("launcher defaults to the first tool and launches into the first empty tile", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
   const fetchMock = mockFetch(layout);
 
   render(<GridPage />);
 
   const toolSelect = await screen.findByLabelText<HTMLSelectElement>("tool");
-  const dirSelect = screen.getByLabelText<HTMLSelectElement>("dir");
   await waitFor(() => expect(toolSelect.value).toBe("1"));
-  expect(dirSelect.value).toBe("1");
 
   await userEvent.click(screen.getByText("+ New"));
+  await userEvent.click(await screen.findByRole("button", { name: /^multimux — launch in/ }));
   await screen.findByTestId("term-3");
 
   const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
@@ -483,6 +482,7 @@ test("launching when grid is full grows the grid instead of blocking", async () 
   const button = await screen.findByText<HTMLButtonElement>("+ New");
   await waitFor(() => expect(button).toBeEnabled());
   await userEvent.click(button);
+  await userEvent.click(await screen.findByRole("button", { name: /^multimux — launch in/ }));
   await screen.findByTestId("term-3");
   expect(screen.getByTestId("term-1")).toBeInTheDocument();
 
@@ -1818,10 +1818,10 @@ test("clearing the filter restores the stored sizes", async () => {
 });
 
 // In all mode the launcher follows the session the user is working in, so
-// "+ New" opens a second session alongside the first without re-picking the
-// directory. The focused session's dir is a launch dir plus a subdir; both
-// halves land in the launcher.
-test("focusing a tile aims the launcher at that session's directory and subdir", async () => {
+// "+ New" opens the picker already inside that session's directory. The
+// focused session's dir is a configured root plus a subdir; the picker opens
+// at the pair.
+test("focusing a tile opens the picker in that session's directory", async () => {
   const layout = {
     shape: { rows: 1, cols: 2 },
     tiles: [
@@ -1835,19 +1835,22 @@ test("focusing a tile aims the launcher at that session's directory and subdir",
   ]);
   const { container } = render(<GridPage />);
 
-  const dirSelect = await screen.findByLabelText<HTMLSelectElement>("dir");
-  const subdir = screen.getByLabelText<HTMLInputElement>("subdirectory");
+  await screen.findByText("+ New");
   await screen.findByTestId("term-2");
 
   fireEvent.focusIn(container.querySelector('[data-tile-index="1"]')!);
-  await waitFor(() => expect(dirSelect.value).toBe("2"));
-  expect(subdir.value).toBe("pkg");
+  await userEvent.click(screen.getByText("+ New"));
+  // Crumbs are the root's name then each subdir segment: /Repos/other + pkg.
+  expect(await screen.findByRole("button", { name: "other" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "pkg" })).toBeInTheDocument();
+  await userEvent.click(screen.getByLabelText("Close directory picker"));
 
   fireEvent.focusIn(container.querySelector('[data-tile-index="0"]')!);
-  await waitFor(() => expect(dirSelect.value).toBe("1"));
-  expect(subdir.value).toBe("");
-
   await userEvent.click(screen.getByText("+ New"));
+  expect(await screen.findByRole("button", { name: "multimux" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "pkg" })).toBeNull();
+
+  await userEvent.click(screen.getByRole("button", { name: "Launch here" }));
   const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
   expect(JSON.parse(String(post?.[1]?.body))).toEqual({ toolId: 1, dirId: 1, subdir: "" });
 });
@@ -1868,14 +1871,15 @@ test("a soloed directory outranks the focused tile", async () => {
   ]);
   const { container } = render(<GridPage />);
 
-  const dirSelect = await screen.findByLabelText<HTMLSelectElement>("dir");
+  await screen.findByText("+ New");
   await screen.findByTestId("term-2");
   fireEvent.focusIn(container.querySelector('[data-tile-index="1"]')!);
-  await waitFor(() => expect(dirSelect.value).toBe("2"));
 
   await userEvent.click(screen.getByRole("button", { name: /^multimux 1/ }));
-  await waitFor(() => expect(dirSelect.value).toBe("1"));
-  expect(screen.getByLabelText<HTMLInputElement>("subdirectory").value).toBe("");
+  await userEvent.click(screen.getByText("+ New"));
+  // The soloed root, not the focused tile's /Repos/other/pkg.
+  expect(await screen.findByRole("button", { name: "multimux" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "pkg" })).toBeNull();
 });
 
 test("a soloed directory keeps its columns and order across a switch away and back", async () => {
@@ -1978,8 +1982,9 @@ test("a session launched into a soloed directory lands at the end of its view", 
   // exercised against a real overlay rather than the no-overlay path.
   await userEvent.click(screen.getByLabelText("fewer columns"));
 
-  // "+ New" is the launch button itself — one click.
+  // "/a" is under no configured root, so the picker opens on its roots.
   await userEvent.click(screen.getByText("+ New"));
+  await userEvent.click(await screen.findByRole("button", { name: /^multimux — launch in/ }));
 
   await waitFor(() => {
     const tiles = document.querySelectorAll(".tile");

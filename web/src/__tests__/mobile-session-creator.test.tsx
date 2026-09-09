@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import MobileSessionCreator from "../grid/MobileSessionCreator";
@@ -12,7 +12,8 @@ function mockLauncherDaemon(posts: Array<{ status: number; body: unknown }> = []
   let postIndex = 0;
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url.includes("/subdirs") || url.includes("/children")) return new Response("[]");
+    if (url.includes("/children")) return new Response(JSON.stringify(["src"]));
+    if (url.includes("/subdirs")) return new Response("[]");
     if (url.includes("/api/tools")) return new Response(JSON.stringify([{ id: 4, name: "codex", command: "codex" }]));
     if (url.includes("/api/dirs")) return new Response(JSON.stringify([{ id: 7, name: "repo", path: "/repo" }]));
     if (url.includes("/api/sessions") && init?.method === "POST") {
@@ -25,13 +26,13 @@ function mockLauncherDaemon(posts: Array<{ status: number; body: unknown }> = []
 
 afterEach(() => vi.restoreAllMocks());
 
-test("shows every launch choice and targets the selected session path", async () => {
+test("shows every launch choice and opens the picker at the selected session's path", async () => {
   mockLauncherDaemon();
   render(
     <MobileSessionCreator
       servers={[local, remote]}
       initialServerId="remote"
-      targetDir="/repo/web/src"
+      targetDir="/repo/web"
       targetServerId="remote"
       onCancel={vi.fn()}
       onLaunched={vi.fn()}
@@ -41,9 +42,14 @@ test("shows every launch choice and targets the selected session path", async ()
   expect(screen.getByRole("heading", { name: "New session" })).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("combobox", { name: "server" })).toHaveValue("remote"));
   expect(screen.getByRole("combobox", { name: "tool" })).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "dir" })).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "subdirectory" })).toHaveValue("web/src");
-  expect(screen.getByRole("button", { name: "Create session" })).toBeEnabled();
+  // Location is the picker's business now — no dir select, no subdir box.
+  expect(screen.queryByRole("combobox", { name: "dir" })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "subdirectory" })).toBeNull();
+
+  // Opened inside /repo/web: its children are on screen and the crumbs lead
+  // back up.
+  expect(await screen.findByText("src")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "web" })).toBeInTheDocument();
 });
 
 test("returns one ordered batch and does not close itself on failure", async () => {
@@ -60,17 +66,17 @@ test("returns one ordered batch and does not close itself on failure", async () 
   ]);
   render(<MobileSessionCreator servers={[local]} onCancel={vi.fn()} onLaunched={onLaunched} />);
 
-  const create = await screen.findByRole("button", { name: "Create session" });
-  await userEvent.click(create);
+  const root = await screen.findByText("repo");
+  await userEvent.click(root);
   expect(await screen.findByText(/launch failed/i)).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "New session" })).toBeInTheDocument();
 
-  await userEvent.click(create);
+  await userEvent.click(screen.getByText("repo"));
   await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(1));
   expect(onLaunched.mock.calls[0][1].map((session: Session) => session.id)).toEqual([41, 42]);
 });
 
-test("Back and idle Escape close without posting", async () => {
+test("Back closes without posting", async () => {
   const fetchMock = mockLauncherDaemon();
   const onCancel = vi.fn();
   render(<MobileSessionCreator servers={[local]} onCancel={onCancel} onLaunched={vi.fn()} />);
@@ -79,14 +85,11 @@ test("Back and idle Escape close without posting", async () => {
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
 });
 
-test("Escape closes suggestions before it closes the creator", async () => {
+test("Escape closes the creator", async () => {
   mockLauncherDaemon();
   const onCancel = vi.fn();
   render(<MobileSessionCreator servers={[local]} onCancel={onCancel} onLaunched={vi.fn()} />);
-  const subdir = await screen.findByRole("textbox", { name: "subdirectory" });
-  fireEvent.focus(subdir);
-  fireEvent.keyDown(subdir, { key: "Escape" });
-  expect(onCancel).not.toHaveBeenCalled();
-  fireEvent.keyDown(subdir, { key: "Escape" });
+  await screen.findByText("repo");
+  await userEvent.keyboard("{Escape}");
   expect(onCancel).toHaveBeenCalledTimes(1);
 });

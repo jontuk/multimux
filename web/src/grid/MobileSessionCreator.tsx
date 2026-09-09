@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { Server } from "../servers";
+import DirPicker from "./DirPicker";
 import SessionLauncherFields from "./SessionLauncherFields";
 import type { Session } from "./types";
 import { useSessionLauncher } from "./useSessionLauncher";
@@ -29,8 +30,8 @@ export default function MobileSessionCreator({
     return () => window.removeEventListener("keydown", close);
   }, [onCancel]);
 
-  async function submit() {
-    const batch = await launcher.launch();
+  async function launch(dirId: number, subdir: string) {
+    const batch = await launcher.launch(dirId, subdir);
     if (batch) onLaunched(batch.server, batch.sessions);
   }
 
@@ -42,23 +43,21 @@ export default function MobileSessionCreator({
         </button>
         <h1>New session</h1>
       </header>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <SessionLauncherFields
-          servers={servers}
-          model={launcher}
+      <SessionLauncherFields servers={servers} model={launcher} variant="mobile" />
+      {launcher.server && !launcher.loading && !launcher.unconfigured && (
+        <DirPicker
+          server={launcher.server}
+          dirs={launcher.dirs}
+          recents={launcher.recents}
+          start={launcher.start}
+          busy={launcher.busy}
+          error={launcher.error}
           variant="mobile"
-          onSubmit={() => void submit()}
-          onIdleEscape={onCancel}
+          onForget={(recent) => void launcher.forget(recent)}
+          onLaunch={(dirId, subdir) => void launch(dirId, subdir)}
+          onClose={onCancel}
         />
-        <button className="primary mobile-create-session" type="submit" disabled={!launcher.canLaunch}>
-          Create session
-        </button>
-      </form>
+      )}
     </section>
   );
 }

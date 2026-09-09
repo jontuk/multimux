@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { Server } from "../servers";
+import DirPicker from "./DirPicker";
 import SessionLauncherFields from "./SessionLauncherFields";
 import type { Session } from "./types";
 import { useSessionLauncher } from "./useSessionLauncher";
@@ -15,24 +17,46 @@ export default function HeaderLauncher({
   onLaunched: (server: Server, session: Session) => void;
 }) {
   const launcher = useSessionLauncher({ servers, targetDir, targetServerId });
+  const [picking, setPicking] = useState(false);
 
-  async function launch() {
-    const batch = await launcher.launch();
+  async function launch(dirId: number, subdir: string) {
+    const batch = await launcher.launch(dirId, subdir);
     if (!batch) return;
+    setPicking(false);
     for (const session of batch.sessions) onLaunched(batch.server, session);
   }
 
   return launcher.server ? (
     <div className="header-launcher">
-      <SessionLauncherFields servers={servers} model={launcher} variant="desktop" onSubmit={() => void launch()} />
+      <SessionLauncherFields servers={servers} model={launcher} variant="desktop" />
+      {/* The picker shows the model's errors while it is open, so the header
+          says nothing a scrim is covering. */}
+      {!picking && launcher.error && <span className="launcher-error">{launcher.error}</span>}
       <button
         className="launch"
         disabled={!launcher.canLaunch}
         title="launch a new session"
-        onClick={() => void launch()}
+        onClick={() => setPicking(true)}
       >
         + New
       </button>
+      {picking && (
+        <div className="dir-picker-scrim" onMouseDown={() => setPicking(false)}>
+          <div onMouseDown={(event) => event.stopPropagation()}>
+            <DirPicker
+              server={launcher.server}
+              dirs={launcher.dirs}
+              recents={launcher.recents}
+              start={launcher.start}
+              busy={launcher.busy}
+              error={launcher.error}
+              onForget={(recent) => void launcher.forget(recent)}
+              onLaunch={(dirId, subdir) => void launch(dirId, subdir)}
+              onClose={() => setPicking(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   ) : null;
 }

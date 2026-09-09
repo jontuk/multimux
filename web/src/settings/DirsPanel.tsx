@@ -27,6 +27,13 @@ export default function DirsPanel() {
       {!loading && !error && (
         <>
           {dirs.length === 0 && <p className="empty-note">No directories yet. Add one below.</p>}
+          {/* The launcher's picker walks the tree below these, so a short list
+              of broad roots is the shape that works — one entry per project
+              only makes the picker's first screen longer. */}
+          <p className="settings-note">
+            These are the places the new-session picker starts from. A couple of broad ones — your home directory, and
+            wherever you keep source — is usually enough: the picker descends from there.
+          </p>
           {dirs.length > 1 && (
             <p className="reorder-note">Drag the handle to reorder, or focus it and press the arrow keys.</p>
           )}

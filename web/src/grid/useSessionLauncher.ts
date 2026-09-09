@@ -4,16 +4,25 @@ import type { Server } from "../servers";
 import { splitUnderDir } from "./dirFilter";
 import type { Dir, Session, Tool } from "./types";
 
-const suggestionLimit = 12;
-
 export interface SessionLaunchBatch {
   server: Server;
   sessions: Session[];
 }
 
-export interface SessionLauncherOption {
-  value: string;
-  remembered: boolean;
+/**
+ * A directory launched into before, resolved back to the configured root it
+ * lives under. `path` is what the user reads; the pair is what a launch needs.
+ */
+export interface RecentDir {
+  dirId: number;
+  subdir: string;
+  path: string;
+}
+
+/** Where the picker should open when the caller has a session in mind. */
+export interface LaunchTarget {
+  dirId: number;
+  subdir: string;
 }
 
 export interface SessionLauncherModel {
@@ -22,28 +31,23 @@ export interface SessionLauncherModel {
   tools: Tool[];
   dirs: Dir[];
   toolId: number;
-  dirId: number;
-  subdir: string;
   loading: boolean;
   busy: boolean;
   error: string;
   unconfigured: "tools" | "dirs" | null;
   canLaunch: boolean;
-  suggestionsOpen: boolean;
-  highlighted: number;
-  options: SessionLauncherOption[];
-  showMenu: boolean;
+  recents: RecentDir[];
+  /** The location the picker opens at, or null to open on the landing view. */
+  start: LaunchTarget | null;
   selectServer: (id: string) => void;
   selectTool: (id: number) => void;
-  selectDir: (id: number) => void;
-  changeSubdir: (value: string) => void;
-  openSuggestions: () => void;
-  closeSuggestions: () => void;
-  clearHighlight: () => void;
-  moveHighlight: (step: -1 | 1) => void;
-  chooseOption: (index: number) => void;
-  forget: (value: string) => Promise<void>;
-  launch: () => Promise<SessionLaunchBatch | null>;
+  forget: (recent: RecentDir) => Promise<void>;
+  launch: (dirId: number, subdir: string) => Promise<SessionLaunchBatch | null>;
+}
+
+function joinPath(base: string, subdir: string): string {
+  const root = base.replace(/\/+$/, "");
+  return subdir ? `${root}/${subdir}` : root;
 }
 
 export function useSessionLauncher({
@@ -62,56 +66,30 @@ export function useSessionLauncher({
   const [tools, setTools] = useState<Tool[]>([]);
   const [dirs, setDirs] = useState<Dir[]>([]);
   const [toolId, setToolId] = useState(0);
-  const [dirId, setDirId] = useState(0);
-  const [subdir, setSubdir] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
-  const [children, setChildren] = useState<string[]>([]);
-  const [childrenOf, setChildrenOf] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(-1);
+  // Per-root launch history, keyed by dir id. Merged into `recents` in the
+  // roots' own order: the daemon records no timestamp a cross-root sort could
+  // use, so each root keeps its own recency and the roots keep theirs.
+  const [history, setHistory] = useState<Record<number, string[]>>({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [applied, setApplied] = useState<{ target: string; dirs: Dir[] } | null>(null);
   const server = servers.find((candidate) => candidate.id === serverId);
-  const selectionRef = useRef({ serverId, dirId });
+  const serverRef = useRef(serverId);
 
   useLayoutEffect(() => {
-    selectionRef.current = { serverId, dirId };
-  }, [serverId, dirId]);
+    serverRef.current = serverId;
+  }, [serverId]);
 
   function selectServer(id: string) {
-    selectionRef.current = { serverId: id, dirId: 0 };
+    serverRef.current = id;
     setServerId(id);
     setTools([]);
     setDirs([]);
     setToolId(0);
-    setDirId(0);
-    setSubdir("");
-    setHistory([]);
-    setChildren([]);
-    setChildrenOf(null);
-    setOpen(false);
-    setHighlight(-1);
+    setHistory({});
     setError("");
     setLoading(true);
   }
-
-  function selectDir(id: number) {
-    selectionRef.current = { serverId, dirId: id };
-    setDirId(id);
-    setSubdir("");
-    setHistory([]);
-    setChildren([]);
-    setChildrenOf(null);
-    setOpen(false);
-    setHighlight(-1);
-    setError("");
-  }
-
-  const cut = subdir.lastIndexOf("/");
-  const typedParent = cut < 0 ? "" : subdir.slice(0, cut + 1);
-  const typedLeaf = cut < 0 ? subdir : subdir.slice(cut + 1);
 
   useEffect(() => {
     if (!server) return;
@@ -122,9 +100,6 @@ export function useSessionLauncher({
         setTools(nextTools);
         setDirs(nextDirs);
         setToolId(nextTools[0]?.id ?? 0);
-        const autoDirId = nextDirs[0]?.id ?? 0;
-        setDirId(autoDirId);
-        selectionRef.current = { serverId, dirId: autoDirId };
         setError("");
         setLoading(false);
       })
@@ -141,104 +116,65 @@ export function useSessionLauncher({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
 
+  // One history request per configured root. Roots are few by design — the
+  // picker exists so a couple of broad ones cover everything — so this stays a
+  // handful of requests made once per server.
+  const dirIds = dirs.map((dir) => dir.id).join(",");
+  useEffect(() => {
+    if (!server || dirs.length === 0) return;
+    let stale = false;
+    Promise.all(
+      dirs.map((dir) =>
+        getJSON<string[]>(server, `/api/dirs/${dir.id}/subdirs`)
+          .then((subdirs) => [dir.id, subdirs] as const)
+          .catch(() => [dir.id, [] as string[]] as const),
+      ),
+    ).then((pairs) => {
+      if (stale) return;
+      setHistory(Object.fromEntries(pairs));
+    });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverId, dirIds]);
+
+  const recents: RecentDir[] = dirs.flatMap((dir) =>
+    (history[dir.id] ?? []).map((subdir) => ({ dirId: dir.id, subdir, path: joinPath(dir.path, subdir) })),
+  );
+
+  // A caller with a session in mind (the tile that asked for a sibling) opens
+  // the picker in that session's directory. No match — another daemon's path,
+  // or a root since removed — leaves the picker on its landing view.
   const mine = targetServerId === null || targetServerId === serverId;
-  if (targetDir !== null && mine && dirs.length > 0 && (applied?.target !== targetDir || applied.dirs !== dirs)) {
-    setApplied({ target: targetDir, dirs });
-    const match = splitUnderDir(dirs, targetDir);
-    if (match && (match.dirId !== dirId || match.subdir !== subdir)) {
-      setDirId(match.dirId);
-      setSubdir(match.subdir);
-      setChildren([]);
-      setChildrenOf(null);
-      setOpen(false);
-      setHighlight(-1);
-      setError("");
-    }
-  }
+  const start = targetDir !== null && mine && dirs.length > 0 ? splitUnderDir(dirs, targetDir) : null;
 
-  useEffect(() => {
-    if (!server || dirId <= 0) return;
-    let stale = false;
-    getJSON<string[]>(server, `/api/dirs/${dirId}/subdirs`)
-      .then((nextHistory) => {
-        if (!stale) setHistory(nextHistory);
-      })
-      .catch(() => {
-        if (!stale) setHistory([]);
-      });
-    return () => {
-      stale = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverId, dirId]);
-
-  useEffect(() => {
-    if (!server || dirId <= 0 || !open) return;
-    let stale = false;
-    const parent = typedParent;
-    getJSON<string[]>(server, `/api/dirs/${dirId}/children?path=${encodeURIComponent(parent)}`)
-      .then((nextChildren) => {
-        if (stale) return;
-        setChildren(nextChildren);
-        setChildrenOf(parent);
-      })
-      .catch(() => {
-        if (stale) return;
-        setChildren([]);
-        setChildrenOf(parent);
-      });
-    return () => {
-      stale = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverId, dirId, typedParent, open]);
-
-  const canLaunch = !loading && !busy && toolId > 0 && dirId > 0;
-  const needle = subdir.trim().toLowerCase();
-  const filtered = history.filter((item) => item.toLowerCase().includes(needle));
-  const leaf = typedLeaf.toLowerCase();
-  const suggestions =
-    childrenOf === typedParent
-      ? children
-          .filter((name) => name.toLowerCase().startsWith(leaf))
-          .filter((name) => leaf.startsWith(".") || !name.startsWith("."))
-          .map((name) => typedParent + name)
-          .filter((path) => path !== subdir.trim() && !filtered.includes(path))
-          .slice(0, suggestionLimit)
-      : [];
-  const options = [
-    ...filtered.map((value) => ({ value, remembered: true })),
-    ...suggestions.map((value) => ({ value, remembered: false })),
-  ];
-  const showMenu = open && options.length > 0;
-
-  async function forget(value: string) {
+  async function forget(recent: RecentDir) {
     if (!server) return;
-    const issuedFor = selectionRef.current;
-    const previous = history;
-    setHistory((items) => items.filter((item) => item !== value));
-    setHighlight(-1);
+    const issuedFor = serverRef.current;
+    const previous = history[recent.dirId] ?? [];
+    setHistory((all) => ({ ...all, [recent.dirId]: previous.filter((item) => item !== recent.subdir) }));
     try {
-      await del(server, `/api/dirs/${issuedFor.dirId}/subdirs?subdir=${encodeURIComponent(value)}`);
+      await del(server, `/api/dirs/${recent.dirId}/subdirs?subdir=${encodeURIComponent(recent.subdir)}`);
     } catch (reason) {
-      const current = selectionRef.current;
-      if (current.serverId !== issuedFor.serverId || current.dirId !== issuedFor.dirId) return;
-      setHistory(previous);
-      setError(`couldn't forget ${value}: ${reason instanceof Error ? reason.message : reason}`);
+      if (serverRef.current !== issuedFor) return;
+      setHistory((all) => ({ ...all, [recent.dirId]: previous }));
+      setError(`couldn't forget ${recent.path}: ${reason instanceof Error ? reason.message : reason}`);
     }
   }
 
-  async function launch(): Promise<SessionLaunchBatch | null> {
-    if (!server || !canLaunch) return null;
-    const issuedFor = selectionRef.current;
+  const canLaunch = !loading && !busy && toolId > 0 && dirs.length > 0;
+
+  async function launch(dirId: number, subdir: string): Promise<SessionLaunchBatch | null> {
+    if (!server || !canLaunch || dirId <= 0) return null;
+    const issuedFor = serverRef.current;
     setBusy(true);
     setError("");
     try {
       const sessions = await postJSON<Session[]>(server, "/api/sessions", { toolId, dirId, subdir });
       const used = subdir.trim();
-      const current = selectionRef.current;
-      if (used && current.serverId === issuedFor.serverId && current.dirId === issuedFor.dirId) {
-        setHistory((items) => [used, ...items.filter((item) => item !== used)]);
+      if (used && serverRef.current === issuedFor) {
+        setHistory((all) => ({ ...all, [dirId]: [used, ...(all[dirId] ?? []).filter((item) => item !== used)] }));
       }
       return { server, sessions };
     } catch (reason) {
@@ -255,52 +191,18 @@ export function useSessionLauncher({
     tools,
     dirs,
     toolId,
-    dirId,
-    subdir,
     loading,
     busy,
     error,
     unconfigured:
       !loading && !error && tools.length === 0 ? "tools" : !loading && !error && dirs.length === 0 ? "dirs" : null,
     canLaunch,
-    suggestionsOpen: open,
-    highlighted: highlight,
-    options,
-    showMenu,
+    recents,
+    start,
     selectServer,
     selectTool(id) {
       setToolId(id);
       setError("");
-    },
-    selectDir,
-    changeSubdir(value) {
-      setSubdir(value);
-      setOpen(true);
-      setHighlight(-1);
-      setError("");
-    },
-    openSuggestions() {
-      setOpen(true);
-    },
-    closeSuggestions() {
-      setOpen(false);
-      setHighlight(-1);
-    },
-    clearHighlight() {
-      setHighlight(-1);
-    },
-    moveHighlight(step) {
-      if (options.length === 0) return;
-      setOpen(true);
-      setHighlight((current) =>
-        current < 0 ? (step > 0 ? 0 : options.length - 1) : (current + step + options.length) % options.length,
-      );
-    },
-    chooseOption(index) {
-      if (index < 0 || index >= options.length) return;
-      setSubdir(options[index].value);
-      setHighlight(-1);
-      setOpen(false);
     },
     forget,
     launch,
