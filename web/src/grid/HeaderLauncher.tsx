@@ -32,31 +32,38 @@ export default function HeaderLauncher({
       {/* The picker shows the model's errors while it is open, so the header
           says nothing a scrim is covering. */}
       {!picking && launcher.error && <span className="launcher-error">{launcher.error}</span>}
-      <button
-        className="launch"
-        disabled={!launcher.canLaunch}
-        title="launch a new session"
-        onClick={() => setPicking(true)}
-      >
-        + New
-      </button>
-      {picking && (
-        <div className="dir-picker-scrim" onMouseDown={() => setPicking(false)}>
-          <div onMouseDown={(event) => event.stopPropagation()}>
-            <DirPicker
-              server={launcher.server}
-              dirs={launcher.dirs}
-              recents={launcher.recents}
-              start={launcher.start}
-              busy={launcher.busy}
-              error={launcher.error}
-              onForget={(recent) => void launcher.forget(recent)}
-              onLaunch={(dirId, subdir) => void launch(dirId, subdir)}
-              onClose={() => setPicking(false)}
-            />
-          </div>
-        </div>
-      )}
+      {/* The picker hangs off the button that opens it rather than floating in
+          the middle of the page: it is that button's menu, and the directory
+          it lands on is what "+ New" will do. The scrim behind it is only a
+          click-away target. */}
+      <div className="launcher-anchor">
+        <button
+          className="launch"
+          disabled={!launcher.canLaunch}
+          title="launch a new session"
+          onClick={() => setPicking(true)}
+        >
+          + New
+        </button>
+        {picking && (
+          <>
+            <div className="dir-picker-scrim" onMouseDown={() => setPicking(false)} />
+            <div className="dir-picker-pop">
+              <DirPicker
+                server={launcher.server}
+                dirs={launcher.dirs}
+                recents={launcher.recents}
+                start={launcher.start}
+                busy={launcher.busy}
+                error={launcher.error}
+                onForget={(recent) => void launcher.forget(recent)}
+                onLaunch={(dirId, subdir) => void launch(dirId, subdir)}
+                onClose={() => setPicking(false)}
+              />
+            </div>
+          </>
+        )}
+      </div>
     </div>
   ) : null;
 }

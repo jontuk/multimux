@@ -433,18 +433,35 @@ a {
   max-width: 11rem;
 }
 
-/* The picker floats over the grid rather than in the header's flex row: it is
-   a whole navigation surface, and the header has no room to grow one. The
-   scrim closes it on an outside press. */
+/* The picker leaves the header's flex row — it is a whole navigation surface,
+   and the header has no room to grow one — but stays pinned to the button that
+   opened it. The scrim only catches the click that closes it. */
+.launcher-anchor {
+  position: relative;
+  flex: 0 0 auto;
+}
+
 .dir-picker-scrim {
   position: fixed;
   inset: 0;
   z-index: 30;
   background: rgb(0 0 0 / 35%);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 4rem 1rem 1rem;
+}
+
+/* Left-aligned with "+ New", flipping to right-aligned when the button sits
+   close enough to the right edge that the panel would overflow. */
+.dir-picker-pop {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 31;
+}
+
+@media (max-width: 60rem) {
+  .dir-picker-pop {
+    left: auto;
+    right: 0;
+  }
 }
 
 .dir-picker {
