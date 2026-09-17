@@ -101,6 +101,18 @@ export function setColSizes(layout: Layout, row: number, sizes: number[]): Layou
   return normalize(layout.tiles, layout.shape.cols, layout.rowSizes, cols);
 }
 
+/**
+ * Take another layout's sizes onto this one, keeping the tiles. A track set
+ * whose count does not fit this layout's shape is left as it was rather than
+ * reset, so a size edit made on a differently shaped view changes nothing.
+ */
+export function adoptSizes(layout: Layout, sizes: Pick<Layout, "rowSizes" | "colSizes">): Layout {
+  const { rows, cols } = layout.shape;
+  const rowSizes = sizes.rowSizes?.length === rows ? sizes.rowSizes : layout.rowSizes;
+  const colSizes = sizes.colSizes?.length === rows ? sizes.colSizes : layout.colSizes;
+  return normalize(layout.tiles, cols, rowSizes, colSizes);
+}
+
 /** Stable identity for a tile: its session, on its server. */
 export function tileKey(t: NonNullable<Tile>): string {
   return `${t.serverId}:${t.sessionId}`;

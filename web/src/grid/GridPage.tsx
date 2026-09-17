@@ -4,6 +4,7 @@ import { del, getJSON, putJSON } from "../api";
 import { connectServer, listServers, localServer, removeServer, type Server } from "../servers";
 import {
   addTile,
+  adoptSizes,
   emptyLayout,
   normalize,
   removeTile,
@@ -931,18 +932,22 @@ export default function GridPage({
               ...view.tiles.map((tile: Tile, i: number) => renderTile(tile, i, realIndex(i) ?? i, false)),
               ...offscreen.map(({ tile, real }) => renderTile(tile, real, real, true)),
             ]}
+            {/* The dividers hand back the on-screen view with new sizes. Under
+                a solo those belong to the overlay; otherwise only the sizes are
+                taken — the view is the filtered grid, so adopting it whole
+                would drop every hidden tile from the stored layout. */}
             <GridDividers
               layout={view}
               containerRef={gridRef}
               onPreview={(next) =>
                 activeSolo !== null
                   ? editOverlay((o) => ({ ...o, rowSizes: next.rowSizes!, colSizes: next.colSizes! }), false)
-                  : adoptLayout(next)
+                  : adoptLayout(adoptSizes(layoutRef.current, next))
               }
               onCommit={(next) =>
                 activeSolo !== null
                   ? editOverlay((o) => ({ ...o, rowSizes: next.rowSizes!, colSizes: next.colSizes! }))
-                  : persist(() => next)
+                  : persist((l) => adoptSizes(l, next))
               }
             />
           </div>

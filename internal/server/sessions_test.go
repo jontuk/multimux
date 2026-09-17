@@ -262,6 +262,44 @@ func TestCreateSessionSubdir(t *testing.T) {
 	}
 }
 
+// resolveSubdir returns the lexical join, not the symlink-resolved path. That
+// is only safe because Join cleans `..` before any symlink is followed: a
+// symlink inside base pointing deeper into base must not let `link/../..`
+// pass the resolved-path check while the lexical join lands outside base.
+func TestResolveSubdirLexicalEscape(t *testing.T) {
+	parent := t.TempDir()
+	base := filepath.Join(parent, "base")
+	if err := os.MkdirAll(filepath.Join(base, "x", "y"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(parent, "z"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "z"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "x", "y"), filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, subdir := range []string{"link/../../z", "link/../../../z", "x/y/../../../z"} {
+		if got, err := resolveSubdir(base, subdir); err == nil {
+			t.Errorf("resolveSubdir(%q) = %q, want error", subdir, got)
+		}
+	}
+	// Dot-dot that stays inside is still fine, as is descending through the link.
+	for subdir, want := range map[string]string{
+		"x/y/..": filepath.Join(base, "x"),
+		"link":   filepath.Join(base, "link"),
+		"./z":    filepath.Join(base, "z"),
+		"x/../z": filepath.Join(base, "z"),
+	} {
+		got, err := resolveSubdir(base, subdir)
+		if err != nil || got != want {
+			t.Errorf("resolveSubdir(%q) = %q, %v; want %q", subdir, got, err, want)
+		}
+	}
+}
+
 // The configured dirs are the whole allow-list of launch locations: a subdir
 // must not reach outside one, and must not create anything.
 func TestCreateSessionSubdirRejected(t *testing.T) {

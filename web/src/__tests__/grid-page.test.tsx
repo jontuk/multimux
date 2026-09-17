@@ -1337,6 +1337,39 @@ test("dragging a row divider persists new row heights", async () => {
   });
 });
 
+test("a divider drag under a multi-directory filter keeps the hidden tiles", async () => {
+  const fetchMock = mockFetch({
+    shape: { rows: 3, cols: 1 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 2 },
+      { serverId: "local", sessionId: 5 },
+    ],
+  });
+  localStorage.setItem("multimux.soloDir", JSON.stringify(["/a", "/b"]));
+  gridRect(1000, 1000);
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  // /d is filtered out but stays mounted offscreen. (Clear here: the previous
+  // test's teardown unmounts land after afterEach has already cleared.)
+  expect(screen.getByTestId("term-5")).toBeInTheDocument();
+  terminalLifecycle.unmounted.mockClear();
+  const divider = document.querySelector('[data-divider="row-0"]') as HTMLElement;
+
+  fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 500 });
+  fireEvent.pointerMove(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+  fireEvent.pointerUp(divider, { pointerId: 1, clientX: 500, clientY: 300 });
+
+  // The stored layout must never shrink to the filtered view.
+  expect(screen.getByTestId("term-5")).toBeInTheDocument();
+  expect(terminalLifecycle.unmounted).not.toHaveBeenCalled();
+  for (const [url, init] of fetchMock.mock.calls) {
+    if (!String(url).includes("/api/layout") || init?.method !== "PUT") continue;
+    const body = JSON.parse(String(init.body));
+    expect(body.tiles.filter((t: unknown) => t !== null)).toHaveLength(3);
+  }
+});
+
 test("a column divider only changes its own row", async () => {
   const fetchMock = mockFetch({
     shape: { rows: 2, cols: 2 },
