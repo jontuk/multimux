@@ -14,21 +14,33 @@ import type { DirButton } from "./dirFilter";
 export default function DirFilterBar({
   dirs,
   solo,
+  selected,
   onSolo,
+  onAdd,
   onClose,
 }: {
   dirs: DirButton[];
-  solo: string | null;
+  solo?: string | null;
+  selected?: string[] | null;
   onSolo: (path: string) => void;
+  onAdd?: (path: string) => void;
   onClose: (path: string) => void;
 }) {
   if (dirs.length === 0) return null;
+  const activeList = selected !== undefined ? selected : solo !== null && solo !== undefined ? [solo] : null;
+  const activeSet = activeList ? new Set(activeList) : null;
+  const hasFilter = activeSet !== null;
   return (
     <div className="dir-filter">
       {dirs.map((d) => {
-        const on = solo === d.path;
-        const off = solo !== null && !on;
-        const action = on ? "show all directories" : `show only sessions in ${d.path}`;
+        const on = activeSet !== null && activeSet.has(d.path);
+        const off = hasFilter && !on;
+        const action = on
+          ? activeSet.size > 1
+            ? `show only sessions in ${d.path}`
+            : "show all directories"
+          : `show only sessions in ${d.path}`;
+        const addAction = `show sessions in ${d.path} as well`;
         const closeAction = `close ${d.count} session${d.count === 1 ? "" : "s"} in ${d.path}`;
         return (
           <span
@@ -53,6 +65,18 @@ export default function DirFilterBar({
               {d.name}
               <span className="dir-filter-count">{d.count}</span>
             </button>
+            {off && onAdd && (
+              <button
+                className="dir-filter-add"
+                // Nothing here is readable text, so the label replaces it rather
+                // than leading it.
+                aria-label={addAction}
+                title={addAction}
+                onClick={() => onAdd(d.path)}
+              >
+                +
+              </button>
+            )}
             <button
               className="dir-filter-close"
               // Nothing here is readable text, so the label replaces it rather

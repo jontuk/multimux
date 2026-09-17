@@ -1550,6 +1550,43 @@ test("clicking a dir button solos that directory's tiles and quick-add buttons",
   expect(soloDir()).toBeNull();
 });
 
+test("clicking + on an unselected dir pill selects that directory in addition to current selection", async () => {
+  mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  // Running dirs: /a (session 1, placed), /b (session 2, unplaced), /d (session 5, unplaced)
+  // Initially no filter is active, so no + button exists.
+  expect(document.querySelector(".dir-filter-add")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /show sessions in .* as well/ })).not.toBeInTheDocument();
+
+  // Solo /a: /b and /d now offer a + button.
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "show sessions in /b as well" })).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "show sessions in /d as well" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "show sessions in /a as well" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /add to grid — \/b/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /add to grid — \/d/ })).not.toBeInTheDocument();
+
+  // Click + on /b: now both /a and /b are selected!
+  await userEvent.click(screen.getByRole("button", { name: "show sessions in /b as well" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /add to grid — \/b/ })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /add to grid — \/d/ })).not.toBeInTheDocument();
+  expect(screen.getByTestId("term-1")).toBeInTheDocument();
+
+  // Neither /a nor /b has +, while /d still does.
+  expect(screen.queryByRole("button", { name: "show sessions in /a as well" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "show sessions in /b as well" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "show sessions in /d as well" })).toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("multimux.soloDir")!)).toEqual(["/a", "/b"]);
+
+  // Clicking an already selected button solos that directory (makes it the only selected directory).
+  await userEvent.click(screen.getByRole("button", { name: /show only sessions in \/a/ }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: /add to grid — \/b/ })).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "show sessions in /b as well" })).toBeInTheDocument();
+  expect(soloDir()).toBe("/a");
+});
+
 test("Ctrl+Alt+arrows rotate the solo and Ctrl+Alt+0 clears it", async () => {
   mockFetch({ shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] });
   render(<GridPage />);

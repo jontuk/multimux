@@ -1,9 +1,12 @@
 import {
   cycleSolo,
   dirButtons,
+  effectiveDirs,
   effectiveSolo,
   filterLayout,
   leafName,
+  selectedDirs,
+  setSelectedDirs,
   setSoloDir,
   soloDir,
   splitUnderDir,
@@ -25,22 +28,41 @@ afterEach(() => localStorage.clear());
 
 test("soloDir is null when nothing is stored", () => {
   expect(soloDir()).toBeNull();
+  expect(selectedDirs()).toBeNull();
 });
 
-test("soloDir round-trips through localStorage", () => {
+test("soloDir and selectedDirs round-trip through localStorage", () => {
   setSoloDir("/a");
   expect(localStorage.getItem("multimux.soloDir")).toBe('"/a"');
   expect(soloDir()).toBe("/a");
+  expect(selectedDirs()).toEqual(["/a"]);
   setSoloDir(null);
   expect(localStorage.getItem("multimux.soloDir")).toBe("null");
   expect(soloDir()).toBeNull();
+  expect(selectedDirs()).toBeNull();
 });
 
-test("soloDir ignores corrupt storage and non-strings", () => {
+test("selectedDirs round-trips multiple directories through localStorage", () => {
+  setSelectedDirs(["/a", "/b"]);
+  expect(localStorage.getItem("multimux.soloDir")).toBe('["/a","/b"]');
+  expect(selectedDirs()).toEqual(["/a", "/b"]);
+  expect(soloDir()).toBeNull();
+
+  setSelectedDirs([]);
+  expect(localStorage.getItem("multimux.soloDir")).toBe("null");
+  expect(selectedDirs()).toBeNull();
+});
+
+test("soloDir and selectedDirs ignore corrupt storage and non-strings", () => {
   localStorage.setItem("multimux.soloDir", "{oops");
   expect(soloDir()).toBeNull();
+  expect(selectedDirs()).toBeNull();
   localStorage.setItem("multimux.soloDir", "7");
   expect(soloDir()).toBeNull();
+  expect(selectedDirs()).toBeNull();
+  localStorage.setItem("multimux.soloDir", "[1, 2]");
+  expect(soloDir()).toBeNull();
+  expect(selectedDirs()).toBeNull();
 });
 
 test("soloDir ignores a value left by the old hidden-dirs behaviour", () => {
@@ -93,6 +115,19 @@ test("effectiveSolo falls back to showing everything when the button is gone", (
   expect(effectiveSolo("/a", [button("/b")])).toBeNull();
   expect(effectiveSolo("/a", [])).toBeNull();
   expect(soloDir()).toBe("/a");
+});
+
+test("effectiveDirs is null when nothing is selected", () => {
+  expect(effectiveDirs(null, [button("/a")])).toBeNull();
+  expect(effectiveDirs([], [button("/a")])).toBeNull();
+});
+
+test("effectiveDirs returns the active directories that have buttons", () => {
+  expect(effectiveDirs(["/a", "/b", "/c"], [button("/a"), button("/b")])).toEqual(["/a", "/b"]);
+});
+
+test("effectiveDirs falls back to null when none of the selected directories have buttons", () => {
+  expect(effectiveDirs(["/c"], [button("/a"), button("/b")])).toBeNull();
 });
 
 test("cycleSolo walks forward from show-all through the buttons and back", () => {

@@ -846,18 +846,32 @@ a {
   cursor: pointer;
 }
 
-/* Close is the second half of the pill: quiet until the pointer or keyboard
-   is on the pill, so a row of directories does not read as a row of × marks,
-   and never so small it misses a thumb. */
+/* Add and Close are the actions on the pill: quiet until the pointer or
+   keyboard is on the pill, so a row of directories does not read as a row
+   of marks, and never so small they miss a thumb. */
+.dir-filter-add,
 .dir-filter-close {
-  padding: 0.2rem 0.5rem 0.2rem 0.15rem;
   color: var(--muted);
   opacity: 0.6;
 }
 
+.dir-filter-add {
+  padding: 0.2rem 0.25rem 0.2rem 0.15rem;
+}
+
+.dir-filter-close {
+  padding: 0.2rem 0.5rem 0.2rem 0.15rem;
+}
+
+.dir-filter-item:hover .dir-filter-add,
+.dir-filter-item:focus-within .dir-filter-add,
 .dir-filter-item:hover .dir-filter-close,
 .dir-filter-item:focus-within .dir-filter-close {
   opacity: 1;
+}
+
+.dir-filter-add:hover {
+  color: var(--ink);
 }
 
 .dir-filter-close:hover {

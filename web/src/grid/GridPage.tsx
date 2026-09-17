@@ -28,7 +28,7 @@ import type { Session, Tool } from "./types";
 import { gitStateTitles, sessionTitle, TrackingMarks } from "./SessionMetadata";
 import { dirTintStyle } from "./dirColor";
 import DirFilterBar from "./DirFilterBar";
-import { cycleSolo, dirButtons, effectiveSolo, filterLayout, setSoloDir, soloDir } from "./dirFilter";
+import { cycleSolo, dirButtons, effectiveDirs, filterLayout, selectedDirs, setSelectedDirs } from "./dirFilter";
 import { endedTileKeys } from "./endedSessions";
 import { applyOverlay, orderOf, seedOverlay, setViewOverlay, swapOrder, viewOverlay, type Overlay } from "./viewLayout";
 
@@ -176,9 +176,10 @@ export default function GridPage({
   const [servers, setServers] = useState(() => listServers());
   const [paneTextTarget, setPaneTextTarget] = useState<PaneTextTarget | null>(null);
 
-  // Browser-local view filter: the one directory shown on its own, or null for
-  // all of them. Not persisted server-side and never written into the layout.
-  const [solo, setSolo] = useState<string | null>(() => soloDir());
+  // Browser-local view filter: the directory (or directories) shown on their
+  // own, or null for all of them. Not persisted server-side and never written
+  // into the layout.
+  const [selected, setSelected] = useState<string[] | null>(() => selectedDirs());
 
   // The soloed directory's own arrangement — columns, splitter sizes and tile
   // order. Mirrors localStorage so a re-render does not re-read it; null means
@@ -186,28 +187,35 @@ export default function GridPage({
   // and renders exactly as the stored layout does.
   const [overlay, setOverlay] = useState<Overlay | null>(null);
 
-  // A click solos that directory; a click on the soloed one shows every
-  // directory again.
+  // A click on an unselected directory solos that directory; a click on an
+  // already soloed directory when multiple are selected solos it; a click
+  // on the sole selected directory returns to showing every directory.
   const toggleDir = useCallback((path: string) => {
-    setSolo((prev) => (prev === path ? null : path));
+    setSelected((prev) => (prev?.length === 1 && prev[0] === path ? null : [path]));
   }, []);
 
-  // Show a directory that is not the solo, by clearing the solo rather than
-  // moving it: attaching or launching from an empty tile asks for that tile to
-  // be visible, not for everything else on screen to silently change. Written
-  // as a state updater — the only place allowed to decide — so a stale read of
-  // `solo` in a handler's closure cannot re-solo something.
+  // Add a directory to the currently selected directories.
+  const addDir = useCallback((path: string) => {
+    setSelected((prev) => (prev ? (prev.includes(path) ? prev : [...prev, path]) : [path]));
+  }, []);
+
+  // Show a directory that is not selected, by clearing the selection rather
+  // than moving it: attaching or launching from an empty tile asks for that
+  // tile to be visible, not for everything else on screen to silently change.
+  // Written as a state updater — the only place allowed to decide — so a stale
+  // read of `selected` in a handler's closure cannot re-solo something.
   const showDir = useCallback((path: string) => {
-    setSolo((prev) => (prev === null || prev === path ? prev : null));
+    setSelected((prev) => (prev === null || prev.includes(path) ? prev : null));
   }, []);
 
   // The updaters above stay pure — StrictMode runs them twice — so the side
-  // effect of a changed solo lives here: persist the selection. The overlay is
-  // loaded from `activeSolo` below, not here, because a stored solo whose
-  // directory has no button is not in effect and must not load an arrangement.
+  // effect of a changed selection lives here: persist the selection. The
+  // overlay is loaded from `activeSolo` below, not here, because a stored path
+  // whose directory has no button is not in effect and must not load an
+  // arrangement.
   useEffect(() => {
-    setSoloDir(solo);
-  }, [solo]);
+    setSelectedDirs(selected);
+  }, [selected]);
 
   // Mirrors `layout` so edits always build on the newest state, not the state
   // captured when a handler's closure was created.
@@ -420,11 +428,13 @@ export default function GridPage({
   );
 
   const dirs = useMemo(() => dirButtons(servers, sessionsByServer), [servers, sessionsByServer]);
-  // A stored solo whose directory has no button is not in effect this render,
-  // so the grid is unfiltered rather than filtered by something the user
-  // cannot see. The stored value stays put and comes back when its button
-  // does.
-  const activeSolo = effectiveSolo(solo, dirs);
+  // The directories actually in effect for this render. A stored path whose
+  // directory has no button is not in effect this render, so the grid is
+  // unfiltered rather than filtered by something the user cannot see. The
+  // stored value stays put and comes back when its button does.
+  const activeDirs = useMemo(() => effectiveDirs(selected, dirs), [selected, dirs]);
+  const activeSet = useMemo(() => (activeDirs ? new Set(activeDirs) : null), [activeDirs]);
+  const activeSolo = activeDirs && activeDirs.length === 1 ? activeDirs[0] : null;
 
   // Load the arrangement for whichever directory is soloed. A directory with
   // no stored overlay reads null and renders as the stored layout does.
@@ -460,21 +470,26 @@ export default function GridPage({
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      setSolo(next);
+      setSelected(next ? [next] : null);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [activeSolo, dirs, paneTextTarget]);
 
-  // With a solo in effect a tile shows iff its session's directory is the
-  // solo, whatever the session's status — an ended session in the soloed
-  // directory still needs its dismiss button. A tile whose session is unknown
-  // (server removed, sessions not loaded yet) has no directory to match and so
-  // hides; the soloed directory has a button on screen by construction, so the
-  // way back is always one click.
+  // With a dir filter in effect a tile shows iff its session's directory is
+  // in the selection, whatever the session's status — an ended session in a
+  // selected directory still needs its dismiss button. A tile whose session is
+  // unknown (server removed, sessions not loaded yet) has no directory to match
+  // and so hides; the selected directory has a button on screen by
+  // construction, so the way back is always one click.
   const { view: packed, map: packedMap } = useMemo(
-    () => filterLayout(layout, (tile) => activeSolo === null || sessionFor(tile)?.dir === activeSolo),
-    [layout, activeSolo, sessionFor],
+    () =>
+      filterLayout(layout, (tile) => {
+        if (activeSet === null) return true;
+        const dir = sessionFor(tile)?.dir;
+        return dir !== undefined && activeSet.has(dir);
+      }),
+    [layout, activeSet, sessionFor],
   );
   // A soloed directory renders through its overlay: tiles reordered, columns
   // and sizes taken from the overlay, and `map` rebuilt to follow the tiles.
@@ -483,7 +498,7 @@ export default function GridPage({
   const { view, map } = useMemo(() => applyOverlay(packed, packedMap, overlay), [packed, packedMap, overlay]);
   // Index in the stored layout for a slot on screen. Empty view slots have no
   // counterpart while soloed, so drops onto them are ignored below.
-  const realIndex = (i: number): number | undefined => (activeSolo !== null ? map[i] : i);
+  const realIndex = (i: number): number | undefined => (activeDirs !== null ? map[i] : i);
 
   // The tiles the solo filtered out, with their index in the stored layout.
   // They are still rendered below, just hidden: unmounting one disposes its
@@ -492,12 +507,12 @@ export default function GridPage({
   // whatever it landed on. They carry the same tileKey as when visible, so
   // React moves the existing node back into place instead of rebuilding it.
   const offscreen = useMemo(() => {
-    if (activeSolo === null) return [];
+    if (activeDirs === null) return [];
     const shown = new Set(view.tiles.filter((t): t is NonNullable<Tile> => t !== null).map(tileKey));
     return layout.tiles
       .map((tile, real) => ({ tile, real }))
       .filter((e): e is { tile: NonNullable<Tile>; real: number } => e.tile !== null && !shown.has(tileKey(e.tile)));
-  }, [layout, view, activeSolo]);
+  }, [layout, view, activeDirs]);
 
   // Presentation edits made under a solo belong to that directory, not to the
   // stored layout — that is what keeps the unfiltered grid from being
@@ -539,10 +554,14 @@ export default function GridPage({
     const keys = new Set(doomed.map(({ server, id }) => tileKey({ serverId: server.id, sessionId: id })));
     // One layout write for the batch, not one per session.
     persist((l) => removeTilesWhere(l, (t) => keys.has(tileKey(t))));
-    // The directory is about to lose its button, and a solo with no button is
-    // not in effect anyway — clear it rather than leave it in storage to
+    // The directory is about to lose its button, and a selection with no button
+    // is not in effect anyway — remove it rather than leave it in storage to
     // reappear if the directory ever comes back.
-    setSolo((prev) => (prev === path ? null : prev));
+    setSelected((prev) => {
+      if (!prev) return null;
+      const next = prev.filter((p) => p !== path);
+      return next.length > 0 ? next : null;
+    });
     refreshSessions();
   }
 
@@ -555,18 +574,18 @@ export default function GridPage({
         (sess) =>
           sess.status === "running" &&
           !placed.has(`${server.id}:${sess.id}`) &&
-          (activeSolo === null || sess.dir === activeSolo),
+          (activeSet === null || activeSet.has(sess.dir)),
       )
       .map((sess) => ({ server, sess })),
   );
 
   // Currently visible directories on the grid, offered under the "Current"
-  // section in "+ New". Under a solo, only the soloed directory is visible;
-  // otherwise, the directories of all visible tiles.
+  // section in "+ New". Under a dir filter, only the filtered directories are
+  // visible; otherwise, the directories of all visible tiles.
   const visibleDirs = useMemo(() => {
     const set = new Set<string>();
-    if (activeSolo !== null) {
-      set.add(activeSolo);
+    if (activeSet !== null) {
+      for (const d of activeSet) set.add(d);
     } else {
       for (const tile of view.tiles) {
         if (!tile) continue;
@@ -575,7 +594,7 @@ export default function GridPage({
       }
     }
     return [...set].sort((a, b) => a.localeCompare(b));
-  }, [activeSolo, view.tiles, sessionFor]);
+  }, [activeSet, view.tiles, sessionFor]);
 
   const headerControls = (
     <div className="header-controls">
@@ -595,7 +614,7 @@ export default function GridPage({
           activeSolo !== null ? editOverlay((o) => ({ ...o, cols: c })) : persist((l) => setCols(l, c))
         }
       />
-      <DirFilterBar dirs={dirs} solo={activeSolo} onSolo={toggleDir} onClose={closeDir} />
+      <DirFilterBar dirs={dirs} selected={activeDirs} onSolo={toggleDir} onAdd={addDir} onClose={closeDir} />
       {unplaced.length > 0 && (
         <div className="unplaced-sessions">
           {unplaced.map(({ server, sess }) => (

@@ -10,21 +10,42 @@ import { normalize, type Layout, type Tile } from "./model";
 const KEY = "multimux.soloDir";
 
 /**
- * The one full path this browser is showing on its own, or null for all of
- * them. Null is the default, so a directory seen for the first time shows
+ * The full paths this browser is filtering to, or null for all of them.
+ * Null is the default, so a directory seen for the first time shows
  * without being enumerated anywhere.
  */
-export function soloDir(): string | null {
+export function selectedDirs(): string[] | null {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    return typeof raw === "string" ? raw : null;
+    if (typeof raw === "string") return [raw];
+    if (Array.isArray(raw) && raw.every((s) => typeof s === "string") && raw.length > 0) return raw;
+    return null;
   } catch {
     return null;
   }
 }
 
+export function setSelectedDirs(paths: string[] | null) {
+  if (!paths || paths.length === 0) {
+    localStorage.setItem(KEY, "null");
+  } else if (paths.length === 1) {
+    localStorage.setItem(KEY, JSON.stringify(paths[0]));
+  } else {
+    localStorage.setItem(KEY, JSON.stringify(paths));
+  }
+}
+
+/**
+ * The one full path this browser is showing on its own, or null for all of
+ * them (or when multiple directories are selected).
+ */
+export function soloDir(): string | null {
+  const dirs = selectedDirs();
+  return dirs && dirs.length === 1 ? dirs[0] : null;
+}
+
 export function setSoloDir(path: string | null) {
-  localStorage.setItem(KEY, JSON.stringify(path));
+  setSelectedDirs(path ? [path] : null);
 }
 
 // Last path segment, trailing slashes ignored. Root (and anything else that
@@ -88,6 +109,16 @@ export function splitUnderDir(dirs: Dir[], path: string): { dirId: number; subdi
 // cannot see or dismiss.
 export function effectiveSolo(solo: string | null, dirs: DirButton[]): string | null {
   return solo !== null && dirs.some((d) => d.path === solo) ? solo : null;
+}
+
+// The directories that are actually in effect for this render. Stored paths
+// with no button are ignored; if none of the stored paths match a button,
+// the grid behaves as unfiltered (null).
+export function effectiveDirs(selected: string[] | null, dirs: DirButton[]): string[] | null {
+  if (!selected) return null;
+  const available = new Set(dirs.map((d) => d.path));
+  const active = selected.filter((path) => available.has(path));
+  return active.length > 0 ? active : null;
 }
 
 // Keyboard rotation through the same buttons the bar shows, in the same order.
