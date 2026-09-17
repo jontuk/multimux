@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { Server } from "../servers";
 import DirPicker from "./DirPicker";
 import SessionLauncherFields from "./SessionLauncherFields";
 import type { Session } from "./types";
 import { useSessionLauncher } from "./useSessionLauncher";
+
+export type VisibleDir = { serverId: string; dir: string };
 
 export default function HeaderLauncher({
   servers,
@@ -13,13 +15,21 @@ export default function HeaderLauncher({
   onLaunched,
 }: {
   servers: Server[];
-  visibleDirs?: string[];
+  /** Directories on the grid, each tagged with the server it is on. */
+  visibleDirs?: VisibleDir[];
   targetDir?: string | null;
   targetServerId?: string | null;
   onLaunched: (server: Server, session: Session) => void;
 }) {
   const launcher = useSessionLauncher({ servers, targetDir, targetServerId });
   const [picking, setPicking] = useState(false);
+  // The same path on another daemon is a different machine's directory, so
+  // "Current" only offers what is visible on the server being launched into.
+  const serverId = launcher.server?.id;
+  const currentDirs = useMemo(
+    () => visibleDirs?.filter((v) => v.serverId === serverId).map((v) => v.dir),
+    [visibleDirs, serverId],
+  );
 
   async function launch(dirId: number, subdir: string) {
     const batch = await launcher.launch(dirId, subdir);
@@ -55,8 +65,8 @@ export default function HeaderLauncher({
                 server={launcher.server}
                 dirs={launcher.dirs}
                 recents={launcher.recents}
-                start={visibleDirs !== undefined ? null : launcher.start}
-                currentDirs={visibleDirs}
+                start={currentDirs !== undefined ? null : launcher.start}
+                currentDirs={currentDirs}
                 busy={launcher.busy}
                 error={launcher.error}
                 onForget={(recent) => void launcher.forget(recent)}

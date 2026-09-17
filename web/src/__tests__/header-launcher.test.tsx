@@ -118,6 +118,19 @@ test("pressing Enter launches the directory drilled into", async () => {
   await waitFor(() => expect(bodyOf(fetchMock)).toEqual({ toolId: 1, dirId: 7, subdir: "web" }));
 });
 
+test("Launch here starts a session in the directory drilled into", async () => {
+  const fetchMock = mockDaemon({ children: { "": ["web"] } });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  await openPicker();
+  expect(screen.queryByRole("button", { name: "Launch here" })).toBeNull();
+  fireEvent.click(screen.getByLabelText("open multimux"));
+  fireEvent.click(await screen.findByLabelText("open web"));
+  fireEvent.click(screen.getByRole("button", { name: "Launch here" }));
+
+  await waitFor(() => expect(bodyOf(fetchMock)).toEqual({ toolId: 1, dirId: 7, subdir: "web" }));
+});
+
 test("the back button walks back up directory levels", async () => {
   mockDaemon({ children: { "": ["web"], web: ["src"] } });
   render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
@@ -466,7 +479,11 @@ test("visible dirs are listed in Current, sorted, and removed from Recent", asyn
   render(
     <HeaderLauncher
       servers={[servers[0]]}
-      visibleDirs={["/repos/multimux/web", "/home/jon/notes", "/repos/multimux/cmd"]}
+      visibleDirs={[
+        { serverId: "local", dir: "/repos/multimux/web" },
+        { serverId: "local", dir: "/home/jon/notes" },
+        { serverId: "local", dir: "/repos/multimux/cmd" },
+      ]}
       onLaunched={onLaunched}
     />,
   );
@@ -498,10 +515,40 @@ test("visible dirs are listed in Current, sorted, and removed from Recent", asyn
 
 test("Current section is omitted when no visible dirs match configured roots", async () => {
   mockDaemon({ dirs: twoDirs, history: { 7: ["web"] } });
-  render(<HeaderLauncher servers={[servers[0]]} visibleDirs={["/unrelated/path"]} onLaunched={vi.fn()} />);
+  render(
+    <HeaderLauncher
+      servers={[servers[0]]}
+      visibleDirs={[{ serverId: "local", dir: "/unrelated/path" }]}
+      onLaunched={vi.fn()}
+    />,
+  );
 
   await openPicker();
   expect(screen.queryByRole("heading", { name: "Current" })).toBeNull();
   expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Places" })).toBeInTheDocument();
+});
+
+// The same path on another daemon is a different machine's directory, so
+// Current only lists what is visible on the server the launcher is aimed at.
+test("Current leaves out directories visible on another server", async () => {
+  mockDaemon({ dirs: twoDirs });
+  render(
+    <HeaderLauncher
+      servers={servers}
+      targetServerId="local"
+      visibleDirs={[
+        { serverId: "local", dir: "/repos/multimux/web" },
+        { serverId: "r1", dir: "/repos/multimux/cmd" },
+      ]}
+      onLaunched={vi.fn()}
+    />,
+  );
+
+  await openPicker();
+  expect(screen.getByRole("heading", { name: "Current" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "/repos/multimux/web — launch in /repos/multimux/web" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /\/repos\/multimux\/cmd/ })).toBeNull();
 });

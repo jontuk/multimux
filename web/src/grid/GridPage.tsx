@@ -18,7 +18,7 @@ import {
 import { tileRect } from "./sizes";
 import ColumnStepper from "./ColumnStepper";
 import GridDividers from "./GridDividers";
-import HeaderLauncher from "./HeaderLauncher";
+import HeaderLauncher, { type VisibleDir } from "./HeaderLauncher";
 import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
 import { MOBILE_VIEW_QUERY, useMediaQuery } from "../useMediaQuery";
@@ -581,21 +581,31 @@ export default function GridPage({
   );
 
   // Currently visible directories on the grid, offered under the "Current"
-  // section in "+ New". Under a dir filter, only the filtered directories are
-  // visible; otherwise, the directories of all visible tiles.
-  const visibleDirs = useMemo(() => {
-    const set = new Set<string>();
+  // section in "+ New". Under a dir filter, the filtered directories on every
+  // server that has a running session there; otherwise, the directories of
+  // all visible tiles. Each is tagged with its server: the launcher keeps only
+  // those on the daemon it is aimed at.
+  const visibleDirs = useMemo((): VisibleDir[] => {
+    const seen = new Set<string>();
+    const out: VisibleDir[] = [];
+    const add = (serverId: string, dir: string | undefined) => {
+      if (!dir || seen.has(`${serverId}\0${dir}`)) return;
+      seen.add(`${serverId}\0${dir}`);
+      out.push({ serverId, dir });
+    };
     if (activeSet !== null) {
-      for (const d of activeSet) set.add(d);
+      for (const server of servers) {
+        for (const sess of sessionsByServer[server.id] ?? []) {
+          if (sess.status === "running" && activeSet.has(sess.dir)) add(server.id, sess.dir);
+        }
+      }
     } else {
       for (const tile of view.tiles) {
-        if (!tile) continue;
-        const sess = sessionFor(tile);
-        if (sess?.dir) set.add(sess.dir);
+        if (tile) add(tile.serverId, sessionFor(tile)?.dir);
       }
     }
-    return [...set].sort((a, b) => a.localeCompare(b));
-  }, [activeSet, view.tiles, sessionFor]);
+    return out;
+  }, [activeSet, view.tiles, sessionFor, servers, sessionsByServer]);
 
   const headerControls = (
     <div className="header-controls">

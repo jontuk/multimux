@@ -283,16 +283,18 @@ The picker opens on the directories you have launched into before, then the
 launches there; the **›** beside it descends into that directory instead, and
 the **‹** button or breadcrumb walks back up, so a couple of broad places (your
 home directory, wherever you keep source) cover a whole machine and no per-project
-entry is needed. The filter box narrows the listing (type a leading `.` to see
+entry is needed. **Launch here** starts a session in the directory you have
+descended into, the filter box narrows the listing (type a leading `.` to see
 hidden directories), and the arrow keys walk (**↑↓**), descend (**→**), go back up
 (**←**), and launch (**Enter**). The **×** on a remembered directory forgets it.
 
-The picker follows the grid: it opens inside the directory you are working in —
-the soloed directory, or the working directory of the tile you last focused — so
-**+ New** opens another session where you already are. Only the location moves;
-the tool stays whatever you picked. A target belonging to another server is
-ignored, because the same path on another daemon is a different machine's
-directory.
+The picker follows the grid. On the desktop, the directories of the tiles on
+screen — under a directory filter, the selected directories — lead the listing
+as **Current**, so **+ New** opens another session where you already are in one
+click. On a phone the picker opens inside the focused session's directory
+instead. Only the location moves; the tool stays whatever you picked. Current
+lists directories on the server you are launching into and no other, because
+the same path on another daemon is a different machine's directory.
 
 **The grid.** Tiles are laid out in a column count you set with the header
 stepper; rows follow, and row/column boundaries can be dragged to resize the

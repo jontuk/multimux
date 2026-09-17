@@ -353,6 +353,20 @@ export default function DirPicker({
             setHighlight(-1);
           }}
         />
+        {/* The directory drilled into is a target in its own right; the crumb
+            names it but only navigates, so this is the pointer's way to launch
+            there (Enter with nothing highlighted is the keyboard's). */}
+        {at && (
+          <button
+            type="button"
+            className="primary dir-picker-launch-here"
+            disabled={busy}
+            title={`launch in ${fullPath(dirs, at)}`}
+            onClick={() => onLaunch(at.dirId, at.subdir)}
+          >
+            Launch here
+          </button>
+        )}
       </footer>
       {error && <p className="launcher-error">{error}</p>}
     </section>
