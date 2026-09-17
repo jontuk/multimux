@@ -281,11 +281,10 @@ a server picker appears first.
 The picker opens on the directories you have launched into before, then the
 **places** — the directories configured on the Settings page. Clicking a name
 launches there; the **›** beside it descends into that directory instead, and
-the breadcrumb walks back up, so a couple of broad places (your home directory,
-wherever you keep source) cover a whole machine and no per-project entry is
-needed. **Launch here** starts a session in the directory you have descended
-into, the filter box narrows the listing (type a leading `.` to see hidden
-directories), and the arrow keys walk (**↑↓**), descend (**→**), go back up
+the **‹** button or breadcrumb walks back up, so a couple of broad places (your
+home directory, wherever you keep source) cover a whole machine and no per-project
+entry is needed. The filter box narrows the listing (type a leading `.` to see
+hidden directories), and the arrow keys walk (**↑↓**), descend (**→**), go back up
 (**←**), and launch (**Enter**). The **×** on a remembered directory forgets it.
 
 The picker follows the grid: it opens inside the directory you are working in —

@@ -7,11 +7,13 @@ import { useSessionLauncher } from "./useSessionLauncher";
 
 export default function HeaderLauncher({
   servers,
+  visibleDirs,
   targetDir = null,
   targetServerId = null,
   onLaunched,
 }: {
   servers: Server[];
+  visibleDirs?: string[];
   targetDir?: string | null;
   targetServerId?: string | null;
   onLaunched: (server: Server, session: Session) => void;
@@ -53,7 +55,8 @@ export default function HeaderLauncher({
                 server={launcher.server}
                 dirs={launcher.dirs}
                 recents={launcher.recents}
-                start={launcher.start}
+                start={visibleDirs !== undefined ? null : launcher.start}
+                currentDirs={visibleDirs}
                 busy={launcher.busy}
                 error={launcher.error}
                 onForget={(recent) => void launcher.forget(recent)}

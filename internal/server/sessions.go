@@ -276,6 +276,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 // cleaning and after resolving symlinks, which stops both `../..` and a symlink
 // inside base pointing out of it. The directory must already exist — a launch
 // never creates one.
+//
+// The returned path stays in the configured directory's namespace rather than
+// adopting whatever realBase evaluated to: if base is a symlink alias, the
+// session's directory must match the configured dir's path so history, recents,
+// and the current-directory view agree on what the directory is called.
 func resolveSubdir(base, subdir string) (string, error) {
 	subdir = strings.TrimSpace(subdir)
 	if subdir == "" {
@@ -298,7 +303,7 @@ func resolveSubdir(base, subdir string) (string, error) {
 	if info, err := os.Stat(full); err != nil || !info.IsDir() {
 		return "", errors.New("subdirectory does not exist")
 	}
-	return full, nil
+	return filepath.Clean(filepath.Join(base, subdir)), nil
 }
 
 func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {

@@ -432,24 +432,14 @@ export default function GridPage({
     setOverlay(activeSolo === null ? null : viewOverlay(activeSolo));
   }, [activeSolo]);
 
-  // Where "+ New" should aim. A solo wins: it is the standing statement of
-  // which directory the user is working in, and it is server-agnostic — the
-  // filter bar counts a directory across every daemon — so any server whose
-  // dirs contain it may answer. Without one, the focused tile's session
-  // answers, which is what "follow me around the grid" means in all mode; that
-  // one is pinned to its own server, since an identical path on another daemon
-  // is a different machine's directory.
+  // Where "+ New" should aim. The server dropdown defaults to the focused
+  // tile's server, since an identical path on another daemon is a different
+  // machine's directory.
   const activeTile = useMemo(
     () => layout.tiles.find((t): t is NonNullable<Tile> => t !== null && tileKey(t) === activeKey),
     [layout, activeKey],
   );
-  const activeSession = activeTile && sessionFor(activeTile);
-  const target =
-    activeSolo !== null
-      ? { dir: activeSolo, serverId: null }
-      : activeSession
-        ? { dir: activeSession.dir, serverId: activeTile.serverId }
-        : { dir: null, serverId: null };
+  const targetServerId = activeTile ? activeTile.serverId : null;
 
   // Ctrl+Alt+←/→ rotates the solo through the filter bar, Ctrl+Alt+0 clears it.
   // Ctrl+Alt is the one modifier pair left free: plain Alt+arrow is browser
@@ -570,12 +560,29 @@ export default function GridPage({
       .map((sess) => ({ server, sess })),
   );
 
+  // Currently visible directories on the grid, offered under the "Current"
+  // section in "+ New". Under a solo, only the soloed directory is visible;
+  // otherwise, the directories of all visible tiles.
+  const visibleDirs = useMemo(() => {
+    const set = new Set<string>();
+    if (activeSolo !== null) {
+      set.add(activeSolo);
+    } else {
+      for (const tile of view.tiles) {
+        if (!tile) continue;
+        const sess = sessionFor(tile);
+        if (sess?.dir) set.add(sess.dir);
+      }
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [activeSolo, view.tiles, sessionFor]);
+
   const headerControls = (
     <div className="header-controls">
       <HeaderLauncher
         servers={servers}
-        targetDir={target.dir}
-        targetServerId={target.serverId}
+        visibleDirs={visibleDirs}
+        targetServerId={targetServerId}
         onLaunched={placeSession}
       />
       {/* Shows the grid on screen, so under a dir filter it counts the visible

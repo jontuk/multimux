@@ -236,17 +236,29 @@ func TestCreateSessionSubdir(t *testing.T) {
 		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
 	}
 	sess := onlySession(t, w)
-	// EvalSymlinks resolves the temp dir (/var → /private/var on macOS), so
-	// compare against the resolved base rather than the raw one.
-	realBase, err := filepath.EvalSymlinks(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := filepath.Join(realBase, "web", "src"); sess.Dir != want {
+	if want := filepath.Join(base, "web", "src"); sess.Dir != want {
 		t.Fatalf("session dir = %q, want %q", sess.Dir, want)
 	}
 	if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
 		t.Fatal("tmux session not created")
+	}
+
+	// When base is a symlink alias, the session's dir stays in the configured
+	// directory's namespace rather than adopting the target it resolves to.
+	linkDir := t.TempDir()
+	symlinkBase := filepath.Join(linkDir, "alias")
+	if err := os.Symlink(base, symlinkBase); err != nil {
+		t.Fatal(err)
+	}
+	dir2, _ := st.CreateDir("alias", symlinkBase)
+	w2 := do(t, s, "POST", "/api/sessions", token,
+		fmt.Sprintf(`{"toolId":%d,"dirId":%d,"subdir":"web/src"}`, tool.ID, dir2.ID))
+	if w2.Code != 201 {
+		t.Fatalf("create with symlink base = %d: %s", w2.Code, w2.Body.String())
+	}
+	sess2 := onlySession(t, w2)
+	if want := filepath.Join(symlinkBase, "web", "src"); sess2.Dir != want {
+		t.Fatalf("session dir = %q, want %q", sess2.Dir, want)
 	}
 }
 

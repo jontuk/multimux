@@ -106,16 +106,38 @@ test("the chevron drills without launching and the name below launches with the 
   await waitFor(() => expect(bodyOf(fetchMock)).toEqual({ toolId: 1, dirId: 7, subdir: "web/src" }));
 });
 
-test("Launch here launches the directory drilled into", async () => {
+test("pressing Enter launches the directory drilled into", async () => {
   const fetchMock = mockDaemon({ children: { "": ["web"] } });
   render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
 
-  await openPicker();
+  const picker = await openPicker();
   fireEvent.click(screen.getByLabelText("open multimux"));
   fireEvent.click(await screen.findByLabelText("open web"));
-  fireEvent.click(await screen.findByRole("button", { name: "Launch here" }));
+  fireEvent.keyDown(picker, { key: "Enter" });
 
   await waitFor(() => expect(bodyOf(fetchMock)).toEqual({ toolId: 1, dirId: 7, subdir: "web" }));
+});
+
+test("the back button walks back up directory levels", async () => {
+  mockDaemon({ children: { "": ["web"], web: ["src"] } });
+  render(<HeaderLauncher servers={[servers[0]]} onLaunched={vi.fn()} />);
+
+  await openPicker();
+  expect(screen.queryByRole("button", { name: "go back" })).toBeNull();
+
+  fireEvent.click(screen.getByLabelText("open multimux"));
+  fireEvent.click(await screen.findByLabelText("open web"));
+  await screen.findByText("src");
+
+  // Clicking back once returns to multimux
+  fireEvent.click(screen.getByRole("button", { name: "go back" }));
+  expect(await screen.findByText("web")).toBeInTheDocument();
+  expect(screen.queryByText("src")).toBeNull();
+
+  // Clicking back again returns to the root landing view
+  fireEvent.click(screen.getByRole("button", { name: "go back" }));
+  expect(await screen.findByRole("heading", { name: "Places" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "go back" })).toBeNull();
 });
 
 test("breadcrumbs walk back up, and Places returns to the roots", async () => {
@@ -272,9 +294,10 @@ test("a target directory opens the picker inside it", async () => {
   const fetchMock = mockDaemon({ children: { web: ["src"] } });
   render(<HeaderLauncher servers={[servers[0]]} targetDir="/repos/multimux/web" onLaunched={vi.fn()} />);
 
-  await openPicker();
+  const picker = await openPicker();
   expect(await screen.findByText("src")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Launch here" }));
+  expect(screen.getByRole("button", { name: "go back" })).toBeInTheDocument();
+  fireEvent.keyDown(picker, { key: "Enter" });
 
   await waitFor(() => expect(bodyOf(fetchMock)).toEqual({ toolId: 1, dirId: 7, subdir: "web" }));
 });
@@ -432,4 +455,53 @@ test("a group launch places every session it started and closes the picker", asy
   await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(2));
   expect(onLaunched.mock.calls.map(([, sess]) => sess.id)).toEqual([3, 4]);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+test("visible dirs are listed in Current, sorted, and removed from Recent", async () => {
+  const fetchMock = mockDaemon({
+    dirs: twoDirs,
+    history: { 7: ["web", "cmd", "internal"] },
+  });
+  const onLaunched = vi.fn();
+  render(
+    <HeaderLauncher
+      servers={[servers[0]]}
+      visibleDirs={["/repos/multimux/web", "/home/jon/notes", "/repos/multimux/cmd"]}
+      onLaunched={onLaunched}
+    />,
+  );
+
+  await openPicker();
+  expect(screen.getByRole("heading", { name: "Current" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Places" })).toBeInTheDocument();
+
+  // All launch buttons in the dialog
+  const launches = screen.getAllByRole("button", { name: /launch in/ });
+  // Current section has the 3 visible dirs, sorted alphabetically
+  expect(launches[0]).toHaveAccessibleName("/home/jon/notes — launch in /home/jon/notes");
+  expect(launches[1]).toHaveAccessibleName("/repos/multimux/cmd — launch in /repos/multimux/cmd");
+  expect(launches[2]).toHaveAccessibleName("/repos/multimux/web — launch in /repos/multimux/web");
+
+  // Recent section has "internal", but "web" and "cmd" were removed
+  expect(launches[3]).toHaveAccessibleName("/repos/multimux/internal — launch in /repos/multimux/internal");
+  // Next are Places: multimux, home
+  expect(launches[4]).toHaveAccessibleName("multimux — launch in /repos/multimux");
+  expect(launches[5]).toHaveAccessibleName("home — launch in /home/jon");
+  expect(launches).toHaveLength(6);
+
+  // Clicking one in Current launches it in one click
+  fireEvent.click(launches[1]);
+  await waitFor(() => expect(bodyOf(fetchMock)).toEqual({ toolId: 1, dirId: 7, subdir: "cmd" }));
+  expect(onLaunched).toHaveBeenCalled();
+});
+
+test("Current section is omitted when no visible dirs match configured roots", async () => {
+  mockDaemon({ dirs: twoDirs, history: { 7: ["web"] } });
+  render(<HeaderLauncher servers={[servers[0]]} visibleDirs={["/unrelated/path"]} onLaunched={vi.fn()} />);
+
+  await openPicker();
+  expect(screen.queryByRole("heading", { name: "Current" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Places" })).toBeInTheDocument();
 });

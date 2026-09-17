@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { getJSON } from "../api";
 import type { Server } from "../servers";
+import { splitUnderDir } from "./dirFilter";
 import type { LaunchTarget, RecentDir } from "./useSessionLauncher";
 import type { Dir } from "./types";
 
@@ -11,7 +12,7 @@ import type { Dir } from "./types";
  * root, a `child` row is a subdirectory read off the daemon's disk.
  */
 type Row = {
-  kind: "recent" | "place" | "child";
+  kind: "current" | "recent" | "place" | "child";
   /** What the user reads, and what the filter matches against. */
   label: string;
   hint?: string;
@@ -21,6 +22,7 @@ type Row = {
 };
 
 const recentLimit = 8;
+const defaultCurrentDirs: string[] = [];
 
 function joinSubdir(subdir: string, name: string): string {
   return subdir ? `${subdir}/${name}` : name;
@@ -50,7 +52,8 @@ export default function DirPicker({
   server,
   dirs,
   recents,
-  start,
+  start = null,
+  currentDirs = defaultCurrentDirs,
   busy,
   error,
   onForget,
@@ -61,7 +64,8 @@ export default function DirPicker({
   server: Server;
   dirs: Dir[];
   recents: RecentDir[];
-  start: LaunchTarget | null;
+  start?: LaunchTarget | null;
+  currentDirs?: string[];
   busy: boolean;
   error: string;
   onForget: (recent: RecentDir) => void;
@@ -123,13 +127,34 @@ export default function DirPicker({
       }));
       return [{ title: "", rows }];
     }
-    const recentRows: Row[] = recents.slice(0, recentLimit).map((recent) => ({
-      kind: "recent",
-      label: recent.path,
-      dirId: recent.dirId,
-      subdir: recent.subdir,
-      recent,
-    }));
+    const seen = new Set<string>();
+    const currentRows: Row[] = [];
+    for (const dirPath of currentDirs) {
+      const target = splitUnderDir(dirs, dirPath);
+      if (!target) continue;
+      const path = fullPath(dirs, target);
+      if (seen.has(path)) continue;
+      seen.add(path);
+      currentRows.push({
+        kind: "current",
+        label: path,
+        dirId: target.dirId,
+        subdir: target.subdir,
+      });
+    }
+    currentRows.sort((a, b) => a.label.localeCompare(b.label));
+
+    const currentPaths = new Set(currentRows.map((r) => r.label));
+    const recentRows: Row[] = recents
+      .filter((recent) => !currentPaths.has(fullPath(dirs, recent)))
+      .slice(0, recentLimit)
+      .map((recent) => ({
+        kind: "recent",
+        label: recent.path,
+        dirId: recent.dirId,
+        subdir: recent.subdir,
+        recent,
+      }));
     const placeRows: Row[] = dirs.map((dir) => ({
       kind: "place",
       label: dir.name,
@@ -138,10 +163,11 @@ export default function DirPicker({
       subdir: "",
     }));
     return [
+      ...(currentRows.length > 0 ? [{ title: "Current", rows: currentRows }] : []),
       ...(recentRows.length > 0 ? [{ title: "Recent", rows: recentRows }] : []),
       { title: "Places", rows: placeRows },
     ];
-  }, [at, children, dirs, recents]);
+  }, [at, children, dirs, recents, currentDirs]);
 
   // Dotfile directories stay out of the way until the filter reaches for one,
   // the same bargain the old subdir typeahead struck.
@@ -151,7 +177,7 @@ export default function DirPicker({
       title: group.title,
       rows: group.rows.filter(
         (row) =>
-          (needle.startsWith(".") || !row.label.split("/").pop()?.startsWith(".")) &&
+          (row.kind === "current" || needle.startsWith(".") || !row.label.split("/").pop()?.startsWith(".")) &&
           (needle === "" ||
             row.label.toLowerCase().includes(needle) ||
             (row.hint ?? "").toLowerCase().includes(needle)),
@@ -217,6 +243,18 @@ export default function DirPicker({
       aria-modal={variant === "desktop" ? true : undefined}
     >
       <header className="dir-picker-head">
+        {at && (
+          <button
+            type="button"
+            className="dir-picker-back"
+            disabled={busy}
+            aria-label="go back"
+            title="go back"
+            onClick={() => navigate(at.subdir ? { dirId: at.dirId, subdir: dropLast(at.subdir) } : null)}
+          >
+            ‹
+          </button>
+        )}
         <nav className="dir-picker-crumbs" aria-label="Directory path">
           <button type="button" className="dir-crumb" onClick={() => navigate(null)}>
             Places
@@ -315,17 +353,6 @@ export default function DirPicker({
             setHighlight(-1);
           }}
         />
-        {at && (
-          <button
-            type="button"
-            className="primary dir-picker-launch-here"
-            disabled={busy}
-            title={`launch in ${fullPath(dirs, at)}`}
-            onClick={() => onLaunch(at.dirId, at.subdir)}
-          >
-            Launch here
-          </button>
-        )}
       </footer>
       {error && <p className="launcher-error">{error}</p>}
     </section>

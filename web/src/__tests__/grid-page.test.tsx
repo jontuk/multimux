@@ -1817,11 +1817,9 @@ test("clearing the filter restores the stored sizes", async () => {
   expect(container.querySelector('[data-divider="col-0-0"]')).toHaveStyle({ left: "30%" });
 });
 
-// In all mode the launcher follows the session the user is working in, so
-// "+ New" opens the picker already inside that session's directory. The
-// focused session's dir is a configured root plus a subdir; the picker opens
-// at the pair.
-test("focusing a tile opens the picker in that session's directory", async () => {
+// In all mode "+ New" lists all currently visible dirs in the Current
+// section, sorted alphabetically.
+test("clicking + New lists currently visible dirs in Current", async () => {
   const layout = {
     shape: { rows: 1, cols: 2 },
     tiles: [
@@ -1833,31 +1831,33 @@ test("focusing a tile opens the picker in that session's directory", async () =>
     { id: 1, tmuxName: "mm-1", toolId: 1, dir: "/Users/jon/Repos/multimux", status: "running" },
     { id: 2, tmuxName: "mm-2", toolId: 1, dir: "/Users/jon/Repos/other/pkg", status: "running" },
   ]);
-  const { container } = render(<GridPage />);
+  render(<GridPage />);
 
   await screen.findByText("+ New");
   await screen.findByTestId("term-2");
 
-  fireEvent.focusIn(container.querySelector('[data-tile-index="1"]')!);
   await userEvent.click(screen.getByText("+ New"));
-  // Crumbs are the root's name then each subdir segment: /Repos/other + pkg.
-  expect(await screen.findByRole("button", { name: "other" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "pkg" })).toBeInTheDocument();
-  await userEvent.click(screen.getByLabelText("Close directory picker"));
+  expect(await screen.findByRole("heading", { name: "Current" })).toBeInTheDocument();
 
-  fireEvent.focusIn(container.querySelector('[data-tile-index="0"]')!);
-  await userEvent.click(screen.getByText("+ New"));
-  expect(await screen.findByRole("button", { name: "multimux" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "pkg" })).toBeNull();
+  // Both visible dirs appear in Current, sorted alphabetically.
+  const multimuxBtn = screen.getByRole("button", {
+    name: "/Users/jon/Repos/multimux — launch in /Users/jon/Repos/multimux",
+  });
+  const pkgBtn = screen.getByRole("button", {
+    name: "/Users/jon/Repos/other/pkg — launch in /Users/jon/Repos/other/pkg",
+  });
+  expect(multimuxBtn).toBeInTheDocument();
+  expect(pkgBtn).toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole("button", { name: "Launch here" }));
+  // Clicking one launches there in one click.
+  await userEvent.click(multimuxBtn);
   const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
   expect(JSON.parse(String(post?.[1]?.body))).toEqual({ toolId: 1, dirId: 1, subdir: "" });
 });
 
-// A solo is the standing answer to "which directory am I in", so it outranks
-// whatever tile happens to hold focus.
-test("a soloed directory outranks the focused tile", async () => {
+// A solo limits what is visible on screen, so "+ New" offers only the soloed
+// directory in Current.
+test("a soloed directory limits Current to the soloed directory", async () => {
   const layout = {
     shape: { rows: 1, cols: 2 },
     tiles: [
@@ -1877,9 +1877,17 @@ test("a soloed directory outranks the focused tile", async () => {
 
   await userEvent.click(screen.getByRole("button", { name: /^multimux 1/ }));
   await userEvent.click(screen.getByText("+ New"));
-  // The soloed root, not the focused tile's /Repos/other/pkg.
-  expect(await screen.findByRole("button", { name: "multimux" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "pkg" })).toBeNull();
+  // Under solo, only the soloed directory is visible on the grid.
+  expect(
+    await screen.findByRole("button", {
+      name: "/Users/jon/Repos/multimux — launch in /Users/jon/Repos/multimux",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", {
+      name: "/Users/jon/Repos/other/pkg — launch in /Users/jon/Repos/other/pkg",
+    }),
+  ).toBeNull();
 });
 
 test("a soloed directory keeps its columns and order across a switch away and back", async () => {

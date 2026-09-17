@@ -65,9 +65,7 @@ export function dirButtons(servers: Server[], sessionsByServer: Record<string, S
 // Matching is on path segments: "/repos/multi" is not a parent of
 // "/repos/multimux". Returns null when no configured directory contains the
 // path — a working directory on another daemon, or one whose dir was since
-// removed. The daemon resolves symlinks when it records a session's dir but not
-// when it stores a launch dir, so a symlinked dir can also miss here; null is
-// the same answer in every case, and the caller leaves its selection alone.
+// removed. A miss returns null and the caller leaves its selection alone.
 export function splitUnderDir(dirs: Dir[], path: string): { dirId: number; subdir: string } | null {
   const target = path.replace(/\/+$/, "");
   let best: { dirId: number; subdir: string } | null = null;

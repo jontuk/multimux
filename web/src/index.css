@@ -518,6 +518,28 @@ a {
   color: var(--ink);
 }
 
+.dir-picker-back {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+}
+
+.dir-picker-back:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.dir-picker-back:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .dir-picker-close {
   flex: 0 0 auto;
   background: none;
@@ -595,9 +617,16 @@ a {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.dir-row-forget,
+.dir-row-forget {
+  flex: 0 0 auto;
+  color: var(--muted);
+  line-height: 1;
+}
+
 .dir-row-drill {
   flex: 0 0 auto;
+  font-size: 1rem;
+  font-weight: 700;
   color: var(--muted);
   line-height: 1;
 }
@@ -1763,6 +1792,7 @@ a {
   }
 
   .app.grid-route .dir-picker-mobile .dir-crumb,
+  .app.grid-route .dir-picker-mobile .dir-picker-back,
   .app.grid-route .dir-picker-mobile .dir-row button {
     font-size: 1rem;
     padding: 0.55rem 0.5rem;
@@ -1772,8 +1802,7 @@ a {
     display: none;
   }
 
-  .app.grid-route .dir-picker-mobile .dir-picker-filter,
-  .app.grid-route .dir-picker-mobile .dir-picker-launch-here {
+  .app.grid-route .dir-picker-mobile .dir-picker-filter {
     box-sizing: border-box;
     min-height: 2.75rem;
     font: 1rem var(--mono);
