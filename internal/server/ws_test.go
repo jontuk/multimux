@@ -201,6 +201,47 @@ func TestPTYClosesOnSessionExit(t *testing.T) {
 	}
 }
 
+// TestPTYAttachEndWithLiveSessionIsNotExit covers the attach ending while the
+// tmux session lives on — a detach, or an attach client that died. "exit" is
+// final to the browser (the tile shows "session ended" and stops retrying), so
+// it must only be sent for a session that is really gone. Here the socket must
+// close without one, leaving the tile to reconnect.
+func TestPTYAttachEndWithLiveSessionIsNotExit(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	tool, _ := st.CreateTool("sh", "sh")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	sess := onlySession(t, w)
+
+	conn := dialPTY(t, ts, sess.ID, token)
+	conn.WriteJSON(map[string]any{"type": "resize", "cols": 100, "rows": 30})
+	conn.WriteMessage(websocket.BinaryMessage, []byte("echo MMWS_READY\r"))
+	readPTYUntil(t, conn, "MMWS_READY")
+	// Run from inside the pane, $TMUX points at the test's private server, so
+	// this detaches exactly this connection's attach client.
+	conn.WriteMessage(websocket.BinaryMessage, []byte("tmux detach-client\r"))
+
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	for {
+		mt, data, err := conn.ReadMessage()
+		if err != nil {
+			if strings.Contains(err.Error(), "i/o timeout") {
+				t.Fatalf("server never closed the socket after the attach ended: %v", err)
+			}
+			break
+		}
+		if mt == websocket.TextMessage && strings.Contains(string(data), `"type":"exit"`) {
+			t.Fatal("sent exit for a session that is still alive")
+		}
+	}
+	if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
+		t.Fatal("detach killed the session; test premise broken")
+	}
+}
+
 func TestPTYRejectsUnknownSession(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")

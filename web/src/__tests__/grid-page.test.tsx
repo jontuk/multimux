@@ -1060,6 +1060,82 @@ test("layout persistence keeps one PUT in flight and coalesces to the newest sta
   expect(putBodies).toHaveLength(2);
 });
 
+// A layout GET answered with the server's state from before a local edit was
+// written must not replace that edit: the next edit would build on the stale
+// layout and the lost one would never reach the server.
+function mockHeldLayoutFetch(initial: unknown) {
+  const putBodies: { shape: { rows: number; cols: number } }[] = [];
+  const putResolvers: Array<() => void> = [];
+  const getResolvers: Array<(layout: unknown) => void> = [];
+  let firstGet = true;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/subdirs")) return new Response("[]");
+    if (url.includes("/api/layout") && method === "PUT") {
+      putBodies.push(JSON.parse(String(init?.body)));
+      await new Promise<void>((resolve) => putResolvers.push(resolve));
+      return new Response("{}");
+    }
+    if (url.includes("/api/layout")) {
+      if (firstGet) {
+        firstGet = false;
+        return new Response(JSON.stringify(initial));
+      }
+      const layout = await new Promise<unknown>((resolve) => getResolvers.push(resolve));
+      return new Response(JSON.stringify(layout));
+    }
+    if (url.includes("/api/sessions")) return new Response(JSON.stringify(sessions));
+    if (url.includes("/api/tools")) return new Response(JSON.stringify(tools));
+    if (url.includes("/api/dirs")) return new Response(JSON.stringify(dirs));
+    return new Response("[]");
+  });
+  return { putBodies, putResolvers, getResolvers };
+}
+
+function fireLayoutChanged() {
+  const calls = vi.mocked(useEvents).mock.calls;
+  const onEvent = calls[calls.length - 1][1];
+  act(() => onEvent("layout_changed"));
+}
+
+test("a layout fetch issued while a write is in flight does not undo the edit", async () => {
+  const stale = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
+  const { putBodies, putResolvers, getResolvers } = mockHeldLayoutFetch(stale);
+  render(<GridPage />);
+  const more = await screen.findByLabelText("more columns");
+
+  await userEvent.click(more); // cols 3, PUT held open
+  expect(putBodies[0].shape.cols).toBe(3);
+  fireLayoutChanged();
+  await waitFor(() => expect(getResolvers).toHaveLength(1));
+  // The server has not committed the PUT yet, so it still answers cols 2.
+  await act(async () => getResolvers.shift()!(stale));
+  await act(async () => putResolvers.shift()!());
+
+  await userEvent.click(more);
+  await waitFor(() => expect(putBodies).toHaveLength(2));
+  expect(putBodies[1].shape.cols).toBe(4);
+});
+
+test("a layout fetch issued before a local edit does not undo it", async () => {
+  const stale = { shape: { rows: 1, cols: 2 }, tiles: [null, null] };
+  const { putBodies, putResolvers, getResolvers } = mockHeldLayoutFetch(stale);
+  render(<GridPage />);
+  const more = await screen.findByLabelText("more columns");
+
+  fireLayoutChanged();
+  await waitFor(() => expect(getResolvers).toHaveLength(1));
+  await userEvent.click(more); // cols 3
+  await act(async () => putResolvers.shift()!());
+  // The GET predates the edit; its answer is the pre-edit layout.
+  await act(async () => getResolvers.shift()!(stale));
+
+  await userEvent.click(more);
+  await waitFor(() => expect(putBodies).toHaveLength(2));
+  expect(putBodies[1].shape.cols).toBe(4);
+});
+
 // Minimal stand-in for jsdom's missing DataTransfer.
 function makeDataTransfer(data: Record<string, string> = {}) {
   return {

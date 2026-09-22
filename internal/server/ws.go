@@ -173,9 +173,19 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// "exit" is final to the browser: the tile reports the session ended and
+	// stops reconnecting. Only a session tmux no longer has earns it. An attach
+	// that failed or ended while the session lives on (a detach, a dead attach
+	// client) just closes, and the tile's reconnect finds the session running.
+	sendExitIfGone := func() {
+		if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
+			conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
+		}
+	}
+
 	ptyConn, err := s.cfg.Tmux.Attach(sess.TmuxName)
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
+		sendExitIfGone()
 		return
 	}
 	defer ptyConn.Close()
@@ -194,7 +204,7 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if err != nil {
-				conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
+				sendExitIfGone()
 				// The client's readLoop below may be blocked in conn.ReadMessage()
 				// forever if the client never closes its end. Send a close frame
 				// and close the conn from here so that read unblocks and the

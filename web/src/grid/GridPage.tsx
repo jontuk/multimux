@@ -251,9 +251,14 @@ export default function GridPage({
       });
   }, []);
 
+  // Bumped by every local edit, so a layout fetch can tell whether one landed
+  // while it was out.
+  const layoutEditSerial = useRef(0);
+
   const persist = useCallback(
     (update: (prev: Layout) => Layout) => {
       const next = update(layoutRef.current);
+      layoutEditSerial.current++;
       adoptLayout(next);
       pendingWrite.current = next;
       flushLayout();
@@ -317,8 +322,17 @@ export default function GridPage({
 
   const refreshLayout = useCallback(
     (settleInitial = false) => {
+      const editSerial = layoutEditSerial.current;
+      const writing = () => writeInFlight.current || pendingWrite.current !== null;
+      const writingAtIssue = writing();
       getJSON<unknown>(localServer(), "/api/layout")
         .then((v) => {
+          // An answer can predate a local edit — the edit landed after the
+          // request went out, or its PUT had not committed when the daemon
+          // answered. Adopting it would undo the edit on screen, and the next
+          // edit would build on the stale layout and lose it for good. Our own
+          // PUT's layout_changed broadcast brings a fresh fetch afterwards.
+          if (writingAtIssue || writing() || editSerial !== layoutEditSerial.current) return;
           // Normalize so layouts persisted before rows were derived still load cleanly.
           if (isLayout(v)) adoptLayout(normalize(v.tiles, v.shape.cols, v.rowSizes, v.colSizes));
         })
