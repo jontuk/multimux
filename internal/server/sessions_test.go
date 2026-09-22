@@ -730,6 +730,73 @@ func TestCheckGitInfoBroadcastsOnChange(t *testing.T) {
 	}
 }
 
+func TestCheckGitInfoCachesURLLookups(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, _ := newTestServer(t, true)
+
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"-C", repo, "init"},
+		{"-C", repo, "remote", "add", "origin", "git@github.com:org/repo.git"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	plain := t.TempDir() // not a repo: its lookup is negative
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	st.CreateSession(tool.ID, repo)
+	plainSess, _ := st.CreateSession(tool.ID, plain)
+
+	lookup := func(dir string) (urlLookup, bool) {
+		t.Helper()
+		s.gitMu.RLock()
+		defer s.gitMu.RUnlock()
+		u, ok := s.gitURLs[dir]
+		return u, ok
+	}
+
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
+	if u, ok := lookup(repo); !ok || u.url != "https://github.com/org/repo" {
+		t.Fatalf("repo lookup = %+v, %v; want cached github url", u, ok)
+	}
+	if u, ok := lookup(plain); !ok || u.url != "" {
+		t.Fatalf("plain lookup = %+v, %v; want cached negative", u, ok)
+	}
+
+	// A fresh entry is served as-is: a planted value surviving the tick
+	// proves git config did not run again.
+	s.gitMu.Lock()
+	s.gitURLs[plain] = urlLookup{url: "https://github.com/planted/fresh", at: time.Now()}
+	s.gitURLs[repo] = urlLookup{url: "https://github.com/planted/stale", at: time.Now().Add(-2 * gitURLTTL)}
+	s.gitMu.Unlock()
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := lookup(plain); u.url != "https://github.com/planted/fresh" {
+		t.Errorf("fresh entry re-looked-up: %+v", u)
+	}
+	// An expired entry is looked up again.
+	if u, _ := lookup(repo); u.url != "https://github.com/org/repo" {
+		t.Errorf("stale entry not refreshed: %+v", u)
+	}
+
+	// Once no running session uses the dir, its lookup is dropped.
+	if err := st.SetSessionStatus(plainSess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
+	if u, ok := lookup(plain); ok {
+		t.Errorf("dead dir lookup kept: %+v", u)
+	}
+}
+
 func TestListSessionsSkipsDeadDirs(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

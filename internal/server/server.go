@@ -51,12 +51,16 @@ type Server struct {
 	// exists, and a reconcile tick in that window must not race it.
 	reconcileGrace time.Duration
 
-	// gitMu guards gitSeen.
+	// gitMu guards gitSeen and gitURLs.
 	gitMu sync.RWMutex
 
 	// gitSeen is the per-dir git state as of the last CheckGitInfo tick or
 	// on-demand resolution. Guarded by gitMu.
 	gitSeen map[string]dirGitInfo
+
+	// gitURLs caches each live dir's origin lookup, negative results
+	// included, for gitURLTTL. Guarded by gitMu.
+	gitURLs map[string]urlLookup
 
 	buildIDOnce  sync.Once
 	buildIDValue string

@@ -70,8 +70,8 @@ type Status struct {
 // absent. On a detached HEAD the branch is empty but the rest is still
 // reported.
 func BranchStatus(dir string) Status {
-	// --branch adds a "## " header carrying the upstream and the ahead/behind
-	// counts, so divergence costs no extra git process.
+	// --branch adds a "## " header carrying the branch name, the upstream and
+	// the ahead/behind counts, so none of them costs an extra git process.
 	out, err := gitOutput(dir, "status", "--porcelain", "--branch")
 	if err != nil {
 		return Status{}
@@ -79,7 +79,7 @@ func BranchStatus(dir string) Status {
 	st := Status{State: "clean"}
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "## ") {
-			st.Ahead, st.Behind, st.NoUpstream = parseBranchHeader(line)
+			st.Branch, st.Ahead, st.Behind, st.NoUpstream = parseBranchHeader(line)
 			continue
 		}
 		if strings.HasPrefix(line, "??") {
@@ -89,11 +89,6 @@ func BranchStatus(dir string) Status {
 		if line != "" {
 			st.State = "modified"
 		}
-	}
-	// symbolic-ref works on an unborn branch (fresh init); it fails on a
-	// detached HEAD, where we leave the branch empty.
-	if b, err := gitOutput(dir, "symbolic-ref", "--short", "-q", "HEAD"); err == nil {
-		st.Branch = strings.TrimSpace(string(b))
 	}
 	return st
 }
@@ -107,23 +102,32 @@ func BranchStatus(dir string) Status {
 //	## No commits yet on main    (unborn branch)
 //	## HEAD (no branch)          (detached HEAD)
 //
+// git before 2.15 wrote "Initial commit on" for the unborn form. Branch names
+// cannot contain spaces or "..", so neither prefix nor the "..." separator can
+// be part of a name.
+//
 // Only a branch that has commits but no upstream counts as never-pushed: an
-// unborn branch has nothing to push, and a detached HEAD is not a branch.
-func parseBranchHeader(line string) (ahead, behind int, noUpstream bool) {
+// unborn branch has nothing to push, and a detached HEAD is not a branch, so
+// its name is empty.
+func parseBranchHeader(line string) (branch string, ahead, behind int, noUpstream bool) {
 	rest := strings.TrimPrefix(line, "## ")
-	if strings.HasPrefix(rest, "No commits yet on ") || strings.HasPrefix(rest, "HEAD (no branch)") {
-		return 0, 0, false
+	if strings.HasPrefix(rest, "HEAD (no branch)") {
+		return "", 0, 0, false
+	}
+	for _, prefix := range []string{"No commits yet on ", "Initial commit on "} {
+		if name, ok := strings.CutPrefix(rest, prefix); ok {
+			return strings.TrimSpace(name), 0, 0, false
+		}
 	}
 	name, tracking, found := strings.Cut(rest, "...")
+	branch = strings.TrimSpace(name)
 	if !found {
-		// Bare branch name: no tracking branch configured. Guard against a
-		// branch literally named "No commits yet on x" being misread above by
-		// requiring a non-empty name here.
-		return 0, 0, strings.TrimSpace(name) != ""
+		// Bare branch name: no tracking branch configured.
+		return branch, 0, 0, branch != ""
 	}
 	open := strings.Index(tracking, " [")
 	if open < 0 || !strings.HasSuffix(tracking, "]") {
-		return 0, 0, false
+		return branch, 0, 0, false
 	}
 	for _, part := range strings.Split(tracking[open+2:len(tracking)-1], ", ") {
 		kind, num, ok := strings.Cut(part, " ")
@@ -141,7 +145,7 @@ func parseBranchHeader(line string) (ahead, behind int, noUpstream bool) {
 			behind = n
 		}
 	}
-	return ahead, behind, false
+	return branch, ahead, behind, false
 }
 
 // WebURL converts a git remote URL to a browsable https URL. Only GitHub and

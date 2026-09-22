@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -41,6 +42,78 @@ type dirGitInfo struct {
 	gitinfo.Status
 }
 
+const (
+	// gitURLTTL is how long a dir's origin lookup is trusted. Remotes rarely
+	// change, so re-reading one every tick is waste, but a session can
+	// `git init` and add a remote after it starts, so even a negative result
+	// has to be retried eventually.
+	gitURLTTL = time.Minute
+	// gitConcurrency bounds the git processes one resolution pass runs at
+	// once: enough that one slow repo doesn't hold up the rest, few enough
+	// that a grid full of large repos doesn't thrash the disk.
+	gitConcurrency = 4
+)
+
+// urlLookup is one cached origin lookup. url is "" for a dir that is not a
+// repo or has no GitHub origin — the entry's presence is what records that
+// the lookup ran.
+type urlLookup struct {
+	url string
+	at  time.Time
+}
+
+// resolveGit inspects dirs, at most gitConcurrency at a time, reusing each
+// dir's cached origin URL while it is younger than gitURLTTL.
+func (s *Server) resolveGit(dirs []string) map[string]dirGitInfo {
+	now := time.Now()
+	s.gitMu.RLock()
+	cached := make(map[string]urlLookup, len(dirs))
+	for _, dir := range dirs {
+		if u, ok := s.gitURLs[dir]; ok && now.Sub(u.at) < gitURLTTL {
+			cached[dir] = u
+		}
+	}
+	s.gitMu.RUnlock()
+
+	var (
+		mu     sync.Mutex
+		wg     sync.WaitGroup
+		out    = make(map[string]dirGitInfo, len(dirs))
+		looked = map[string]urlLookup{}
+		sem    = make(chan struct{}, gitConcurrency)
+	)
+	for _, dir := range dirs {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			u, fresh := cached[dir]
+			if !fresh {
+				u = urlLookup{url: gitinfo.RepoWebURL(dir), at: now}
+			}
+			info := dirGitInfo{url: u.url, Status: gitinfo.BranchStatus(dir)}
+			mu.Lock()
+			defer mu.Unlock()
+			out[dir] = info
+			if !fresh {
+				looked[dir] = u
+			}
+		})
+	}
+	wg.Wait()
+
+	if len(looked) > 0 {
+		s.gitMu.Lock()
+		if s.gitURLs == nil {
+			s.gitURLs = make(map[string]urlLookup)
+		}
+		for dir, u := range looked {
+			s.gitURLs[dir] = u
+		}
+		s.gitMu.Unlock()
+	}
+	return out
+}
+
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.cfg.Store.ListSessions()
 	if err != nil {
@@ -70,21 +143,17 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// or a newly launched session before the next 5s ticker tick), resolve
 	// synchronously and update the cache so this and subsequent requests
 	// have full info without waiting for the next tick.
-	var newlyResolved map[string]dirGitInfo
+	var missing []string
 	for dir := range liveDirs {
 		if _, ok := infos[dir]; !ok {
-			info := dirGitInfo{
-				url:    gitinfo.RepoWebURL(dir),
-				Status: gitinfo.BranchStatus(dir),
-			}
-			infos[dir] = info
-			if newlyResolved == nil {
-				newlyResolved = make(map[string]dirGitInfo)
-			}
-			newlyResolved[dir] = info
+			missing = append(missing, dir)
 		}
 	}
-	if len(newlyResolved) > 0 {
+	if len(missing) > 0 {
+		newlyResolved := s.resolveGit(missing)
+		for dir, info := range newlyResolved {
+			infos[dir] = info
+		}
 		s.gitMu.Lock()
 		if s.gitSeen == nil {
 			s.gitSeen = make(map[string]dirGitInfo)
@@ -510,32 +579,24 @@ func (s *Server) CheckGitInfo() error {
 	if err != nil {
 		return err
 	}
-	s.gitMu.RLock()
-	prevURLs := make(map[string]string, len(s.gitSeen))
-	for dir, info := range s.gitSeen {
-		prevURLs[dir] = info.url
-	}
-	s.gitMu.RUnlock()
-
-	seen := map[string]dirGitInfo{}
+	var dirs []string
+	live := map[string]bool{}
 	for _, sess := range sessions {
-		if sess.Status != "running" {
-			continue
-		}
-		if _, ok := seen[sess.Dir]; ok {
-			continue
-		}
-		url := prevURLs[sess.Dir]
-		if url == "" {
-			url = gitinfo.RepoWebURL(sess.Dir)
-		}
-		seen[sess.Dir] = dirGitInfo{
-			url:    url,
-			Status: gitinfo.BranchStatus(sess.Dir),
+		if sess.Status == "running" && !live[sess.Dir] {
+			live[sess.Dir] = true
+			dirs = append(dirs, sess.Dir)
 		}
 	}
+	seen := s.resolveGit(dirs)
 	changed := false
 	s.gitMu.Lock()
+	// URL lookups share the lifetime of the dir's live sessions, so a dir
+	// that comes back later is looked up afresh.
+	for dir := range s.gitURLs {
+		if !live[dir] {
+			delete(s.gitURLs, dir)
+		}
+	}
 	if s.gitSeen != nil {
 		for dir, info := range seen {
 			if prev, ok := s.gitSeen[dir]; !ok || prev != info {

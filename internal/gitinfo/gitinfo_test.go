@@ -82,6 +82,31 @@ func TestBranchStatus(t *testing.T) {
 	check("both", "feat", "untracked")
 }
 
+func TestParseBranchHeader(t *testing.T) {
+	cases := []struct {
+		line          string
+		branch        string
+		ahead, behind int
+		noUpstream    bool
+	}{
+		{"## main...origin/main [ahead 2, behind 1]", "main", 2, 1, false},
+		{"## main...origin/main [behind 3]", "main", 0, 3, false},
+		{"## feat/x...origin/feat/x", "feat/x", 0, 0, false},
+		{"## main...origin/main [gone]", "main", 0, 0, false},
+		{"## main", "main", 0, 0, true},
+		{"## No commits yet on main", "main", 0, 0, false},
+		{"## Initial commit on main", "main", 0, 0, false},
+		{"## HEAD (no branch)", "", 0, 0, false},
+	}
+	for _, c := range cases {
+		branch, ahead, behind, noUpstream := parseBranchHeader(c.line)
+		if branch != c.branch || ahead != c.ahead || behind != c.behind || noUpstream != c.noUpstream {
+			t.Errorf("parseBranchHeader(%q) = (%q, %d, %d, %v), want (%q, %d, %d, %v)",
+				c.line, branch, ahead, behind, noUpstream, c.branch, c.ahead, c.behind, c.noUpstream)
+		}
+	}
+}
+
 func TestBranchStatusUpstream(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
