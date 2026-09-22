@@ -131,38 +131,17 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Read cached git info for live directories.
+	// Git state comes only from the CheckGitInfo cache. Resolving a missing
+	// dir here would put git processes on the request path, and every tile
+	// asks at once after a daemon restart; a dir the cache hasn't seen yet
+	// (cold start, a just-launched session) is filled in by the next tick,
+	// whose git_changed prompts clients to refetch.
 	s.gitMu.RLock()
-	infos := make(map[string]dirGitInfo, len(s.gitSeen))
-	for k, v := range s.gitSeen {
-		infos[k] = v
+	infos := make(map[string]dirGitInfo, len(liveDirs))
+	for dir := range liveDirs {
+		infos[dir] = s.gitSeen[dir]
 	}
 	s.gitMu.RUnlock()
-
-	// For any live directory not yet in cache (e.g. cold start, unit tests,
-	// or a newly launched session before the next 5s ticker tick), resolve
-	// synchronously and update the cache so this and subsequent requests
-	// have full info without waiting for the next tick.
-	var missing []string
-	for dir := range liveDirs {
-		if _, ok := infos[dir]; !ok {
-			missing = append(missing, dir)
-		}
-	}
-	if len(missing) > 0 {
-		newlyResolved := s.resolveGit(missing)
-		for dir, info := range newlyResolved {
-			infos[dir] = info
-		}
-		s.gitMu.Lock()
-		if s.gitSeen == nil {
-			s.gitSeen = make(map[string]dirGitInfo)
-		}
-		for dir, info := range newlyResolved {
-			s.gitSeen[dir] = info
-		}
-		s.gitMu.Unlock()
-	}
 
 	for _, sess := range sessions {
 		var info dirGitInfo
@@ -572,8 +551,8 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 
 // CheckGitInfo recomputes branch and working-tree state for every running
 // session's dir and broadcasts git_changed when any of it differs from the
-// previous check, prompting clients to refetch the session list. The first
-// check only records a baseline.
+// previous check — a dir seen for the first time included, since the session
+// list serves only this cache — prompting clients to refetch the session list.
 func (s *Server) CheckGitInfo() error {
 	sessions, err := s.cfg.Store.ListSessions()
 	if err != nil {
@@ -597,12 +576,10 @@ func (s *Server) CheckGitInfo() error {
 			delete(s.gitURLs, dir)
 		}
 	}
-	if s.gitSeen != nil {
-		for dir, info := range seen {
-			if prev, ok := s.gitSeen[dir]; !ok || prev != info {
-				changed = true
-				break
-			}
+	for dir, info := range seen {
+		if prev, ok := s.gitSeen[dir]; !ok || prev != info {
+			changed = true
+			break
 		}
 	}
 	s.gitSeen = seen

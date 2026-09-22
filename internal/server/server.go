@@ -54,8 +54,8 @@ type Server struct {
 	// gitMu guards gitSeen and gitURLs.
 	gitMu sync.RWMutex
 
-	// gitSeen is the per-dir git state as of the last CheckGitInfo tick or
-	// on-demand resolution. Guarded by gitMu.
+	// gitSeen is the per-dir git state as of the last CheckGitInfo tick, and
+	// the only source of the session list's git fields. Guarded by gitMu.
 	gitSeen map[string]dirGitInfo
 
 	// gitURLs caches each live dir's origin lookup, negative results

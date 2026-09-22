@@ -359,7 +359,7 @@ test("a failed session response does not classify a missing tile as ended", asyn
   expect(screen.queryByRole("button", { name: /ended session/ })).not.toBeInTheDocument();
 });
 
-test("an older session response cannot replace a newer successful snapshot", async () => {
+test("refreshes asked for while one is in flight fold into a single follow-up", async () => {
   const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
   const pending: Array<(response: Response) => void> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
@@ -375,20 +375,43 @@ test("an older session response cannot replace a newer successful snapshot", asy
   render(<GridPage />);
   await waitFor(() => expect(pending).toHaveLength(1));
   const calls = vi.mocked(useEvents).mock.calls;
-  act(() => calls[calls.length - 1][1]("hello"));
-  await waitFor(() => expect(pending).toHaveLength(2));
-
-  await act(async () => {
-    pending[1](new Response(JSON.stringify([sessions[0]])));
-    await Promise.resolve();
+  act(() => {
+    calls[calls.length - 1][1]("hello");
+    calls[calls.length - 1][1]("git_changed");
+    calls[calls.length - 1][1]("session_created");
   });
+  // Nothing more goes out while the first request is still open, so no older
+  // response can land after a newer one.
+  expect(pending).toHaveLength(1);
+
+  await act(async () => pending[0](new Response("[]")));
+  await waitFor(() => expect(pending).toHaveLength(2));
+  await act(async () => pending[1](new Response(JSON.stringify([sessions[0]]))));
+  await screen.findByTestId("term-1");
+  expect(screen.queryByRole("button", { name: "Dismiss all 1 ended session on local" })).not.toBeInTheDocument();
+  expect(pending).toHaveLength(2);
+});
+
+test("an event refetches only the server that sent it", async () => {
+  stubRemoteServer();
+  const layout = { shape: { rows: 1, cols: 1 }, tiles: [{ serverId: "local", sessionId: 1 }] };
+  const fetchMock = mockFetch(layout);
+  render(<GridPage />);
   await screen.findByTestId("term-1");
 
-  await act(async () => {
-    pending[0](new Response("[]"));
-    await Promise.resolve();
-  });
-  expect(screen.queryByRole("button", { name: "Dismiss all 1 ended session on local" })).not.toBeInTheDocument();
+  const sessionGets = (origin: string) =>
+    fetchMock.mock.calls.filter(
+      ([input, init]) => String(input) === `${origin}/api/sessions` && (init?.method ?? "GET") === "GET",
+    ).length;
+  await waitFor(() => expect(sessionGets("https://box-a:8686")).toBeGreaterThan(0));
+  const localBefore = sessionGets(window.location.origin);
+  const remoteBefore = sessionGets("https://box-a:8686");
+
+  const remoteCalls = vi.mocked(useEvents).mock.calls.filter(([s]) => s.id === "r1");
+  act(() => remoteCalls[remoteCalls.length - 1][1]("git_changed"));
+
+  await waitFor(() => expect(sessionGets("https://box-a:8686")).toBe(remoteBefore + 1));
+  expect(sessionGets(window.location.origin)).toBe(localBefore);
 });
 
 test("a failed refresh preserves the cleanup set from the last successful response", async () => {

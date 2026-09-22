@@ -245,6 +245,29 @@ test("missing session shows not-found overlay and stops retrying", async () => {
   expect(onClose).toHaveBeenCalled();
 });
 
+test("tiles on one server that close together share one sessions lookup", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const fetchMock = mockSessions(async () => {
+    await gate;
+    return new Response(JSON.stringify([session("dead")]));
+  });
+  render(
+    <>
+      <TerminalTile server={server} sessionId={7} onClose={() => {}} />
+      <TerminalTile server={server} sessionId={8} onClose={() => {}} />
+    </>,
+  );
+  await act(async () => {
+    for (const ws of FakeWebSocket.instances) ws.onclose?.();
+  });
+  await act(async () => release());
+
+  expect(await screen.findByText(/session ended/)).toBeInTheDocument();
+  expect(await screen.findByText(/session not found/)).toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/sessions"))).toHaveLength(1);
+});
+
 test("dead session shows session-ended overlay and stops retrying", async () => {
   mockSessions(async () => new Response(JSON.stringify([session("dead")])));
   const onClose = vi.fn();

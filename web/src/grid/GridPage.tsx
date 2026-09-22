@@ -51,10 +51,10 @@ function EventsBridge({
   onStatus,
 }: {
   server: Server;
-  onEvent: (type: string) => void;
+  onEvent: (server: Server, type: string) => void;
   onStatus: (s: EventsStatus) => void;
 }) {
-  useEvents(server, onEvent, onStatus);
+  useEvents(server, (type) => onEvent(server, type), onStatus);
   return null;
 }
 
@@ -156,8 +156,11 @@ export default function GridPage({
   const [layoutSettled, setLayoutSettled] = useState(false);
   const [settledSessionServers, setSettledSessionServers] = useState<Set<string>>(() => new Set());
   const [loadedSessionServers, setLoadedSessionServers] = useState<Set<string>>(() => new Set());
-  const sessionRequestSerial = useRef<Record<string, number>>({});
-  const appliedSessionRequestSerial = useRef<Record<string, number>>({});
+  // Per server, the session-list request in flight, if any. A refresh asked
+  // for while one is out is folded into a single follow-up (queued, settling
+  // the initial load if any folded caller asked to), so a burst of events
+  // costs at most two requests and responses can never land out of order.
+  const sessionFetches = useRef<Record<string, { queued: boolean; settle: boolean }>>({});
   // Ephemeral: which tile fills the viewport (tile key), or null for grid view.
   const [maximizedKey, setMaximizedKey] = useState<string | null>(null);
   // Ephemeral: a just-launched tile whose terminal should grab keyboard focus
@@ -266,46 +269,60 @@ export default function GridPage({
     [adoptLayout, flushLayout],
   );
 
-  const refreshSessions = useCallback(
-    (settleInitial = false) => {
-      for (const server of servers) {
-        const requestSerial = (sessionRequestSerial.current[server.id] ?? 0) + 1;
-        sessionRequestSerial.current[server.id] = requestSerial;
-        getJSON<Session[]>(server, "/api/sessions")
-          .then((sessions) => {
-            // Several triggers can overlap (hello, resume, mutations). A late
-            // older success must not replace a newer authoritative snapshot:
-            // it could make a live session look absent and therefore ended.
-            if (requestSerial < (appliedSessionRequestSerial.current[server.id] ?? 0)) return;
-            appliedSessionRequestSerial.current[server.id] = requestSerial;
-            setSessionsByServer((prev) => ({ ...prev, [server.id]: sessions }));
-            setLoadedSessionServers((prev) => {
-              if (prev.has(server.id)) return prev;
-              const next = new Set(prev);
-              next.add(server.id);
-              return next;
-            });
-          })
-          // A failed poll is not "this daemon has no sessions". Dropping the
-          // list would take the dir buttons, the quick-add buttons and (since
-          // a solo with no button is not in effect) the user's filter with it
-          // — and nothing refetches until the next socket event, so a single
-          // hiccup while the tab slept used to persist until a reload. Keep
-          // the last known list; the status banner is what reports the daemon
-          // being out of touch.
-          .catch(() => {})
-          .finally(() => {
-            if (settleInitial) {
-              setSettledSessionServers((prev) => {
-                const next = new Set(prev);
-                next.add(server.id);
-                return next;
-              });
-            }
+  // The follow-up must use the server as it is when it goes out — a reconnect
+  // may have replaced the token since the first request left.
+  const serversRef = useRef(servers);
+  useEffect(() => {
+    serversRef.current = servers;
+  });
+
+  const fetchSessions = useCallback((server: Server, settleInitial: boolean) => {
+    const inFlight = sessionFetches.current[server.id];
+    if (inFlight) {
+      inFlight.queued = true;
+      inFlight.settle ||= settleInitial;
+      return;
+    }
+    sessionFetches.current[server.id] = { queued: false, settle: false };
+    getJSON<Session[]>(server, "/api/sessions")
+      .then((sessions) => {
+        setSessionsByServer((prev) => ({ ...prev, [server.id]: sessions }));
+        setLoadedSessionServers((prev) => {
+          if (prev.has(server.id)) return prev;
+          const next = new Set(prev);
+          next.add(server.id);
+          return next;
+        });
+      })
+      // A failed poll is not "this daemon has no sessions". Dropping the
+      // list would take the dir buttons, the quick-add buttons and (since
+      // a solo with no button is not in effect) the user's filter with it
+      // — and nothing refetches until the next socket event, so a single
+      // hiccup while the tab slept used to persist until a reload. Keep
+      // the last known list; the status banner is what reports the daemon
+      // being out of touch.
+      .catch(() => {})
+      .finally(() => {
+        if (settleInitial) {
+          setSettledSessionServers((prev) => {
+            const next = new Set(prev);
+            next.add(server.id);
+            return next;
           });
-      }
+        }
+        const { queued, settle } = sessionFetches.current[server.id];
+        delete sessionFetches.current[server.id];
+        const latest = serversRef.current.find((s) => s.id === server.id);
+        if (queued && latest) fetchSessions(latest, settle);
+      });
+  }, []);
+
+  // Refetch one server's session list, or every server's when none is named.
+  const refreshSessions = useCallback(
+    (settleInitial = false, only?: Server) => {
+      for (const server of only ? [only] : servers) fetchSessions(server, settleInitial);
     },
-    [servers],
+    [servers, fetchSessions],
   );
 
   const renameSession = useCallback(
@@ -313,8 +330,8 @@ export default function GridPage({
       // The response and the session_renamed broadcast both land as a refresh;
       // a failure just leaves the old title in place.
       putJSON(server, `/api/sessions/${sessionId}/label`, { label }).then(
-        () => refreshSessions(),
-        () => refreshSessions(),
+        () => refreshSessions(false, server),
+        () => refreshSessions(false, server),
       );
     },
     [refreshSessions],
@@ -345,10 +362,11 @@ export default function GridPage({
   );
 
   const onServerEvent = useCallback(
-    (type: string) => {
+    (server: Server, type: string) => {
       // "hello" arrives on every (re)connect; the hub drops events for slow
-      // subscribers, so a reconnected socket must resync everything.
-      if (type.startsWith("session_") || type === "git_changed" || type === "hello") refreshSessions();
+      // subscribers, so a reconnected socket must resync everything. Session
+      // events describe only the daemon that sent them, so only it is asked.
+      if (type.startsWith("session_") || type === "git_changed" || type === "hello") refreshSessions(false, server);
       if (type === "layout_changed" || type === "hello") refreshLayout();
     },
     [refreshSessions, refreshLayout],
@@ -434,7 +452,7 @@ export default function GridPage({
     // The terminal's autoFocus raises this too, but only once it has mounted;
     // setting it here means the launcher is already aimed at the new session.
     setActiveKey(`${server.id}:${session.id}`);
-    refreshSessions();
+    refreshSessions(false, server);
   }
 
   const sessionFor = useCallback(
@@ -549,7 +567,7 @@ export default function GridPage({
       // Session may already be gone; drop the tile either way.
     }
     persist((l) => removeTile(l, tileIndex));
-    refreshSessions();
+    refreshSessions(false, server);
   }
 
   // Close a whole directory: every running session in it, on every server,

@@ -594,6 +594,9 @@ func TestListSessionsIncludesRepoURL(t *testing.T) {
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	st.CreateSession(tool.ID, repo)
 	st.CreateSession(tool.ID, t.TempDir()) // no repo → no repoUrl
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
 
 	w := do(t, s, "GET", "/api/sessions", token)
 	if w.Code != 200 {
@@ -646,6 +649,9 @@ func TestListSessionsIncludesBranchAndGitState(t *testing.T) {
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	st.CreateSession(tool.ID, repo)
 	st.CreateSession(tool.ID, t.TempDir()) // no repo → no branch/state
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
 
 	w := do(t, s, "GET", "/api/sessions", token)
 	if w.Code != 200 {
@@ -702,12 +708,13 @@ func TestCheckGitInfoBroadcastsOnChange(t *testing.T) {
 		}
 	}
 
-	// Baseline tick: establishes state, must not broadcast.
+	// First sighting of the dir: the session list only serves this cache,
+	// so clients must be told to refetch.
 	if err := s.CheckGitInfo(); err != nil {
 		t.Fatal(err)
 	}
-	if evs := drain(); len(evs) != 0 {
-		t.Fatalf("baseline tick broadcast %v, want none", evs)
+	if evs := drain(); len(evs) != 1 || evs[0] != "git_changed" {
+		t.Fatalf("first tick broadcast %v, want [git_changed]", evs)
 	}
 
 	// No change → still no broadcast.
@@ -831,6 +838,9 @@ func TestListSessionsSkipsDeadDirs(t *testing.T) {
 	if err := st.SetSessionStatus(sharedDeadSess.ID, "dead"); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
 
 	w := do(t, s, "GET", "/api/sessions", token)
 	if w.Code != 200 {
@@ -913,6 +923,75 @@ func TestListSessionsServesFromCache(t *testing.T) {
 	if got[0].RepoURL != "https://github.com/custom/cache" || got[0].Branch != "cached-branch" || got[0].GitState != "clean" {
 		t.Errorf("got cached values (%q, %q, %q), want custom cache values",
 			got[0].RepoURL, got[0].Branch, got[0].GitState)
+	}
+}
+
+func TestListSessionsLeavesUncachedDirsToTick(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"-C", repo, "init"},
+		{"-C", repo, "checkout", "-b", "main"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	st.CreateSession(tool.ID, repo)
+
+	branches := func() []string {
+		t.Helper()
+		w := do(t, s, "GET", "/api/sessions", token)
+		if w.Code != 200 {
+			t.Fatalf("list = %d: %s", w.Code, w.Body.String())
+		}
+		var got []struct {
+			Branch string `json:"branch"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &got)
+		var out []string
+		for _, g := range got {
+			out = append(out, g.Branch)
+		}
+		return out
+	}
+
+	// Cold cache: the request must not run git, and must not fill the cache.
+	if got := branches(); len(got) != 1 || got[0] != "" {
+		t.Fatalf("cold list branches = %v, want [\"\"]", got)
+	}
+	s.gitMu.RLock()
+	_, cached := s.gitSeen[repo]
+	s.gitMu.RUnlock()
+	if cached {
+		t.Fatal("list request resolved git into the cache")
+	}
+
+	ch := s.hub.Subscribe()
+	defer s.hub.Unsubscribe(ch)
+	if err := s.CheckGitInfo(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case raw := <-ch:
+		var ev struct {
+			Type string `json:"type"`
+		}
+		json.Unmarshal(raw, &ev)
+		if ev.Type != "git_changed" {
+			t.Fatalf("tick broadcast %q, want git_changed", ev.Type)
+		}
+	default:
+		t.Fatal("tick that filled the cache did not broadcast")
+	}
+	if got := branches(); len(got) != 1 || got[0] != "main" {
+		t.Fatalf("warm list branches = %v, want [main]", got)
 	}
 }
 

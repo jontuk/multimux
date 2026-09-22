@@ -51,20 +51,39 @@ const isMac = ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(navigator.p
 // terminal — the loop stops and the overlay offers dismiss/reconnect.
 type ConnState = "connecting" | "open" | "offline" | "exited" | "missing" | "auth";
 
+type SessionsLookup = { kind: "auth" | "retry" } | { kind: "ok"; sessions: Session[] };
+
+// A daemon restart closes every tile's socket at once. Tiles on one server
+// share the lookup already in flight rather than each sending their own.
+const sessionsLookups = new Map<string, Promise<SessionsLookup>>();
+
+function lookupSessions(server: Server): Promise<SessionsLookup> {
+  const key = `${server.id}\n${server.token ?? ""}`;
+  let lookup = sessionsLookups.get(key);
+  if (!lookup) {
+    lookup = (async (): Promise<SessionsLookup> => {
+      try {
+        const res = await apiFetch(server, "/api/sessions");
+        if (res.status === 401 || res.status === 403) return { kind: "auth" };
+        if (!res.ok) return { kind: "retry" };
+        return { kind: "ok", sessions: (await res.json()) as Session[] };
+      } catch {
+        return { kind: "retry" }; // daemon unreachable — transient
+      }
+    })().finally(() => sessionsLookups.delete(key));
+    sessionsLookups.set(key, lookup);
+  }
+  return lookup;
+}
+
 // The browser WS API hides the HTTP status of a failed upgrade, so ask the
 // sessions API which failure this is (same trick as useEvents' classify).
 async function classifyClose(server: Server, sessionId: number): Promise<"retry" | "exited" | "missing" | "auth"> {
-  try {
-    const res = await apiFetch(server, "/api/sessions");
-    if (res.status === 401 || res.status === 403) return "auth";
-    if (!res.ok) return "retry";
-    const sessions = (await res.json()) as Session[];
-    const sess = sessions.find((s) => s.id === sessionId);
-    if (!sess) return "missing";
-    return sess.status === "running" ? "retry" : "exited";
-  } catch {
-    return "retry"; // daemon unreachable — transient
-  }
+  const lookup = await lookupSessions(server);
+  if (lookup.kind !== "ok") return lookup.kind;
+  const sess = lookup.sessions.find((s) => s.id === sessionId);
+  if (!sess) return "missing";
+  return sess.status === "running" ? "retry" : "exited";
 }
 
 const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
