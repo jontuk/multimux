@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { apiFetch, wsURL } from "../api";
 import type { Server } from "../servers";
@@ -76,6 +77,22 @@ function lookupSessions(server: Server): Promise<SessionsLookup> {
   return lookup;
 }
 
+// The DOM renderer rebuilds a row's spans on every change, which in a grid of
+// busy terminals is the bulk of the page's CPU. WebGL draws from a glyph atlas
+// instead. It must load after open(). Browsers cap live WebGL contexts (Chrome
+// at 16) and drop the oldest past that, and a GPU reset drops them all; either
+// way the addon is disposed and xterm falls back to the DOM renderer for that
+// tile rather than going blank. No WebGL2 at all throws here, same fallback.
+function loadWebgl(term: Terminal) {
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
+  } catch {
+    /* DOM renderer stays */
+  }
+}
+
 // The browser WS API hides the HTTP status of a failed upgrade, so ask the
 // sessions API which failure this is (same trick as useEvents' classify).
 async function classifyClose(server: Server, sessionId: number): Promise<"retry" | "exited" | "missing" | "auth"> {
@@ -144,6 +161,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     // them, which the addon can't see (see wrap.ts).
     const linkProvider = term.registerLinkProvider(wrapAwareLinkProvider(term));
     term.open(containerRef.current!);
+    loadWebgl(term);
     const disposeTouchScroll = touchScrollback
       ? installTouchScroll(term.element!, () => term.modes.mouseTrackingMode !== "none")
       : () => {};

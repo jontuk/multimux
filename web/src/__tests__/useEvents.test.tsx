@@ -203,3 +203,55 @@ test("latest onEvent handler receives messages after re-render", () => {
   expect(first).not.toHaveBeenCalled();
   expect(second).toHaveBeenCalledWith("session_started");
 });
+
+test("hooks watching the same daemon share one socket", () => {
+  const a = vi.fn();
+  const b = vi.fn();
+  const first = renderHook(() => useEvents(server, a));
+  renderHook(() => useEvents(server, b));
+  expect(FakeWebSocket.instances).toHaveLength(1);
+
+  last().onmessage?.({ data: JSON.stringify({ type: "session_started" }) });
+  expect(a).toHaveBeenCalledWith("session_started");
+  expect(b).toHaveBeenCalledWith("session_started");
+
+  // One watcher leaving must not cut the other off.
+  first.unmount();
+  expect(last().close).not.toHaveBeenCalled();
+  last().onmessage?.({ data: JSON.stringify({ type: "layout_changed" }) });
+  expect(a).not.toHaveBeenCalledWith("layout_changed");
+  expect(b).toHaveBeenCalledWith("layout_changed");
+});
+
+test("the last watcher leaving closes the shared socket", () => {
+  const first = renderHook(() => useEvents(server, () => {}));
+  const second = renderHook(() => useEvents(server, () => {}));
+  const ws = last();
+  first.unmount();
+  second.unmount();
+  expect(ws.close).toHaveBeenCalled();
+
+  // A new watcher afterwards starts a fresh socket rather than a dead one.
+  renderHook(() => useEvents(server, () => {}));
+  expect(FakeWebSocket.instances).toHaveLength(2);
+});
+
+test("a watcher joining a live socket hears its current status and build", () => {
+  renderHook(() => useEvents(server, () => {}));
+  last().open();
+  last().onmessage?.({ data: JSON.stringify({ type: "hello", build: "b1" }) });
+
+  const onStatus = vi.fn();
+  const onHello = vi.fn();
+  renderHook(() => useEvents(server, () => {}, onStatus, onHello));
+
+  expect(FakeWebSocket.instances).toHaveLength(1);
+  expect(onStatus).toHaveBeenCalledWith("open");
+  expect(onHello).toHaveBeenCalledWith("b1");
+});
+
+test("different daemons get their own sockets", () => {
+  renderHook(() => useEvents(server, () => {}));
+  renderHook(() => useEvents({ ...server, id: "r2", origin: "https://thirdbox:8686" }, () => {}));
+  expect(FakeWebSocket.instances).toHaveLength(2);
+});

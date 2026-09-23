@@ -97,6 +97,27 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 vi.mock("@xterm/addon-clipboard", () => ({ ClipboardAddon: class {} }));
+const webglMocks = vi.hoisted(() => ({
+  instances: [] as Array<{ dispose: ReturnType<typeof vi.fn>; loseContext: () => void }>,
+  unsupported: false,
+}));
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: class {
+    dispose = vi.fn();
+    private lossListener: (() => void) | null = null;
+    constructor() {
+      if (webglMocks.unsupported) throw new Error("WebGL2 not supported");
+      webglMocks.instances.push(this);
+    }
+    onContextLoss(cb: () => void) {
+      this.lossListener = cb;
+      return { dispose() {} };
+    }
+    loseContext() {
+      this.lossListener?.();
+    }
+  },
+}));
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -188,6 +209,8 @@ beforeEach(() => {
   FakeWebSocket.instances = [];
   FakeResizeObserver.instances = [];
   linkProviders.length = 0;
+  webglMocks.instances.length = 0;
+  webglMocks.unsupported = false;
   dataListener = null;
   pasteCalls.length = 0;
   focusSpy.mockClear();
@@ -661,6 +684,26 @@ test("selection is copied to the clipboard once the drag settles", async () => {
 test("registers the wrap-aware link provider on terminal mount", () => {
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
   expect(linkProviders).toHaveLength(1);
+});
+
+test("renders through WebGL, falling back to the DOM renderer when the context is lost", () => {
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  expect(webglMocks.instances).toHaveLength(1);
+  const webgl = webglMocks.instances[0];
+  expect(loadedAddons).toContain(webgl);
+  expect(webgl.dispose).not.toHaveBeenCalled();
+
+  // Past the browser's context cap, or after a GPU reset: dispose the addon so
+  // xterm renders through the DOM again instead of leaving a blank tile.
+  webgl.loseContext();
+  expect(webgl.dispose).toHaveBeenCalled();
+});
+
+test("a browser without WebGL2 still gets a working terminal", () => {
+  webglMocks.unsupported = true;
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  expect(terminalInstances).toHaveLength(1);
+  expect(FakeWebSocket.instances).toHaveLength(1);
 });
 
 // A tile the dir filter has hidden has no box at all. Fitting to it would size
