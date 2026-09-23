@@ -144,9 +144,9 @@ func serverOptions() [][]string {
 		// OSC 52 passthrough: copy-mode yanks reach the browser clipboard via
 		// xterm.js ClipboardAddon. terminal-features tells tmux the attached
 		// client (xterm.js) supports the clipboard escape sequence.
-		appendOnce("terminal-features", "xterm?:clipboard", "xterm*:clipboard"),
+		setArrayEntry("terminal-features", 90, "xterm*:clipboard"),
 		{"set-option", "-s", "set-clipboard", "on"},
-		appendOnce("terminal-features", "xterm?:extkeys", "xterm*:extkeys"),
+		setArrayEntry("terminal-features", 91, "xterm*:extkeys"),
 		// The browser sends Shift+Enter as CSI u. "on" only preserves extended
 		// keys while the pane application has requested the protocol; "always"
 		// also preserves them at ordinary prompts and in applications unaware
@@ -162,14 +162,15 @@ func serverOptions() [][]string {
 	}
 }
 
-// appendOnce appends value to a server array option unless some entry
-// already contains it. A plain `set-option -a` adds a duplicate every time it
-// runs, and this runs on every create for the life of the tmux server.
-// pattern is value as a tmux match pattern: "?" stands in for a literal "*",
-// which the pattern would otherwise read as a wildcard.
-func appendOnce(option, pattern, value string) []string {
-	return []string{"if-shell", "-F", "#{m:*" + pattern + "*,#{" + option + "}}", "",
-		"set-option -s -a " + option + " '" + value + "'"}
+// setArrayEntry sets one entry of a server array option at a fixed index. A
+// plain `set-option -a` adds a duplicate every time it runs, and this runs on
+// every create for the life of the tmux server. Guarding the append with a
+// format match does not work portably either: on tmux 3.4 an unindexed
+// array option expands to nothing in a format, so the guard never matches.
+// tmux arrays are sparse, so a high index stays clear of the entries a user's
+// tmux.conf appends from the bottom.
+func setArrayEntry(option string, index int, value string) []string {
+	return []string{"set-option", "-s", fmt.Sprintf("%s[%d]", option, index), value}
 }
 
 // chain joins tmux commands with ";" so they run in one tmux invocation.
