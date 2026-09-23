@@ -52,7 +52,7 @@ func TestAttachForwardsExtendedKeyToUnawareApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate a tmux server left running across an upgrade from the old
-	// multimux setting. Attach must repair existing sessions too.
+	// multimux setting. Daemon start must repair existing servers too.
 	if err := m.run("set-option", "-s", "extended-keys", "on"); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +73,7 @@ func TestAttachForwardsExtendedKeyToUnawareApplication(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	m.ConfigureServer()
 	conn, err := m.Attach(name)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +84,7 @@ func TestAttachForwardsExtendedKeyToUnawareApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(string(option)); got != "always" {
-		t.Fatalf("extended-keys after Attach = %q, want always", got)
+		t.Fatalf("extended-keys after ConfigureServer = %q, want always", got)
 	}
 	if hasFormat {
 		format, err := exec.Command("tmux", m.baseArgs("show-options", "-s", "-v", "extended-keys-format")...).Output()
@@ -91,7 +92,7 @@ func TestAttachForwardsExtendedKeyToUnawareApplication(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got := strings.TrimSpace(string(format)); got != "csi-u" {
-			t.Fatalf("extended-keys-format after Attach = %q, want csi-u", got)
+			t.Fatalf("extended-keys-format after ConfigureServer = %q, want csi-u", got)
 		}
 	}
 	const shiftEnter = "\x1b[13;2u"

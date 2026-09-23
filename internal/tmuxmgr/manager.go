@@ -53,6 +53,11 @@ func ExactTarget(name string) string {
 // non-empty it is launched via respawn-pane AFTER remain-on-exit is set,
 // avoiding the race where a fast-exiting command kills the pane before
 // remain-on-exit takes effect.
+//
+// A group launch multiplies this, so it costs three tmux processes: the
+// error-checked create, one best-effort chain of options, and the
+// error-checked respawn. They cannot merge further because a tmux chain stops
+// at its first failing command and reports one exit status for the lot.
 func (m *Manager) CreateSession(name, dir, command string) error {
 	// history-limit must be set globally BEFORE new-session: pane scrollback
 	// capacity is fixed when the pane is created. 50000 lines gives wheel
@@ -67,40 +72,16 @@ func (m *Manager) CreateSession(name, dir, command string) error {
 		return err
 	}
 	target := ExactTarget(name)
-	_ = m.run("set-environment", "-t", target, "LANG", "en_US.UTF-8")
+	setup := [][]string{{"set-environment", "-t", target, "LANG", "en_US.UTF-8"}}
 	if p := os.Getenv("PATH"); p != "" {
-		_ = m.run("set-environment", "-t", target, "PATH", p)
+		setup = append(setup, []string{"set-environment", "-t", target, "PATH", p})
 	}
-	_ = m.run("set-option", "-t", target, "remain-on-exit", "on")
-	_ = m.run("set-option", "-t", target, "status", "off")
-	// Manual sizing: tmux must never auto-shrink the window to the smallest
-	// or latest attached client (e.g. a stale client from a machine that is
-	// now off). multimux drives size explicitly via resize-window from the
-	// arbiter-elected owner connection.
-	_ = m.run("set-option", "-t", target, "window-size", "manual")
-	// Mouse mode: wheel/trackpad scrolls tmux copy-mode instead of xterm.js
-	// synthesizing up/down keys (which the shell would treat as history
-	// navigation). Scoped per session; user's other tmux sessions untouched.
-	// Trade-off: tmux owns click-drag selection; hold Option/Shift for native
-	// browser selection.
-	_ = m.run("set-option", "-t", target, "mouse", "on")
-	_ = m.run("set-option", "-s", "-a", "terminal-features", "xterm*:extkeys")
-	// The browser sends Shift+Enter as CSI u. "on" only preserves extended
-	// keys while the pane application has requested the protocol; "always"
-	// also preserves them at ordinary prompts and in applications unaware of
-	// extended keys. Claude Code requests the protocol itself, which otherwise
-	// masks this difference.
-	_ = m.run("set-option", "-s", "extended-keys", "always")
-	// tmux defaults extended-keys-format to "xterm", which re-encodes the CSI u
-	// the browser sent as the older CSI 27;mods;key~ form before handing it to
-	// the pane. Pin the format so applications see the sequence xterm.js
-	// actually produced, whatever the user's own tmux.conf says.
-	_ = m.run("set-option", "-s", "extended-keys-format", "csi-u")
-	// OSC 52 passthrough: copy-mode yanks reach the browser clipboard via
-	// xterm.js ClipboardAddon. terminal-features tells tmux the attached
-	// client (xterm.js) supports the clipboard escape sequence.
-	_ = m.run("set-option", "-s", "-a", "terminal-features", "xterm*:clipboard")
-	_ = m.run("set-option", "-s", "set-clipboard", "on")
+	setup = append(setup, sessionOptions(target)...)
+	// Server options go with every create, not just daemon start: tmux exits
+	// when its last session does, and the server this create may have just
+	// started has none of them.
+	setup = append(setup, serverOptions()...)
+	_ = m.run(chain(setup)...)
 	if command != "" {
 		if err := m.run("respawn-pane", "-k", "-c", dir, "-t", target, command); err != nil {
 			// The caller rolls its DB row back on error; the fresh tmux
@@ -110,6 +91,97 @@ func (m *Manager) CreateSession(name, dir, command string) error {
 		}
 	}
 	return nil
+}
+
+// ConfigureServer applies multimux's options to a tmux server that is already
+// running, in one tmux process. The server survives daemon upgrades, so the
+// daemon calls this once at start to repair sessions and server options an
+// older multimux left behind; Attach no longer re-asserts them per
+// connection. With no server running there is nothing to repair, and the
+// failed call starts none.
+func (m *Manager) ConfigureServer() {
+	names, err := m.ListSessions()
+	if err != nil {
+		return
+	}
+	var setup [][]string
+	for _, name := range names {
+		// On the default socket the server is shared with the user's own
+		// sessions, which must keep whatever sizing they chose.
+		if strings.HasPrefix(name, m.prefix+"-") {
+			setup = append(setup, sessionOptions(ExactTarget(name))...)
+		}
+	}
+	setup = append(setup, serverOptions()...)
+	_ = m.run(chain(setup)...)
+}
+
+// sessionOptions are the per-session settings every multimux session gets.
+func sessionOptions(target string) [][]string {
+	return [][]string{
+		{"set-option", "-t", target, "remain-on-exit", "on"},
+		{"set-option", "-t", target, "status", "off"},
+		// Manual sizing: tmux must never auto-shrink the window to the
+		// smallest or latest attached client (e.g. a stale client from a
+		// machine that is now off). multimux drives size explicitly via
+		// resize-window from the arbiter-elected owner connection.
+		{"set-option", "-t", target, "window-size", "manual"},
+		// Mouse mode: wheel/trackpad scrolls tmux copy-mode instead of
+		// xterm.js synthesizing up/down keys (which the shell would treat as
+		// history navigation). Scoped per session; user's other tmux sessions
+		// untouched. Trade-off: tmux owns click-drag selection; hold
+		// Option/Shift for native browser selection.
+		{"set-option", "-t", target, "mouse", "on"},
+	}
+}
+
+// serverOptions are the server-wide settings multimux depends on. They are
+// ordered by the tmux release that introduced them, oldest first: a chain
+// stops at its first failing command, so an option an older tmux lacks must
+// come after every option it has.
+func serverOptions() [][]string {
+	return [][]string{
+		// OSC 52 passthrough: copy-mode yanks reach the browser clipboard via
+		// xterm.js ClipboardAddon. terminal-features tells tmux the attached
+		// client (xterm.js) supports the clipboard escape sequence.
+		appendOnce("terminal-features", "xterm?:clipboard", "xterm*:clipboard"),
+		{"set-option", "-s", "set-clipboard", "on"},
+		appendOnce("terminal-features", "xterm?:extkeys", "xterm*:extkeys"),
+		// The browser sends Shift+Enter as CSI u. "on" only preserves extended
+		// keys while the pane application has requested the protocol; "always"
+		// also preserves them at ordinary prompts and in applications unaware
+		// of extended keys. Claude Code requests the protocol itself, which
+		// otherwise masks this difference.
+		{"set-option", "-s", "extended-keys", "always"},
+		// tmux defaults extended-keys-format to "xterm", which re-encodes the
+		// CSI u the browser sent as the older CSI 27;mods;key~ form before
+		// handing it to the pane. Pin the format so applications see the
+		// sequence xterm.js actually produced, whatever the user's own
+		// tmux.conf says. tmux only grew the option in 3.5, hence last.
+		{"set-option", "-s", "extended-keys-format", "csi-u"},
+	}
+}
+
+// appendOnce appends value to a server array option unless some entry
+// already contains it. A plain `set-option -a` adds a duplicate every time it
+// runs, and this runs on every create for the life of the tmux server.
+// pattern is value as a tmux match pattern: "?" stands in for a literal "*",
+// which the pattern would otherwise read as a wildcard.
+func appendOnce(option, pattern, value string) []string {
+	return []string{"if-shell", "-F", "#{m:*" + pattern + "*,#{" + option + "}}", "",
+		"set-option -s -a " + option + " '" + value + "'"}
+}
+
+// chain joins tmux commands with ";" so they run in one tmux invocation.
+func chain(cmds [][]string) []string {
+	var args []string
+	for i, c := range cmds {
+		if i > 0 {
+			args = append(args, ";")
+		}
+		args = append(args, c...)
+	}
+	return args
 }
 
 // sessionAbsent reports whether a tmux error message means the target session

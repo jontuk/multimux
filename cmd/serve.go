@@ -428,6 +428,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		fmt.Fprintf(stderr, "startup check failed: %v\ninstall tmux and retry\n", err)
 		return 1
 	}
+	tm.ConfigureServer()
 
 	srv := server.New(server.Config{
 		Store: st, Auth: am, Tmux: tm, Arbiter: tmuxmgr.NewArbiter(),

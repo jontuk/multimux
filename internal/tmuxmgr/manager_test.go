@@ -3,6 +3,7 @@ package tmuxmgr
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -292,5 +293,126 @@ func TestListSessionsNoServer(t *testing.T) {
 	names, err := m.ListSessions()
 	if err != nil || names != nil {
 		t.Fatalf("no-server ListSessions = %v, %v; want nil, nil", names, err)
+	}
+}
+
+// countingTmux installs a fake tmux that records one line per invocation and
+// succeeds, so tests can count how many tmux processes an operation spawns.
+func countingTmux(t *testing.T) (*Manager, func() []string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	body := "#!/bin/sh\necho \"$*\" >> \"" + logPath + "\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	return New("mm", "private-socket"), func() []string {
+		raw, err := os.ReadFile(logPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Split(strings.TrimSpace(string(raw)), "\n")
+	}
+}
+
+// Group launches multiply CreateSession's cost, so its setup is batched into
+// as few tmux processes as the error handling allows: the create itself, the
+// best-effort option chain, and the error-checked respawn.
+func TestCreateSessionSpawnsThreeTmuxProcesses(t *testing.T) {
+	m, calls := countingTmux(t)
+	if err := m.CreateSession("mm-1", t.TempDir(), "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls(); len(got) != 3 {
+		t.Fatalf("CreateSession spawned %d tmux processes, want 3:\n%s", len(got), strings.Join(got, "\n"))
+	}
+}
+
+// Every tile (re)connect attaches, so a reconnect burst multiplies anything
+// Attach spawns beyond attach-session itself.
+func TestAttachSpawnsOnlyAttachSession(t *testing.T) {
+	m, calls := countingTmux(t)
+	conn, err := m.Attach("mm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake exits at once; drain until it has, or Close kills it unlogged.
+	io.Copy(io.Discard, conn)
+	conn.Close()
+	got := calls()
+	if len(got) != 1 || !strings.Contains(got[0], "attach-session") {
+		t.Fatalf("Attach spawned %q, want only attach-session", got)
+	}
+}
+
+// terminal-features is an array option: a plain append on every create would
+// grow it by a duplicate entry per session for the life of the tmux server.
+func TestRepeatedSetupDoesNotDuplicateTerminalFeatures(t *testing.T) {
+	m := testManager(t)
+	for id := int64(1); id <= 3; id++ {
+		if err := m.CreateSession(m.SessionName(id), t.TempDir(), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.ConfigureServer()
+	out, err := exec.Command("tmux", m.baseArgs("show-options", "-s", "terminal-features")...).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), "xterm*:extkeys"); n != 1 {
+		t.Fatalf("xterm*:extkeys appears %d times, want 1:\n%s", n, out)
+	}
+}
+
+// The tmux server outlives daemon upgrades, so sessions and server options
+// left by an older multimux are repaired once at daemon start.
+func TestConfigureServerRepairsExistingServer(t *testing.T) {
+	m := testManager(t)
+	name := m.SessionName(1)
+	if err := m.CreateSession(name, t.TempDir(), ""); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else's session on the same server must be left alone.
+	if err := m.run("new-session", "-d", "-s", "user-own"); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"set-option", "-t", ExactTarget(name), "window-size", "latest"},
+		{"set-option", "-t", ExactTarget("user-own"), "window-size", "smallest"},
+		{"set-option", "-s", "extended-keys", "on"},
+	} {
+		if err := m.run(args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.ConfigureServer()
+	show := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", m.baseArgs(append([]string{"show-options", "-v"}, args...)...)...).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if got := show("-t", ExactTarget(name), "window-size"); got != "manual" {
+		t.Errorf("multimux session window-size = %q, want manual", got)
+	}
+	if got := show("-t", ExactTarget("user-own"), "window-size"); got != "smallest" {
+		t.Errorf("foreign session window-size = %q, want untouched smallest", got)
+	}
+	if got := show("-s", "extended-keys"); got != "always" {
+		t.Errorf("extended-keys = %q, want always", got)
+	}
+}
+
+func TestConfigureServerWithoutServerIsHarmless(t *testing.T) {
+	m := testManager(t)
+	m.ConfigureServer()
+	if names, err := m.ListSessions(); err != nil || names != nil {
+		t.Fatalf("ConfigureServer started a server: sessions %v, %v", names, err)
 	}
 }
