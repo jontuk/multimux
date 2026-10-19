@@ -26,7 +26,7 @@ gesture emits no wheel input.
 
 Once a vertical drag activates, the terminal captures the pointer and prevents
 the browser default for subsequent movement. Movement is accumulated, and each
-24 CSS pixels emits one wheel step. Finger movement down emits wheel-up to move
+8 CSS pixels emits one wheel step. Finger movement down emits wheel-up to move
 towards older output; finger movement up emits wheel-down to move towards newer
 output. Direction changes retain only the signed unconsumed remainder, so the
 gesture tracks the user's current movement without a delayed burst from the
@@ -84,7 +84,7 @@ Focused helper tests cover:
 - movement below the threshold producing no wheel event;
 - vertical activation and pointer capture;
 - downward and upward drags producing opposite wheel directions;
-- 24-pixel accumulation, multiple steps, and signed remainder behavior;
+- 8-pixel accumulation, multiple steps, and signed remainder behavior;
 - horizontal and diagonal rejection;
 - mouse, pen, non-primary, and secondary pointer rejection;
 - inactive mouse tracking producing no input;

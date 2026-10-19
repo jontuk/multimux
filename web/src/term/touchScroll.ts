@@ -1,5 +1,5 @@
 const ACTIVATION_DISTANCE = 12;
-const PIXELS_PER_STEP = 24;
+const PIXELS_PER_STEP = 8;
 
 type Gesture = {
   pointerId: number;
