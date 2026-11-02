@@ -85,6 +85,11 @@ If the hostname set changes, the CA is regenerated and must be re-trusted.
   remembered layout (`Ctrl+Alt+←/→` to cycle, `Ctrl+Alt+0` for all).
 - **Selecting text** copies to the clipboard; hold **Shift** to send the drag to
   tmux. Copy-mode yanks reach the clipboard via OSC 52.
+- **Pasting or dropping an image** (PNG, JPEG, GIF, WebP, up to 32 MiB) onto a
+  tile uploads it to that tile's daemon and pastes the saved file's path, so
+  image-aware tools like Claude Code can read it even when the session is on
+  another machine. Uploads live in `$MULTIMUX_DATA_DIR/uploads` and are
+  deleted after 24 hours.
 - **Several daemons:** add them under Settings → Servers and click **Connect**.
 - **Install as an app** from Chrome; give each daemon its own label and accent
   colour under Settings → Appearance to tell them apart.
