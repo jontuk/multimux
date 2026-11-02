@@ -433,7 +433,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 	srv := server.New(server.Config{
 		Store: st, Auth: am, Tmux: tm, Arbiter: tmuxmgr.NewArbiter(),
 		WebFS: webFS, Origins: origins, Version: version, ReadCA: readCA,
-		NoAuth: *dev,
+		NoAuth: *dev, UploadDir: filepath.Join(dir, "uploads"),
 	})
 	srv.StartBackground() // reconcile + tickers, Task 17
 

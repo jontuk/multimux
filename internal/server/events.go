@@ -181,8 +181,10 @@ func (s *Server) StartBackground() {
 		}
 	}()
 	go func() {
+		s.sweepUploads(time.Now())
 		for range time.Tick(time.Hour) {
 			s.sweepExpiredAuthSessions(time.Now())
+			s.sweepUploads(time.Now())
 		}
 	}()
 }

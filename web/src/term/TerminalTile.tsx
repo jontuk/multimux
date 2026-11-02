@@ -5,7 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { apiFetch, wsURL } from "../api";
+import { apiFetch, errorText, wsURL } from "../api";
 import type { Server } from "../servers";
 import type { Session } from "../grid/types";
 import { clientId } from "../clientId";
@@ -14,6 +14,7 @@ import { isReflowHeld, onReflowRelease } from "./reflowGate";
 import { wrapAwareLinkProvider } from "./links";
 import { installTouchScroll } from "./touchScroll";
 import { selectedText } from "./wrap";
+import { dragHasFiles, imageFiles, quotePath, uploadImage } from "./upload";
 
 export type TerminalSizePolicy = "follow-input" | "passive";
 
@@ -131,6 +132,8 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
   const [state, setState] = useState<ConnState>("connecting");
   // Bumped by the auth overlay's reconnect button to restart the effect.
   const [retryNonce, setRetryNonce] = useState(0);
+  // Progress or failure of an image paste/drop upload (see upload.ts).
+  const [uploadNote, setUploadNote] = useState<string | null>(null);
 
   // Depend on the URL string, not the server object: listServers() returns
   // fresh objects each render, but the string only changes when it matters.
@@ -325,6 +328,67 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     captureContainer.addEventListener("pointerdown", claimInteractionCapture, true);
     captureContainer.addEventListener("wheel", claimInteractionCapture, true);
 
+    // Image paste/drop: upload to this tile's daemon and paste the saved path
+    // (see upload.ts). Registered after the claim listener so stopping
+    // propagation here still lets the paste count as interaction. Uploads
+    // chain so several images land in the order they were given.
+    let disposed = false;
+    let uploadChain = Promise.resolve();
+    let noteTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    function showNote(note: string | null, clearAfterMs?: number) {
+      if (disposed) return;
+      if (noteTimeoutId) clearTimeout(noteTimeoutId);
+      noteTimeoutId = clearAfterMs ? setTimeout(() => !disposed && setUploadNote(null), clearAfterMs) : null;
+      setUploadNote(note);
+    }
+    function insertImages(files: File[]) {
+      uploadChain = uploadChain.then(async () => {
+        showNote(files.length > 1 ? `uploading ${files.length} images…` : "uploading image…");
+        try {
+          const paths: string[] = [];
+          for (const file of files) paths.push(await uploadImage(serverRef.current, file));
+          if (disposed) return;
+          // One paste per path: path-accepting programs recognise a paste
+          // that is exactly one file path.
+          let ok = true;
+          paths.forEach((path, i) => {
+            if (i > 0) ok = operationsRef.current.paste(" ") && ok;
+            ok = operationsRef.current.paste(quotePath(path)) && ok;
+          });
+          showNote(ok ? null : "terminal not connected — image not pasted", ok ? undefined : 5000);
+        } catch (e) {
+          showNote(`image upload failed: ${errorText(e)}`, 5000);
+        }
+      });
+    }
+    const imagePasteCapture = (e: ClipboardEvent) => {
+      const files = imageFiles(e.clipboardData);
+      if (files.length === 0) return; // text paste: xterm handles it
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      insertImages(files);
+    };
+    captureContainer.addEventListener("paste", imagePasteCapture, true);
+    const fileDragOver = (e: DragEvent) => {
+      if (!dragHasFiles(e.dataTransfer)) return;
+      e.preventDefault(); // allow the drop; otherwise the browser opens the file
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const fileDrop = (e: DragEvent) => {
+      if (!dragHasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      claimForInteraction();
+      const files = imageFiles(e.dataTransfer);
+      if (files.length === 0) {
+        showNote("only png, jpeg, gif, or webp images can be dropped", 5000);
+        return;
+      }
+      insertImages(files);
+    };
+    captureContainer.addEventListener("dragover", fileDragOver, true);
+    captureContainer.addEventListener("drop", fileDrop, true);
+
     // Drag-to-select without a modifier, Shift+drag to reach tmux. tmux mouse
     // mode normally owns click-drag; xterm.js's escape hatch
     // (shouldForceSelection) is Option-only on Mac and Shift-only elsewhere,
@@ -426,6 +490,11 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       captureContainer.removeEventListener("paste", claimInteractionCapture, true);
       captureContainer.removeEventListener("pointerdown", claimInteractionCapture, true);
       captureContainer.removeEventListener("wheel", claimInteractionCapture, true);
+      disposed = true;
+      if (noteTimeoutId) clearTimeout(noteTimeoutId);
+      captureContainer.removeEventListener("paste", imagePasteCapture, true);
+      captureContainer.removeEventListener("dragover", fileDragOver, true);
+      captureContainer.removeEventListener("drop", fileDrop, true);
       captureContainer.removeEventListener("mousedown", selectDragCapture, true);
       if (copyTimeoutId) clearTimeout(copyTimeoutId);
       selectionSub.dispose();
@@ -460,6 +529,11 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     <div className="terminal-tile" style={{ position: "relative", height: "100%" }}>
       <div ref={containerRef} className={touchScrollback ? "touch-scrollback" : undefined} style={{ height: "100%" }} />
       {controlsSlot && fitButton ? createPortal(fitButton, controlsSlot) : fitButton}
+      {uploadNote && (
+        <div className="upload-note" role="status">
+          {uploadNote}
+        </div>
+      )}
       {state === "offline" && <div className="overlay">daemon unreachable — retrying…</div>}
       {state === "exited" && (
         <div className="overlay">

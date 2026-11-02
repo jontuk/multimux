@@ -732,3 +732,63 @@ test("a tile with no box does not reflow", async () => {
   act(() => FakeResizeObserver.instances[0].cb());
   expect(fitSpy).toHaveBeenCalled();
 });
+
+function imagePasteEvent(files: File[]) {
+  const ev = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "clipboardData", { value: { files, items: [], types: ["Files"] } });
+  return ev;
+}
+
+test("pasting an image uploads it to the tile's daemon and pastes the saved path", async () => {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).endsWith("/api/uploads")) {
+      return new Response(JSON.stringify({ path: "/data/uploads/paste 1.png" }), { status: 201 });
+    }
+    return new Response("[]");
+  });
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  const target = terminalInstances[0].element!;
+
+  const ev = imagePasteEvent([new File(["x"], "s.png", { type: "image/png" })]);
+  act(() => {
+    target.dispatchEvent(ev);
+  });
+  expect(ev.defaultPrevented).toBe(true);
+  await waitFor(() => expect(pasteCalls).toEqual(["/data/uploads/paste\\ 1.png"]));
+  expect(fetchSpy).toHaveBeenCalledWith("http://daemon.test/api/uploads", expect.objectContaining({ method: "POST" }));
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+test("a failed image upload shows the error and pastes nothing", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).endsWith("/api/uploads")) {
+      return new Response(JSON.stringify({ error: "uploads disabled" }), { status: 503 });
+    }
+    return new Response("[]");
+  });
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  act(() => {
+    terminalInstances[0].element!.dispatchEvent(imagePasteEvent([new File(["x"], "s.png", { type: "image/png" })]));
+  });
+  expect(await screen.findByText(/image upload failed.*uploads disabled/)).toBeInTheDocument();
+  expect(pasteCalls).toEqual([]);
+});
+
+test("a text paste is left to xterm", () => {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]"));
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ev = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "clipboardData", { value: { files: [], items: [], types: ["text/plain"] } });
+  act(() => {
+    terminalInstances[0].element!.dispatchEvent(ev);
+  });
+  expect(ev.defaultPrevented).toBe(false);
+  expect(fetchSpy).not.toHaveBeenCalledWith(expect.stringContaining("/api/uploads"), expect.anything());
+});

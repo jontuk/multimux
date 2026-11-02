@@ -1166,6 +1166,23 @@ a {
   background: rgba(0, 0, 0, 0.65);
 }
 
+/* Image paste/drop progress or failure. Small and click-through so the
+   terminal stays usable while an upload runs. */
+.terminal-tile .upload-note {
+  position: absolute;
+  z-index: 5;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  max-width: calc(100% - 1rem);
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
 .fit-session-button {
   position: absolute;
   z-index: 2;

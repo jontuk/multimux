@@ -39,6 +39,9 @@ type Config struct {
 	NoAuth  bool
 	Version string
 	ReadCA  func() ([]byte, error) // reads the current public CA; never a key
+	// UploadDir is where pasted/dropped images are saved (see uploads.go).
+	// Empty disables uploads.
+	UploadDir string
 }
 
 type Server struct {
@@ -120,6 +123,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/dismiss", s.handleDismissSession)
 	s.mux.HandleFunc("PUT /api/sessions/{id}/label", s.handleRenameSession)
+	s.mux.HandleFunc("POST "+uploadsPath, s.handleUpload)
 	s.mux.HandleFunc("GET /api/layout", s.handleGetLayout)
 	s.mux.HandleFunc("PUT /api/layout", s.handlePutLayout)
 	s.mux.HandleFunc("GET /ws/pty/{id}", s.handlePTY)
@@ -159,7 +163,9 @@ func noStorePaneText(next http.Handler) http.Handler {
 // /api/ methods: cookie-authenticated requests must present one of our own
 // exact origins (the SPA always sends Origin on non-GET fetches), and any
 // request body must be application/json, which a cross-origin caller cannot
-// send without a credentialed CORS request that ACAO:* already forbids.
+// send without a credentialed CORS request that ACAO:* already forbids. The
+// image upload route also takes raw image bodies, which are equally
+// non-safelisted (isUploadContentType).
 // Explicit bearer tokens skip the origin check — the token is attached
 // deliberately, which is how cross-daemon calls work; auth then uses that
 // token, never the cookie (TokenFromRequest is explicit-first), mirroring
@@ -203,7 +209,7 @@ func (s *Server) csrfGate(next http.Handler) http.Handler {
 		}
 		if r.ContentLength != 0 { // includes -1 (unknown length): body may exist
 			ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			if ct != "application/json" {
+			if ct != "application/json" && !isUploadContentType(r.URL.Path, ct) {
 				writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "expected application/json"})
 				return
 			}
@@ -214,11 +220,16 @@ func (s *Server) csrfGate(next http.Handler) http.Handler {
 
 // limitBody caps request bodies so unauthenticated endpoints (the WebAuthn
 // ceremonies) cannot be fed unbounded JSON. Nothing in the API legitimately
-// approaches the cap — the largest payloads are attestations of a few KB.
+// approaches the cap — the largest payloads are attestations of a few KB —
+// except the authenticated image upload route (authGate runs first).
 func limitBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			limit := int64(1 << 20)
+			if r.URL.Path == uploadsPath {
+				limit = maxUploadBytes
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})
