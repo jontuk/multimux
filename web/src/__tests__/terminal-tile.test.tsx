@@ -792,3 +792,44 @@ test("a text paste is left to xterm", () => {
   expect(ev.defaultPrevented).toBe(false);
   expect(fetchSpy).not.toHaveBeenCalledWith(expect.stringContaining("/api/uploads"), expect.anything());
 });
+
+function fileDropEvent(files: File[]) {
+  const ev = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: { files, items: [], types: ["Files"] } });
+  return ev;
+}
+
+test("dropping an image focuses the receiving terminal before uploading", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).endsWith("/api/uploads")) {
+      return new Response(JSON.stringify({ path: "/data/uploads/paste-1.png" }), { status: 201 });
+    }
+    return new Response("[]");
+  });
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  focusSpy.mockClear();
+
+  const ev = fileDropEvent([new File(["x"], "s.png", { type: "image/png" })]);
+  act(() => {
+    terminalInstances[0].element!.dispatchEvent(ev);
+  });
+  // Synchronously, so keys typed while the upload runs go to this session.
+  expect(focusSpy).toHaveBeenCalledOnce();
+  expect(ev.defaultPrevented).toBe(true);
+  await waitFor(() => expect(pasteCalls).toEqual(["/data/uploads/paste-1.png"]));
+});
+
+test("a rejected drop does not move focus", () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]"));
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  focusSpy.mockClear();
+
+  act(() => {
+    terminalInstances[0].element!.dispatchEvent(fileDropEvent([new File(["x"], "a.pdf", { type: "application/pdf" })]));
+  });
+  expect(focusSpy).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent(/only png, jpeg, gif, or webp/);
+});

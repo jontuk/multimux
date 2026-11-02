@@ -384,6 +384,9 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
         showNote("only png, jpeg, gif, or webp images can be dropped", 5000);
         return;
       }
+      // A drop doesn't move focus, but the path lands here — so must the
+      // keystrokes that follow it, not whichever tile had focus before.
+      term.focus();
       insertImages(files);
     };
     captureContainer.addEventListener("dragover", fileDragOver, true);
