@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { precompress } from "./precompress.ts";
 
 // Daemon the dev server proxies to. Override when the default port is taken
 // (e.g. a real install already listens on 8686):
@@ -8,7 +9,7 @@ import react from "@vitejs/plugin-react";
 const target = process.env.MULTIMUX_DEV_TARGET ?? "https://localhost:8686";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), precompress()],
   build: {
     chunkSizeWarningLimit: 1024, // KiB; xterm alone pushes the main chunk past the 500 default
   },

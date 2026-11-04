@@ -146,9 +146,15 @@ accepted.
 - **Lost every passkey** — `multimux auth reset --yes` on the host, restart, and
   open the new setup URL.
 - **Corrupt database** — stop the daemon, move `multimux.db` aside, and restart.
-  Only credentials are lost; the CA survives.
+  Only credentials are lost; the CA survives. Running sessions keep running, but
+  the new database doesn't know them, so they no longer appear in the UI: find
+  them as below and kill them when you're done with them.
+- **Daemon won't start: "stored hostname is unusable"** — run
+  `multimux serve --hostname <name>` once to replace it.
 - **Finding the tmux sessions** — they live on a private server:
-  `tmux -L multimux ls` (named `mm-<id>`).
+  `tmux -L multimux ls` (named `mm-<id>`). A daemon with a non-default
+  `MULTIMUX_DATA_DIR` has a server of its own, named `multimux-<hash>`; look for
+  it with `ls "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"`.
 
 ## Developing
 

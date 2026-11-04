@@ -51,6 +51,12 @@ func hostnames(st *store.Store) ([]string, error) {
 	if canon := identity.CanonicalHost(host); canon != host {
 		host = canon
 	}
+	// A hostname stored before names were validated. Unlike a bad SAN below it
+	// has no stand-in, since it is the RP ID, so stop here: pki.Ensure would only
+	// fail on it later, and applyHostname has already had its chance to replace it.
+	if err := identity.ValidateName(host); err != nil {
+		return nil, fmt.Errorf("stored hostname is unusable: %w\nRestart once with --hostname <name-your-browser-can-reach> to replace it", err)
+	}
 	if stored, _ := st.GetSetting("hostname"); stored != host {
 		if err := st.SetSetting("hostname", host); err != nil {
 			return nil, err
@@ -65,9 +71,17 @@ func hostnames(st *store.Store) ([]string, error) {
 		for _, s := range strings.Split(extra, ",") {
 			// Folded for the same reason as the hostname; SANs stored before
 			// normalizeSANs lowercased them are still in the settings row.
-			if s = identity.CanonicalHost(s); s != "" {
-				extras = append(extras, s)
+			s = identity.CanonicalHost(s)
+			if s == "" {
+				continue
 			}
+			// Stored before names were validated. Dropping one extra name beats
+			// a daemon that won't start, and the settings UI still shows it.
+			if err := identity.ValidateName(s); err != nil {
+				slog.Warn("ignoring invalid extra SAN", "err", err)
+				continue
+			}
+			extras = append(extras, s)
 		}
 		slices.Sort(extras)
 		names = append(names, extras...)
@@ -162,19 +176,26 @@ func devOrigins(origins []string, port int) []string {
 	return append(origins, "http://localhost:5173", fmt.Sprintf("https://localhost:%d", port))
 }
 
-// tmuxSocket keeps multimux off the user's default tmux server. Production
-// uses one stable private socket ("multimux") so sessions persist across
-// daemon restarts; dev isolates each throwaway data dir on its own socket.
-func tmuxSocket(dev bool, dataDir string) string {
-	if !dev {
+// tmuxSocket keeps multimux off the user's default tmux server. The default
+// install uses one stable private socket ("multimux") so sessions persist across
+// daemon restarts. Any other data dir gets a socket of its own, derived from the
+// path: session IDs live in the database, so a second daemon on the same socket
+// would see the first one's mm-N sessions as its own.
+func tmuxSocket(dataDir, defaultDir string) string {
+	absDir := absPath(dataDir)
+	if absDir == absPath(defaultDir) {
 		return "multimux"
 	}
-	absDir, err := filepath.Abs(dataDir)
-	if err != nil {
-		absDir = filepath.Clean(dataDir)
-	}
 	sum := sha256.Sum256([]byte(absDir))
-	return fmt.Sprintf("multimux-dev-%x", sum[:8])
+	return fmt.Sprintf("multimux-%x", sum[:8])
+}
+
+func absPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return abs
 }
 
 // setupBanner renders the first-run banner: one setup URL per origin
@@ -423,7 +444,7 @@ func runServe(args []string, version string, webFS fs.FS, stdout, stderr io.Writ
 		return 1
 	}
 
-	tm := tmuxmgr.New("mm", tmuxSocket(*dev, dir))
+	tm := tmuxmgr.New("mm", tmuxSocket(dir, defaultDataDir()))
 	if err := tm.Available(); err != nil {
 		fmt.Fprintf(stderr, "startup check failed: %v\ninstall tmux and retry\n", err)
 		return 1

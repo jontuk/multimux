@@ -5,6 +5,7 @@
 package identity
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -20,9 +21,43 @@ import (
 // returns "MacBook-Pro.local") matches nothing: the origin checks in
 // internal/server reject every mutation and cookie-auth WebSocket, and
 // go-webauthn's byte comparison of the RP ID hash fails every registration.
-// DNS names are case-insensitive, so folding loses nothing.
+// DNS names are case-insensitive, so folding loses nothing. One trailing dot
+// (the fully-qualified form DNS tools print) goes too: it names the same host,
+// and x509.ParseCertificate rejects it in a name constraint.
 func CanonicalHost(host string) string {
-	return strings.ToLower(strings.TrimSpace(host))
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+}
+
+// ValidateName reports whether a name that has already been through
+// CanonicalHost can be a certificate DNS name. It is deliberately stricter than
+// the x509 parser: the names here become CA name constraints, and a name that
+// fails to parse only surfaces at the next restart. Underscores are not valid
+// hostnames but are common in the wild, and Go's verifier accepts them.
+func ValidateName(name string) error {
+	if name == "" {
+		return errors.New("name must not be empty")
+	}
+	if len(name) > 253 {
+		return fmt.Errorf("name %q is longer than 253 characters", name)
+	}
+	for _, label := range strings.Split(name, ".") {
+		if label == "" {
+			return fmt.Errorf("name %q has an empty label", name)
+		}
+		if len(label) > 63 {
+			return fmt.Errorf("name %q has a label longer than 63 characters", name)
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return fmt.Errorf("name %q has a label starting or ending with a hyphen", name)
+		}
+		for _, c := range label {
+			valid := c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_'
+			if !valid {
+				return fmt.Errorf("name %q contains invalid character %q", name, c)
+			}
+		}
+	}
+	return nil
 }
 
 // RPIDForHost returns the WebAuthn RP ID for a configured hostname.
@@ -58,28 +93,30 @@ func validateHostname(host string) error {
 	if host == "" {
 		return fmt.Errorf("hostname must not be empty")
 	}
+	if err := ValidateName(host); err != nil {
+		return fmt.Errorf("hostname: %w", err)
+	}
 	if !strings.Contains(host, ".") && host != "localhost" {
 		return fmt.Errorf("hostname %q must contain a dot (or be \"localhost\") — WebAuthn rejects other dotless RP IDs; try %q", host, host+".local")
 	}
 	return nil
 }
 
-// normalizeSANs splits a comma-separated SAN list, trims and lowercases
-// entries, and drops empties. Entries with whitespace, slashes, or colons
-// cannot be certificate DNS names and are rejected. Lowercasing keeps every
-// name this daemon answers to in the one form a browser sends back — see
-// CanonicalHost.
+// normalizeSANs splits a comma-separated SAN list, canonicalizes entries, and
+// drops empties. Entries that cannot be certificate DNS names are rejected.
+// Canonicalizing keeps every name this daemon answers to in the one form a
+// browser sends back — see CanonicalHost.
 func normalizeSANs(raw string) (string, error) {
 	var out []string
 	for _, s := range strings.Split(raw, ",") {
-		s = strings.TrimSpace(s)
+		s = CanonicalHost(s)
 		if s == "" {
 			continue
 		}
-		if strings.ContainsAny(s, " \t/:") {
-			return "", fmt.Errorf("extra SAN %q is not a valid name", s)
+		if err := ValidateName(s); err != nil {
+			return "", fmt.Errorf("extra SAN: %w", err)
 		}
-		out = append(out, CanonicalHost(s))
+		out = append(out, s)
 	}
 	return strings.Join(out, ","), nil
 }
@@ -133,8 +170,10 @@ func Apply(st *store.Store, changes map[string]string, confirm bool) (rpChanged 
 		}
 		// RPIDForHost canonicalizes, so a stored "MacBook-Pro.local" and the
 		// folded "macbook-pro.local" compare equal: canonicalizing an old
-		// hostname is not a change that strands passkeys.
-		if prev != "" && RPIDForHost(prev) != RPIDForHost(host) {
+		// hostname is not a change that strands passkeys. Nor is leaving an
+		// invalid name: no browser could reach it, so no passkey is bound to it,
+		// and --hostname is the way out when one was stored by an older version.
+		if prev != "" && ValidateName(CanonicalHost(prev)) == nil && RPIDForHost(prev) != RPIDForHost(host) {
 			rpChanged = true
 			n, err := st.CountCredentials()
 			if err != nil {

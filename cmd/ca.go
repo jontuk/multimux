@@ -17,6 +17,10 @@ func dataDir() string {
 	if d := os.Getenv("MULTIMUX_DATA_DIR"); d != "" {
 		return d
 	}
+	return defaultDataDir()
+}
+
+func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "multimux")
 }

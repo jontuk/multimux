@@ -137,30 +137,69 @@ func TestDevOrigins(t *testing.T) {
 }
 
 func TestTmuxSocket(t *testing.T) {
-	// Production must never share the user's default tmux server: multimux
-	// mutates server-global options and kills mm-* sessions it thinks it owns.
-	if got := tmuxSocket(false, "/tmp/multimux-dev-a"); got != "multimux" {
-		t.Fatalf("production tmux socket = %q, want %q", got, "multimux")
+	const def = "/home/u/.local/share/multimux"
+	// The default install keeps the stable name its sessions already live on,
+	// and that the README tells users to pass to `tmux -L`.
+	if got := tmuxSocket(def, def); got != "multimux" {
+		t.Fatalf("default install socket = %q, want %q", got, "multimux")
 	}
-	if got := tmuxSocket(false, "/tmp/other-dir"); got != "multimux" {
-		t.Fatalf("production tmux socket must be stable across data dirs, got %q", got)
+	if got := tmuxSocket(def+"/", def); got != "multimux" {
+		t.Fatalf("default install spelled differently: socket = %q, want %q", got, "multimux")
 	}
 
-	first := tmuxSocket(true, "/tmp/multimux-dev-a")
-	if !strings.HasPrefix(first, "multimux-dev-") {
-		t.Fatalf("dev tmux socket = %q, want multimux-dev-*", first)
+	// A scratch daemon, with or without --dev, must not see the real daemon's
+	// sessions: its session IDs start again at 1.
+	first := tmuxSocket("/tmp/scratch-a", def)
+	if first == "multimux" || !strings.HasPrefix(first, "multimux-") {
+		t.Fatalf("scratch socket = %q, want a multimux-* name of its own", first)
 	}
-	if got := tmuxSocket(true, "/tmp/multimux-dev-a"); got != first {
-		t.Fatalf("dev tmux socket changed for the same data dir: %q then %q", first, got)
+	if got := tmuxSocket("/tmp/scratch-a", def); got != first {
+		t.Fatalf("socket changed for the same data dir: %q then %q", first, got)
 	}
-	if got := tmuxSocket(true, "/tmp/multimux-dev-b"); got == first {
-		t.Fatalf("different dev data dirs share tmux socket %q", first)
+	if got := tmuxSocket("/tmp/scratch-b", def); got == first {
+		t.Fatalf("different data dirs share tmux socket %q", first)
 	}
 
 	root := t.TempDir()
 	t.Chdir(root)
-	if rel, abs := tmuxSocket(true, "dev"), tmuxSocket(true, filepath.Join(root, "dev")); rel != abs {
+	if rel, abs := tmuxSocket("dev", def), tmuxSocket(filepath.Join(root, "dev"), def); rel != abs {
 		t.Fatalf("relative and absolute paths select different sockets: %q and %q", rel, abs)
+	}
+}
+
+// A SAN stored before names were validated must not keep the daemon down, and
+// the trailing-dot form (the common typo) is the same name as the one without.
+func TestHostnamesSurvivesBadStoredSANs(t *testing.T) {
+	st := testStore(t)
+	if err := st.SetSetting("hostname", "good.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("extra_sans", "box.ts.net.,foo bar,ok.example"); err != nil {
+		t.Fatal(err)
+	}
+	names, err := hostnames(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"good.local", "box.ts.net", "ok.example"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("hostnames = %v, want %v", names, want)
+	}
+}
+
+// Unlike a SAN, a bad hostname has no safe stand-in: it is the RP ID. Stopping
+// here, before pki.Ensure, is what leaves the CA alone.
+func TestHostnamesRefusesBadStoredHostname(t *testing.T) {
+	st := testStore(t)
+	if err := st.SetSetting("hostname", "foo bar.local"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := hostnames(st)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "--hostname") {
+		t.Fatalf("error does not say how to recover: %v", err)
 	}
 }
 

@@ -251,9 +251,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// takes exactly the path it always did.
 	commands := store.SplitCommand(tool.Command)
 	created := make([]store.Session, 0, len(commands))
-	// Reported only once the whole group is up: a launch that fails later is
-	// rolled back, and a rolled-back launch replaced nothing.
-	var replacedOrphans []string
 	// A group is all-or-nothing. Anything already started is undone before the
 	// error is returned, so a failure halfway through never leaves the user
 	// with half a group to clean up.
@@ -264,7 +261,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, command := range commands {
-		sess, err := s.cfg.Store.CreateSession(tool.ID, workdir)
+		sess, err := s.createSessionRow(tool.ID, workdir)
 		if err != nil {
 			rollback()
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -283,18 +280,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			}
 			sess.Label = label
 		}
-		// A tmux session may already hold this name without a backing DB row —
-		// left over from a wiped DB or a failed kill. No row means it is
-		// unreachable from the UI, so replace it rather than fail on the name.
-		if s.cfg.Tmux.IsAlive(sess.TmuxName) {
-			if err := s.cfg.Tmux.KillSession(sess.TmuxName); err != nil {
-				_ = s.cfg.Store.DeleteSession(sess.ID)
-				rollback()
-				writeJSON(w, 500, map[string]string{"error": err.Error()})
-				return
-			}
-			replacedOrphans = append(replacedOrphans, sess.TmuxName)
-		}
 		if err := s.cfg.Tmux.CreateSession(sess.TmuxName, workdir, command); err != nil {
 			// No orphan rows: roll the DB back when tmux fails.
 			_ = s.cfg.Store.DeleteSession(sess.ID)
@@ -312,9 +297,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.cfg.Store.RecordSubdir(dir.ID, in.Subdir); err != nil {
 		slog.Warn("subdir history not recorded", "directory_id", dir.ID, "error", err)
 	}
-	for _, name := range replacedOrphans {
-		slog.Info("orphan tmux session replaced", "tmux_name", name)
-	}
 	for _, sess := range created {
 		slog.Info("session created",
 			"session_id", sess.ID,
@@ -324,6 +306,28 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		s.broadcast("session_created", sess)
 	}
 	writeJSON(w, 201, created)
+}
+
+// createSessionRow inserts a session row whose tmux name is free. A live tmux
+// session may already hold the name with no row behind it: IDs restart at 1
+// when the database is moved aside, and a failed kill leaves one too. No row
+// only means multimux lost track of it, not that the process is junk, so it is
+// left running and the row gives way. AUTOINCREMENT never reissues a deleted ID,
+// so each attempt gets a new name and the loop ends once past the live sessions.
+func (s *Server) createSessionRow(toolID int64, workdir string) (store.Session, error) {
+	for {
+		sess, err := s.cfg.Store.CreateSession(toolID, workdir)
+		if err != nil {
+			return store.Session{}, err
+		}
+		if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
+			return sess, nil
+		}
+		slog.Warn("tmux session with no database row left running, skipping its name", "tmux_name", sess.TmuxName)
+		if err := s.cfg.Store.DeleteSession(sess.ID); err != nil {
+			return store.Session{}, err
+		}
+	}
 }
 
 // resolveSubdir extends a configured directory with a client-supplied relative
@@ -428,7 +432,7 @@ const maxSessionLabel = 64
 
 // handleRenameSession sets a session's display label ("" clears it). The label
 // is cosmetic: tmux_name stays mm-{id}, so attach, Reconcile, and the
-// orphan-replace path in handleCreateSession are all unaffected. Dead sessions
+// held-name check in createSessionRow are all unaffected. Dead sessions
 // are renameable too — their tiles stay on screen until dismissed.
 func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)

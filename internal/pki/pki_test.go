@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -266,5 +267,42 @@ func TestEnsureRotatesLeafOnSANChange(t *testing.T) {
 	leaf := loadCert(t, p.LeafCertPath())
 	if len(leaf.DNSNames) != 2 {
 		t.Fatalf("leaf SANs = %v", leaf.DNSNames)
+	}
+}
+
+// x509.CreateCertificate happily signs a CA whose name constraints
+// x509.ParseCertificate refuses. Replacing the CA on disk before finding that
+// out destroyed the trusted one and left the daemon unable to restart.
+func TestEnsureKeepsCAWhenReplacementWontParse(t *testing.T) {
+	p := New(t.TempDir())
+	good := []string{"good.local"}
+	if _, err := p.Ensure(good); err != nil {
+		t.Fatal(err)
+	}
+	certBefore, err := os.ReadFile(p.CACertPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBefore, err := os.ReadFile(p.caKeyPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.Ensure([]string{"box.example."}); err == nil {
+		t.Fatal("Ensure with an unparseable name constraint succeeded")
+	}
+
+	if got, _ := os.ReadFile(p.CACertPath()); !bytes.Equal(got, certBefore) {
+		t.Fatal("failed Ensure replaced ca.pem")
+	}
+	if got, _ := os.ReadFile(p.caKeyPath()); !bytes.Equal(got, keyBefore) {
+		t.Fatal("failed Ensure replaced ca.key")
+	}
+	regen, err := p.Ensure(good)
+	if err != nil {
+		t.Fatalf("Ensure after the failure: %v", err)
+	}
+	if regen != CARegenNone {
+		t.Fatalf("Ensure after the failure regenerated the CA: %v", regen)
 	}
 }

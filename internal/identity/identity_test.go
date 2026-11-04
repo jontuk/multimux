@@ -3,9 +3,11 @@ package identity
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jontuk/multimux/internal/pki"
 	"github.com/jontuk/multimux/internal/store"
 )
 
@@ -83,6 +85,8 @@ func TestApplyInvalidWritesNothing(t *testing.T) {
 		{"port out of range", map[string]string{"hostname": "mux.example.com", "port": "70000"}},
 		{"SAN with whitespace", map[string]string{"hostname": "mux.example.com", "extra_sans": "a b"}},
 		{"SAN with scheme", map[string]string{"hostname": "mux.example.com", "extra_sans": "https://x.example"}},
+		{"hostname with space", map[string]string{"hostname": "foo bar.local", "port": "9000"}},
+		{"SAN with empty label", map[string]string{"hostname": "mux.example.com", "extra_sans": "a..example"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newStore(t)
@@ -242,5 +246,100 @@ func TestApplyCaseOnlyHostnameChangeIsNotAnRPChange(t *testing.T) {
 	}
 	if rpChanged {
 		t.Fatal("case-only hostname change reported as an RP change")
+	}
+}
+
+// Each of these reached the CA as a name constraint before names were validated
+// properly; the rejected ones either broke the CA outright or can never match
+// a browser's host.
+func TestValidateName(t *testing.T) {
+	long63 := strings.Repeat("a", 63)
+	for _, tc := range []struct {
+		name string
+		ok   bool
+	}{
+		{"mux.example.com", true},
+		{"localhost", true},
+		{"macmini", true},
+		{"box-1.tail1234.ts.net", true},
+		{"under_score.local", true},
+		{"xn--bcher-kva.example", true},
+		{long63 + ".example", true},
+
+		{"", false},
+		{"foo bar.local", false},
+		{"box.example.", false}, // CanonicalHost strips one trailing dot; this form never reaches a certificate
+		{"a..example", false},
+		{".example", false},
+		{"-leading.example", false},
+		{"trailing-.example", false},
+		{"*.example.com", false},
+		{"caf\u00e9.example", false},
+		{"semi;colon.example", false},
+		{strings.Repeat("a", 64) + ".example", false},
+		{strings.Repeat(long63+".", 4) + "example", false}, // over 253 in total
+	} {
+		if err := ValidateName(tc.name); (err == nil) != tc.ok {
+			t.Errorf("ValidateName(%q) = %v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}
+
+// DNS tools print the trailing-dot form, and it means the same name. Accepting
+// it as typed beats rejecting a correct name on a technicality.
+func TestApplyStripsTrailingDot(t *testing.T) {
+	st := newStore(t)
+	if _, err := Apply(st, map[string]string{
+		"hostname":   "mux.example.com.",
+		"extra_sans": "box.tail1234.ts.net.",
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := setting(t, st, "hostname"); got != "mux.example.com" {
+		t.Errorf("hostname = %q", got)
+	}
+	if got := setting(t, st, "extra_sans"); got != "box.tail1234.ts.net" {
+		t.Errorf("extra_sans = %q", got)
+	}
+}
+
+// Whatever Apply lets through ends up as a CA name constraint and a leaf SAN.
+// A name that passes here and fails there is what stopped the daemon restarting.
+func TestAcceptedNamesMakeAUsableCA(t *testing.T) {
+	st := newStore(t)
+	if _, err := Apply(st, map[string]string{
+		"hostname":   "Mux.Example.COM.",
+		"extra_sans": "box.tail1234.ts.net., under_score.local, xn--bcher-kva.example, 192.168.1.5",
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	names := append([]string{setting(t, st, "hostname")}, strings.Split(setting(t, st, "extra_sans"), ",")...)
+	p := pki.New(t.TempDir())
+	if _, err := p.Ensure(names); err != nil {
+		t.Fatalf("Ensure(%v): %v", names, err)
+	}
+	if regen, err := p.Ensure(names); err != nil || regen != pki.CARegenNone {
+		t.Fatalf("second Ensure = %v, %v", regen, err)
+	}
+}
+
+// No browser can reach an invalid name, so no passkey can be bound to it.
+// Moving off one must not demand the auth reset a real RP change does, or the
+// escape hatch for a bad stored hostname would cost every passkey.
+func TestApplyLeavingInvalidHostnameIsNotAnRPChange(t *testing.T) {
+	st := newStore(t)
+	addCredential(t, st)
+	if err := st.SetSetting("hostname", "foo bar.local"); err != nil {
+		t.Fatal(err)
+	}
+	rpChanged, err := Apply(st, map[string]string{"hostname": "good.local"}, false)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if rpChanged {
+		t.Fatal("rpChanged = true, want false")
+	}
+	if got := setting(t, st, "hostname"); got != "good.local" {
+		t.Fatalf("hostname = %q", got)
 	}
 }

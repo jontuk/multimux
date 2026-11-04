@@ -163,11 +163,17 @@ func (p *PKI) createCA(hostnames []string) (*x509.Certificate, *ecdsa.PrivateKey
 	if err != nil {
 		return nil, nil, err
 	}
+	// Parse before writing. CreateCertificate signs name constraints that
+	// ParseCertificate rejects, and the CA being replaced is one the user has
+	// trusted on every device: it must survive a replacement that can't load.
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := p.writePair(p.CACertPath(), p.caKeyPath(), der, key); err != nil {
 		return nil, nil, err
 	}
-	cert, err := x509.ParseCertificate(der)
-	return cert, key, err
+	return cert, key, nil
 }
 
 func (p *PKI) leafNeedsRotation(hostnames []string) bool {

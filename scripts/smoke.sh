@@ -107,4 +107,34 @@ case "$code/$ctype" in
     ;;
 esac
 
-echo "smoke OK (GET / and $asset served from embedded assets)"
+# Caching and compression depend on the build step having written the siblings
+# and the binary having embedded them, which only a real build can show.
+url="https://127.0.0.1:$port$asset"
+headers=$(curl -sSk -m 10 -o /dev/null -D - -H 'Accept-Encoding: br' "$url" | tr -d '\r' | tr 'A-Z' 'a-z')
+for want in 'content-encoding: br' 'immutable' 'vary: accept-encoding'; do
+  if ! grep -qF "$want" <<<"$headers"; then
+    echo "smoke: GET $asset (br) headers missing: $want" >&2
+    echo "$headers" >&2
+    exit 1
+  fi
+done
+
+# The compressed bytes have to decode to what the plain request returns.
+if ! cmp -s <(curl -sSk -m 10 -H 'Accept-Encoding: gzip' "$url" | gunzip) \
+            <(curl -sSk -m 10 "$url"); then
+  echo "smoke: gzip variant of $asset does not decode to the plain file" >&2
+  exit 1
+fi
+
+# index.html must revalidate rather than re-download. Sharing the Accept-Encoding
+# on both requests matters: each encoding has its own ETag.
+etag=$(curl -sSk -m 10 -o /dev/null -D - -H 'Accept-Encoding: gzip' "https://127.0.0.1:$port/" |
+  tr -d '\r' | awk 'tolower($1) == "etag:" { print $2 }')
+code=$(curl -sSk -m 10 -o /dev/null -w '%{http_code}' -H 'Accept-Encoding: gzip' \
+  -H "If-None-Match: $etag" "https://127.0.0.1:$port/")
+if [ "$code" != "304" ]; then
+  echo "smoke: GET / with If-None-Match $etag returned $code, want 304" >&2
+  exit 1
+fi
+
+echo "smoke OK (GET / and $asset served from embedded assets, compressed and cacheable)"

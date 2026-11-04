@@ -307,30 +307,6 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
-// staticHandler serves the embedded SPA with index.html fallback for client
-// routes (anything without a file extension).
-func (s *Server) staticHandler() http.Handler {
-	fileServer := http.FileServerFS(s.cfg.WebFS)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if path != "" {
-			if f, err := s.cfg.WebFS.Open(path); err == nil {
-				f.Close()
-				fileServer.ServeHTTP(w, r)
-				return
-			}
-		}
-		// SPA fallback.
-		index, err := fs.ReadFile(s.cfg.WebFS, "index.html")
-		if err != nil {
-			http.Error(w, "web assets missing — build web/ first", http.StatusNotImplemented)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(index)
-	})
-}
-
 // buildID identifies the embedded frontend build: the first 12 hex digits of
 // the SHA-256 of index.html. Vite content-hashes its asset filenames, so
 // index.html changes exactly when the frontend build changes — unlike

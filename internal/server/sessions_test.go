@@ -359,56 +359,94 @@ func TestCreateSessionSubdirRejected(t *testing.T) {
 	}
 }
 
-// A tmux session bearing the name the next row will get, but with no DB row
-// (left over from a wiped DB or a failed kill), is unreachable from the UI.
-// Create must replace it instead of failing with "duplicate session".
-func TestCreateSessionReplacesOrphanTmuxSession(t *testing.T) {
+// A tmux session bearing the name the next row would get has no DB row: the
+// database was moved aside, say, so IDs restarted at 1. Nothing proves it is
+// junk, and it may be running the user's work, so create must leave it alone.
+func TestCreateSessionSkipsNameHeldByLiveTmuxSession(t *testing.T) {
 	s, st, token := newTmuxTestServer(t)
 	tool, _ := st.CreateTool("sh", "sleep 60")
 	dir, _ := st.CreateDir("tmp", t.TempDir())
 
-	orphan := s.cfg.Tmux.SessionName(1) // fresh DB: the next session row gets ID 1
-	if err := s.cfg.Tmux.CreateSession(orphan, t.TempDir(), "sleep 60"); err != nil {
+	held := s.cfg.Tmux.SessionName(1) // fresh DB: the next session row gets ID 1
+	if err := s.cfg.Tmux.CreateSession(held, t.TempDir(), "sleep 60"); err != nil {
 		t.Fatal(err)
 	}
-	buf := captureLogs(t)
 
 	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
 	if w.Code != 201 {
-		t.Fatalf("create with orphan = %d: %s", w.Code, w.Body.String())
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
 	}
 	sess := onlySession(t, w)
-	if sess.TmuxName != orphan {
-		t.Fatalf("tmux name = %q, want %q", sess.TmuxName, orphan)
+	if sess.TmuxName == held {
+		t.Fatalf("new session took the held name %q", held)
+	}
+	if got := fmt.Sprintf("mm-%d", sess.ID); sess.TmuxName != got {
+		t.Fatalf("tmux name = %q, want %q: attach and Reconcile assume mm-{id}", sess.TmuxName, got)
 	}
 	if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
 		t.Fatal("tmux session not created")
 	}
-	logged := buf.String()
-	if !strings.Contains(logged, `"msg":"orphan tmux session replaced"`) ||
-		!strings.Contains(logged, `"tmux_name":"`+orphan+`"`) {
-		t.Fatalf("orphan replacement not logged safely: %s", logged)
+	if !s.cfg.Tmux.IsAlive(held) {
+		t.Fatal("held session was killed")
+	}
+	rows, err := st.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != sess.ID {
+		t.Fatalf("rows = %+v, want only the new session: a skipped ID must leave no row", rows)
 	}
 }
 
-func TestFailedCreateDoesNotClaimOrphanWasReplaced(t *testing.T) {
+// The skip applies per command, and a held name in the middle of a group must
+// not split it.
+func TestGroupLaunchSkipsHeldNameMidway(t *testing.T) {
+	s, st, token := newTmuxTestServer(t)
+	tool, _ := st.CreateTool("pair", "sleep 60 ;; sleep 61")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+
+	held := s.cfg.Tmux.SessionName(2)
+	if err := s.cfg.Tmux.CreateSession(held, t.TempDir(), "sleep 60"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	if w.Code != 201 {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+	var created []store.Session
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created) != 2 || created[0].TmuxName != "mm-1" || created[1].TmuxName != "mm-3" {
+		t.Fatalf("created = %+v, want mm-1 and mm-3", created)
+	}
+	if !s.cfg.Tmux.IsAlive(held) {
+		t.Fatal("held session was killed")
+	}
+}
+
+// Rollback undoes what this launch started, and only that.
+func TestFailedCreateLeavesHeldSessionRunning(t *testing.T) {
 	s, st, token := newTmuxTestServer(t)
 	tool, _ := st.CreateTool("oversized", strings.Repeat("x", 2<<20))
 	dir, _ := st.CreateDir("tmp", t.TempDir())
 
-	orphan := s.cfg.Tmux.SessionName(1)
-	if err := s.cfg.Tmux.CreateSession(orphan, t.TempDir(), "sleep 60"); err != nil {
+	held := s.cfg.Tmux.SessionName(1)
+	if err := s.cfg.Tmux.CreateSession(held, t.TempDir(), "sleep 60"); err != nil {
 		t.Fatal(err)
 	}
-	buf := captureLogs(t)
 
 	w := do(t, s, "POST", "/api/sessions", token,
 		fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("create with oversized command = %d: %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(buf.String(), `"msg":"orphan tmux session replaced"`) {
-		t.Fatalf("failed creation claimed orphan replacement: %s", buf.String())
+	if !s.cfg.Tmux.IsAlive(held) {
+		t.Fatal("failed launch killed the held session")
+	}
+	if rows, _ := st.ListSessions(); len(rows) != 0 {
+		t.Fatalf("failed launch left rows: %+v", rows)
 	}
 }
 

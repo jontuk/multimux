@@ -504,3 +504,29 @@ func TestSubdirHistoryRequiresAuth(t *testing.T) {
 		t.Fatalf("unauthenticated delete = %d, want 401/403", w.Code)
 	}
 }
+
+// The route the audit used to break a daemon: both of these answered 200, and
+// the next restart failed with a destroyed CA.
+func TestPutSettingsValidatesNames(t *testing.T) {
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+	if err := st.SetSetting("hostname", "good.local"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(t, s, "PUT", "/api/settings", token, `{"hostname":"foo bar.local","extraSans":"","port":"8686"}`)
+	if w.Code != 400 {
+		t.Fatalf("bad hostname = %d: %s", w.Code, w.Body.String())
+	}
+	if got, _ := st.GetSetting("hostname"); got != "good.local" {
+		t.Fatalf("rejected hostname was stored: %q", got)
+	}
+
+	w = do(t, s, "PUT", "/api/settings", token, `{"hostname":"good.local","extraSans":"box.tail1234.ts.net.","port":"8686"}`)
+	if w.Code != 200 {
+		t.Fatalf("trailing-dot SAN = %d: %s", w.Code, w.Body.String())
+	}
+	if got, _ := st.GetSetting("extra_sans"); got != "box.tail1234.ts.net" {
+		t.Fatalf("extra_sans = %q", got)
+	}
+}
