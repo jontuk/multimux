@@ -44,6 +44,39 @@ func TestCapturePaneTextUsesExactJoinedHistoryCapture(t *testing.T) {
 	}
 }
 
+func TestPaneWidthAsksTmuxForExactTarget(t *testing.T) {
+	m, logPath := fakeCaptureTmux(t, "printf '132\\n'\n")
+	got, err := m.PaneWidth("mm-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 132 {
+		t.Fatalf("PaneWidth = %d, want 132", got)
+	}
+	args, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-u\n-L\nprivate-socket\ndisplay-message\n-p\n-t\n=mm-7:\n#{pane_width}\n"
+	if string(args) != want {
+		t.Fatalf("tmux args = %q, want %q", args, want)
+	}
+}
+
+func TestPaneWidthRejectsNonNumericOutput(t *testing.T) {
+	m, _ := fakeCaptureTmux(t, "printf 'wide\\n'\n")
+	if _, err := m.PaneWidth("mm-7"); err == nil {
+		t.Fatal("PaneWidth accepted non-numeric output")
+	}
+}
+
+func TestPaneWidthReportsTmuxFailure(t *testing.T) {
+	m, _ := fakeCaptureTmux(t, "exit 1\n")
+	if _, err := m.PaneWidth("mm-7"); err == nil {
+		t.Fatal("PaneWidth swallowed a tmux failure")
+	}
+}
+
 func TestCapturePaneTextTrimsSurroundingBlankLines(t *testing.T) {
 	m, _ := fakeCaptureTmux(t, "printf '\n \nalpha\n\nbeta\n \n\n'\n")
 	got, err := m.CapturePaneText("mm-2")

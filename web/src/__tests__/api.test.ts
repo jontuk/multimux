@@ -5,7 +5,7 @@ import {
   del,
   errorText,
   getJSON,
-  getText,
+  getPaneText,
   isUnauthorized,
   isUnreachable,
   postJSON,
@@ -18,20 +18,32 @@ const local: Server = { id: "local", origin: window.location.origin, name: "loca
 
 afterEach(() => vi.restoreAllMocks());
 
-test("getText returns authenticated text and forwards AbortSignal", async () => {
-  const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("alpha\nβ\n"));
+test("getPaneText returns authenticated text and forwards AbortSignal", async () => {
+  const spy = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response("alpha\nβ\n", { headers: { "X-Pane-Width": "132" } }));
   const signal = new AbortController().signal;
-  await expect(getText(remote, "/api/sessions/7/text", { signal })).resolves.toBe("alpha\nβ\n");
+  await expect(getPaneText(remote, 7, { signal })).resolves.toEqual({ text: "alpha\nβ\n", cols: 132 });
   const [, init] = spy.mock.calls[0];
   expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer tok");
   expect(init!.signal).toBe(signal);
 });
 
-test("getText converts failures through ApiError", async () => {
+test.each([
+  ["missing", undefined],
+  ["unusable", "wide"],
+  ["zero", "0"],
+])("getPaneText reports no width when the header is %s", async (_name, width) => {
+  const headers = width === undefined ? undefined : { "X-Pane-Width": width };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("alpha", { headers }));
+  await expect(getPaneText(remote, 7)).resolves.toEqual({ text: "alpha", cols: null });
+});
+
+test("getPaneText converts failures through ApiError", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify({ error: "session is no longer available" }), { status: 409 }),
   );
-  const err = await getText(local, "/api/sessions/7/text").catch((value: unknown) => value);
+  const err = await getPaneText(local, 7).catch((value: unknown) => value);
   expect(err).toBeInstanceOf(ApiError);
   expect((err as ApiError).status).toBe(409);
   expect(errorText(err)).toContain("session is no longer available");

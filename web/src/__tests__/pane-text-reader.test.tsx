@@ -66,6 +66,50 @@ test("opens immediately, loads escaped text, and scrolls to newest output", asyn
   expect(text.scrollTop).toBe(640);
 });
 
+const WRAPPED = "They also never get marked stale. Any tick clears the \n resubscribed flag.";
+const WRAPPED_APP = "They also never get marked stale. Any tick clears the \nresubscribed flag.";
+const UNWRAPPED = "They also never get marked stale. Any tick clears the resubscribed flag.";
+
+async function openReader(body: string, cols?: string) {
+  const headers = cols ? { "X-Pane-Width": cols } : undefined;
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { headers }));
+  render(<Harness />);
+  await userEvent.click(screen.getByRole("button", { name: "Open pane text" }));
+  return await screen.findByTestId("pane-text-content");
+}
+
+test("shows application-wrapped rows joined, and the original under Raw", async () => {
+  const text = await openReader(WRAPPED_APP, "60");
+  expect(text.textContent).toBe(UNWRAPPED);
+  const raw = screen.getByRole("button", { name: "Raw" });
+  expect(raw).toHaveAttribute("aria-pressed", "false");
+  await userEvent.click(raw);
+  expect(raw).toHaveAttribute("aria-pressed", "true");
+  expect(text.textContent).toBe(WRAPPED_APP);
+});
+
+test("Copy all copies whichever view is showing", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  await openReader(WRAPPED_APP, "60");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
+  expect(writeText).toHaveBeenLastCalledWith(UNWRAPPED);
+  await userEvent.click(screen.getByRole("button", { name: "Raw" }));
+  await userEvent.click(screen.getByRole("button", { name: "Copy all" }));
+  expect(writeText).toHaveBeenLastCalledWith(WRAPPED_APP);
+});
+
+test("Raw is disabled when nothing was unwrapped", async () => {
+  await openReader("short\nlines", "60");
+  expect(screen.getByRole("button", { name: "Raw" })).toBeDisabled();
+});
+
+test("a daemon that reports no pane width shows the text as captured", async () => {
+  const text = await openReader(WRAPPED);
+  expect(text.textContent).toBe(WRAPPED);
+  expect(screen.getByRole("button", { name: "Raw" })).toBeDisabled();
+});
+
 test("an empty snapshot succeeds but disables Copy all", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(""));
   render(<Harness />);

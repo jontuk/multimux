@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -190,6 +191,13 @@ func (s *Server) handleSessionText(w http.ResponseWriter, r *http.Request) {
 		slog.Error("pane text capture failed", "session_id", sess.ID, "tmux_name", sess.TmuxName, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not capture pane text"})
 		return
+	}
+	// The width only refines how the text is displayed, so losing it must not
+	// cost the capture: without the header the browser shows the rows as they are.
+	if width, err := s.cfg.PaneText.PaneWidth(sess.TmuxName); err != nil {
+		slog.Warn("pane width lookup failed", "session_id", sess.ID, "tmux_name", sess.TmuxName, "error", err)
+	} else {
+		w.Header().Set("X-Pane-Width", strconv.Itoa(width))
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

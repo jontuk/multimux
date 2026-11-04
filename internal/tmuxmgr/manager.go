@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -221,6 +222,22 @@ func (m *Manager) CapturePaneText(name string) ([]byte, error) {
 		return nil, fmt.Errorf("tmux capture-pane: %w", err)
 	}
 	return bytes.TrimSpace(stdout.Bytes()), nil
+}
+
+// PaneWidth returns the active pane's width in columns, the width that
+// CapturePaneText's rows were most recently laid out against.
+func (m *Manager) PaneWidth(name string) (int, error) {
+	out, err := exec.Command("tmux", m.baseArgs(
+		"display-message", "-p", "-t", ExactTarget(name), "#{pane_width}",
+	)...).Output()
+	if err != nil {
+		return 0, fmt.Errorf("tmux display-message: %w", err)
+	}
+	width, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("tmux pane width: %w", err)
+	}
+	return width, nil
 }
 
 // KillSession destroys the session. A session that is already gone — or a

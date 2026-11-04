@@ -9,7 +9,22 @@ describe("isContinued", () => {
   });
 
   it("does not continue a row that ends in a blank cell", () => {
+    const term = fakeTerminal(10, ["abcdefgh", "klm"]);
+    expect(isContinued(term, 0)).toBe(false);
+  });
+
+  it("continues a row wrapped at a space in the last cell", () => {
     const term = fakeTerminal(10, ["abcdefghi", "klm"]);
+    expect(isContinued(term, 0)).toBe(true);
+  });
+
+  it("does not treat an indented next row as wrapped at a space", () => {
+    const term = fakeTerminal(10, ["abcdefghi", " klm"]);
+    expect(isContinued(term, 0)).toBe(false);
+  });
+
+  it("does not treat a padded table border as wrapped at a space", () => {
+    const term = fakeTerminal(10, ["│ abcde │", "│ klm   │"]);
     expect(isContinued(term, 0)).toBe(false);
   });
 
@@ -53,6 +68,24 @@ describe("selectionToText", () => {
     const term = fakeTerminal(10, ["abcdefghij", "klmnop"]);
     const text = selectionToText(term, { start: { x: 2, y: 0 }, end: { x: 3, y: 1 } });
     expect(text).toBe("cdefghijklm");
+  });
+
+  it("keeps the space when a tmux wrap lands on one", () => {
+    const term = fakeTerminal(10, ["abcde fgh ", "ijk"]);
+    const text = selectionToText(term, { start: { x: 0, y: 0 }, end: { x: 3, y: 1 } });
+    expect(text).toBe("abcde fgh ijk");
+  });
+
+  it("joins rows an application wrapped", () => {
+    const term = fakeTerminal(60, ["⏺ They also never get marked stale. Any tick clears the ", "  resubscribed flag."]);
+    const text = selectionToText(term, { start: { x: 0, y: 0 }, end: { x: 20, y: 1 } });
+    expect(text).toBe("⏺ They also never get marked stale. Any tick clears the resubscribed flag.");
+  });
+
+  it("judges an application wrap from whole rows, not the selected part", () => {
+    const term = fakeTerminal(60, ["⏺ They also never get marked stale. Any tick clears the ", "  resubscribed flag."]);
+    const text = selectionToText(term, { start: { x: 49, y: 0 }, end: { x: 14, y: 1 } });
+    expect(text).toBe("rs the resubscribed");
   });
 
   it("returns a single row unchanged", () => {

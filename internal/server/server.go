@@ -22,6 +22,7 @@ import (
 
 type PaneTextCapturer interface {
 	CapturePaneText(name string) ([]byte, error)
+	PaneWidth(name string) (int, error)
 }
 
 type Config struct {
@@ -296,6 +297,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Pane-Width")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

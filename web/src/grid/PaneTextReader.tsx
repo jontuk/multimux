@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { errorText, getText } from "../api";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { errorText, getPaneText } from "../api";
 import type { Server } from "../servers";
+import { unwrapText } from "../term/unwrap";
 
 type Props = {
   server: Server;
@@ -13,6 +14,8 @@ type Props = {
 
 export default function PaneTextReader({ server, sessionId, title, open, onClose, trigger }: Props) {
   const [snapshot, setSnapshot] = useState<string | null>(null);
+  const [cols, setCols] = useState<number | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
   const [requestError, setRequestError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
@@ -41,10 +44,11 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
     setRequestError("");
     setCopyStatus("");
     try {
-      const text = await getText(server, `/api/sessions/${sessionId}/text`, { signal: controller.signal });
+      const { text, cols } = await getPaneText(server, sessionId, { signal: controller.signal });
       if (controller.signal.aborted || generation !== generationRef.current) return;
       snapshotRef.current = text;
       setSnapshot(text);
+      setCols(cols);
       setScrollGeneration((value) => value + 1);
     } catch (err) {
       if (controller.signal.aborted || generation !== generationRef.current) return;
@@ -64,6 +68,9 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
       trigger?.focus();
     };
   }, [invalidateRequests, load, open, trigger]);
+
+  const unwrapped = useMemo(() => (snapshot === null ? null : unwrapText(snapshot, cols)), [snapshot, cols]);
+  const shown = showRaw ? snapshot : unwrapped;
 
   useLayoutEffect(() => {
     if (scrollGeneration > 0 && contentRef.current) {
@@ -97,10 +104,10 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
   }
 
   async function copyAll() {
-    if (!snapshotRef.current) return;
+    if (!snapshotRef.current || !shown) return;
     try {
       if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(snapshotRef.current);
+      await navigator.clipboard.writeText(shown);
       setCopyStatus("Copied pane text.");
     } catch {
       setCopyStatus("Clipboard unavailable. Select the text and copy it manually.");
@@ -111,6 +118,8 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
     invalidateRequests();
     snapshotRef.current = null;
     setSnapshot(null);
+    setCols(null);
+    setShowRaw(false);
     setRequestError("");
     setCopyStatus("");
     onClose();
@@ -134,6 +143,18 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
           <div className="pane-text-actions">
             <button type="button" onClick={() => void load()} disabled={refreshing}>
               Refresh
+            </button>
+            <button
+              type="button"
+              aria-pressed={showRaw}
+              disabled={unwrapped === snapshot}
+              title="Show line breaks exactly as captured"
+              onClick={() => {
+                setShowRaw((value) => !value);
+                setCopyStatus("");
+              }}
+            >
+              Raw
             </button>
             <button type="button" onClick={() => void copyAll()} disabled={snapshot === null || snapshot.length === 0}>
               Copy all
@@ -166,7 +187,7 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
           </div>
         ) : (
           <pre ref={contentRef} className="pane-text-content" data-testid="pane-text-content" tabIndex={0}>
-            {snapshot}
+            {shown}
           </pre>
         )}
       </div>

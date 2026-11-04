@@ -1635,6 +1635,14 @@ a {
   font: 0.8rem var(--mono);
 }
 
+.pane-text-actions button[aria-pressed="true"] {
+  border-color: var(--ink);
+}
+
+.pane-text-actions button:disabled {
+  opacity: 0.5;
+}
+
 .pane-text-actions button:focus-visible,
 .pane-text-initial-error button:focus-visible,
 .pane-text-content:focus-visible {

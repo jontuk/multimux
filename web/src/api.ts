@@ -78,10 +78,18 @@ export async function getJSON<T>(server: Server, path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function getText(server: Server, path: string, init: RequestInit = {}): Promise<string> {
+// cols is null when the daemon could not report the pane's width, or predates
+// reporting it.
+export async function getPaneText(
+  server: Server,
+  sessionId: number,
+  init: RequestInit = {},
+): Promise<{ text: string; cols: number | null }> {
+  const path = `/api/sessions/${sessionId}/text`;
   const res = await apiFetch(server, path, init);
   if (!res.ok) throw await failed(path, res);
-  return await res.text();
+  const cols = Number(res.headers.get("X-Pane-Width"));
+  return { text: await res.text(), cols: Number.isInteger(cols) && cols > 0 ? cols : null };
 }
 
 export async function postJSON<T>(server: Server, path: string, body?: unknown): Promise<T> {

@@ -19,9 +19,15 @@ import (
 )
 
 type stubPaneTextCapturer struct {
-	text []byte
-	err  error
-	name string
+	text     []byte
+	err      error
+	name     string
+	width    int
+	widthErr error
+}
+
+func (s *stubPaneTextCapturer) PaneWidth(string) (int, error) {
+	return s.width, s.widthErr
 }
 
 func (s *stubPaneTextCapturer) CapturePaneText(name string) ([]byte, error) {
@@ -78,6 +84,32 @@ func TestSessionTextAllowsEmptySnapshot(t *testing.T) {
 	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token)
 	if w.Code != http.StatusOK || w.Body.Len() != 0 {
 		t.Fatalf("empty capture = %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestSessionTextReportsPaneWidth(t *testing.T) {
+	s, st, capture, token := newPaneTextTestServer(t, []byte("alpha"), nil)
+	capture.width = 132
+	sess := runningSession(t, st)
+	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token)
+	if got := w.Header().Get("X-Pane-Width"); got != "132" {
+		t.Fatalf("X-Pane-Width = %q, want 132", got)
+	}
+	if got := w.Header().Get("Access-Control-Expose-Headers"); got != "X-Pane-Width" {
+		t.Fatalf("Access-Control-Expose-Headers = %q: a remote tile could not read the width", got)
+	}
+}
+
+func TestSessionTextSurvivesUnknownPaneWidth(t *testing.T) {
+	s, st, capture, token := newPaneTextTestServer(t, []byte("alpha"), nil)
+	capture.widthErr = errors.New("tmux hiccup")
+	sess := runningSession(t, st)
+	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token)
+	if w.Code != http.StatusOK || w.Body.String() != "alpha" {
+		t.Fatalf("capture = %d %q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Pane-Width"); got != "" {
+		t.Fatalf("X-Pane-Width = %q, want none", got)
 	}
 }
 
