@@ -1078,3 +1078,26 @@ test("loading and empty mobile states do not expose Compose", () => {
   expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Terminal keys" })).not.toBeInTheDocument();
 });
+
+test("offers git advice from the header actions, outside the swipe slider", async () => {
+  const advice = { costMs: 2400, everyMs: 48000, settings: ["core.untrackedCache"] };
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1, { branch: "main", gitState: "clean", gitAdvice: advice })]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+
+  const header = document.querySelector<HTMLElement>(".mobile-session-header")!;
+  const mark = within(header).getByRole("button", { name: /git status is slow/i });
+  expect(within(header).getByRole("slider", { name: "Active session" })).not.toContainElement(mark);
+
+  await userEvent.click(mark);
+  const dialog = screen.getByRole("dialog", { name: "git status is slow in this repo" });
+  expect(within(dialog).getByText("git -C /work/1 config core.untrackedCache true")).toBeInTheDocument();
+  // Outside the header, so a touch inside the dialog never starts a session swipe.
+  expect(header).not.toContainElement(dialog);
+});

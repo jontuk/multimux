@@ -3,6 +3,7 @@ package gitinfo
 import (
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 )
@@ -55,9 +56,12 @@ func TestBranchStatus(t *testing.T) {
 	}
 	check := func(label, wantBranch, wantState string) {
 		t.Helper()
-		st := BranchStatus(dir)
+		st, cost := BranchStatus(dir)
 		if st.Branch != wantBranch || st.State != wantState {
 			t.Errorf("%s: BranchStatus = (%q, %q), want (%q, %q)", label, st.Branch, st.State, wantBranch, wantState)
+		}
+		if cost <= 0 {
+			t.Errorf("%s: BranchStatus cost = %v, want > 0", label, cost)
 		}
 	}
 
@@ -139,7 +143,7 @@ func TestBranchStatusUpstream(t *testing.T) {
 	}
 	check := func(label string, wantAhead, wantBehind int, wantNoUpstream bool) {
 		t.Helper()
-		st := BranchStatus(work)
+		st, _ := BranchStatus(work)
 		if st.Ahead != wantAhead || st.Behind != wantBehind || st.NoUpstream != wantNoUpstream {
 			t.Errorf("%s: ahead=%d behind=%d noUpstream=%v, want %d/%d/%v",
 				label, st.Ahead, st.Behind, st.NoUpstream, wantAhead, wantBehind, wantNoUpstream)
@@ -222,7 +226,7 @@ func TestGitTimeout(t *testing.T) {
 	defer func() { gitTimeout, gitWaitDelay = origTimeout, origDelay }()
 
 	start := time.Now()
-	_, err := gitOutput(dir, "status")
+	_, cost, err := gitOutput(dir, "status")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -231,5 +235,108 @@ func TestGitTimeout(t *testing.T) {
 	// Well under the script's 2s: the call must not wait out the orphan.
 	if elapsed >= time.Second {
 		t.Fatalf("gitOutput took %v, want under 1s", elapsed)
+	}
+	// A call that ran into the timeout still reports what it cost: that is
+	// what stops a poller retrying a hopeless repo at full rate.
+	if cost < gitTimeout {
+		t.Fatalf("gitOutput cost = %v, want at least the %v timeout", cost, gitTimeout)
+	}
+}
+
+func TestMissingSpeedups(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	// The machine's own git config must not leak in: a developer who has
+	// these settings on globally would otherwise see every case pass or fail
+	// for the wrong reason.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+	orig := fsmonitorSupported
+	defer func() { fsmonitorSupported = orig }()
+
+	cases := []struct {
+		name      string
+		config    [][2]string
+		supported bool
+		want      Speedups
+	}{
+		{"nothing set", nil, true, Speedups{FSMonitor: true, UntrackedCache: true}},
+		{"both on", [][2]string{{"core.fsmonitor", "true"}, {"core.untrackedCache", "true"}}, true, Speedups{}},
+		{"fsmonitor on", [][2]string{{"core.fsmonitor", "true"}}, true, Speedups{UntrackedCache: true}},
+		{"fsmonitor off", [][2]string{{"core.fsmonitor", "false"}}, true, Speedups{FSMonitor: true, UntrackedCache: true}},
+		// A hook path (Watchman) is fsmonitor too, just not git's own daemon.
+		{"fsmonitor hook", [][2]string{{"core.fsmonitor", "/usr/local/bin/watchman-hook"}}, true, Speedups{UntrackedCache: true}},
+		{"untracked cache on", [][2]string{{"core.untrackedCache", "true"}}, true, Speedups{FSMonitor: true}},
+		// "keep" is git's default: it leaves the cache as it finds it, which
+		// on a repo nobody has tuned means off.
+		{"untracked cache keep", [][2]string{{"core.untrackedCache", "keep"}}, true, Speedups{FSMonitor: true, UntrackedCache: true}},
+		// feature.manyFiles turns the untracked cache on unless it is set itself.
+		{"manyFiles", [][2]string{{"feature.manyFiles", "true"}}, true, Speedups{FSMonitor: true}},
+		{"manyFiles overridden", [][2]string{{"feature.manyFiles", "true"}, {"core.untrackedCache", "false"}}, true, Speedups{FSMonitor: true, UntrackedCache: true}},
+		// A git built without the fsmonitor daemon cannot act on the advice.
+		{"no fsmonitor in this git", nil, false, Speedups{UntrackedCache: true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			run := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+			}
+			run("init")
+			for _, kv := range c.config {
+				run("config", kv[0], kv[1])
+			}
+			fsmonitorSupported = func() bool { return c.supported }
+			if got := MissingSpeedups(dir); got != c.want {
+				t.Errorf("MissingSpeedups = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestSpeedupsSettings(t *testing.T) {
+	cases := []struct {
+		in   Speedups
+		want []string
+	}{
+		{Speedups{}, nil},
+		{Speedups{FSMonitor: true}, []string{"core.fsmonitor"}},
+		{Speedups{UntrackedCache: true}, []string{"core.untrackedCache"}},
+		{Speedups{FSMonitor: true, UntrackedCache: true}, []string{"core.fsmonitor", "core.untrackedCache"}},
+	}
+	for _, c := range cases {
+		if got := c.in.Settings(); !slices.Equal(got, c.want) {
+			t.Errorf("%+v.Settings() = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestDetectFSMonitor(t *testing.T) {
+	// A fake git stands in for builds with and without the daemon: Apple's
+	// and git-for-windows have it, most Linux distro builds do not.
+	for _, c := range []struct {
+		name, options string
+		want          bool
+	}{
+		{"with daemon", "git version 2.54.0\ncpu: arm64\nfeature: fsmonitor--daemon\n", true},
+		{"without daemon", "git version 2.43.0\ncpu: x86_64\nsizeof-long: 8\n", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\ncat <<'OPTIONS'\n" + c.options + "OPTIONS\n"
+			if err := os.WriteFile(dir+"/git", []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if got := detectFSMonitor(); got != c.want {
+				t.Errorf("detectFSMonitor = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

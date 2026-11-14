@@ -1089,6 +1089,30 @@ a {
   color: #539bf5;
 }
 
+/* Shown when git status is slow in the tile's repo and a git setting would
+   fix it (GitAdviceMark). Amber like the unpushed marks: worth a look, not an
+   error. */
+.git-advice-mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0.2rem 0.25rem;
+  color: #d29922;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.git-advice-mark:hover {
+  background: var(--bg);
+}
+
+.git-advice-mark:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .tile-repo-link {
   display: flex;
   align-items: center;
@@ -1573,6 +1597,106 @@ a {
   border-bottom-color: var(--accent);
 }
 
+.git-advice-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 72%);
+}
+
+.git-advice-dialog {
+  width: min(42rem, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 1rem 4rem rgb(0 0 0 / 55%);
+  color: var(--ink);
+  font: 0.85rem/1.5 var(--sans);
+}
+
+.git-advice-dialog h1 {
+  margin: 0 0 0.6rem;
+  font: 600 0.95rem var(--mono);
+}
+
+.git-advice-dialog p {
+  margin: 0 0 0.7rem;
+}
+
+.git-advice-dialog code {
+  font: 0.8rem var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.git-advice-commands {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.git-advice-command {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.4rem 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+/* The command is there to be selected as well as copied by button. */
+.git-advice-command code {
+  flex: 1;
+  min-width: 0;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.git-advice-dialog .git-advice-note {
+  margin: 0.3rem 0 0.8rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.git-advice-feedback {
+  min-height: 1.4rem;
+  color: var(--muted);
+  font: 0.75rem var(--mono);
+}
+
+.git-advice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.git-advice-actions button,
+.git-advice-command button {
+  flex: none;
+  min-height: 2rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.35rem 0.65rem;
+  background: var(--panel);
+  color: var(--ink);
+  font: 0.8rem var(--mono);
+  cursor: pointer;
+}
+
+.git-advice-actions button:focus-visible,
+.git-advice-command button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .pane-text-backdrop {
   position: fixed;
   inset: 0;
@@ -2023,6 +2147,11 @@ a {
 
   .app.grid-route .mobile-session-actions button.danger:disabled {
     opacity: 0.5;
+  }
+
+  /* The shared button rule above would otherwise paint the mark in --ink. */
+  .app.grid-route .mobile-session-actions .git-advice-mark {
+    color: #d29922;
   }
 
   .app.grid-route .mobile-font-size-select {

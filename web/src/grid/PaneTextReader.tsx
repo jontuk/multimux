@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { errorText, getPaneText } from "../api";
 import type { Server } from "../servers";
 import { unwrapText } from "../term/unwrap";
+import { trapTab } from "./focusTrap";
 
 type Props = {
   server: Server;
@@ -85,22 +86,7 @@ export default function PaneTextReader({ server, sessionId, title, open, onClose
       close();
       return;
     }
-    if (event.key !== "Tab") return;
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
-      ) ?? [],
-    );
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
+    if (event.key === "Tab") trapTab(event, dialogRef.current);
   }
 
   async function copyAll() {

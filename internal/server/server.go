@@ -55,12 +55,21 @@ type Server struct {
 	// exists, and a reconcile tick in that window must not race it.
 	reconcileGrace time.Duration
 
-	// gitMu guards gitSeen and gitURLs.
+	// gitMu guards gitSeen, gitPaces and gitURLs.
 	gitMu sync.RWMutex
 
-	// gitSeen is the per-dir git state as of the last CheckGitInfo tick, and
-	// the only source of the session list's git fields. Guarded by gitMu.
+	// gitSeen is the per-dir git state as of each live dir's last inspection,
+	// and the only source of the session list's git fields. Guarded by gitMu.
 	gitSeen map[string]dirGitInfo
+
+	// gitPaces holds the live dirs whose last inspection was costly enough
+	// to earn a wait (see gitBackoff). A dir with no entry is inspected every
+	// tick. Guarded by gitMu.
+	gitPaces map[string]gitPace
+
+	// gitCostFactor is how many times its own cost an inspection is followed
+	// by before the dir is inspected again; see gitBackoff.
+	gitCostFactor int
 
 	// gitURLs caches each live dir's origin lookup, negative results
 	// included, for gitURLTTL. Guarded by gitMu.
@@ -74,7 +83,7 @@ func New(cfg Config) *Server {
 	if cfg.PaneText == nil {
 		cfg.PaneText = cfg.Tmux
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), hub: NewHub(), reconcileGrace: 10 * time.Second}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), hub: NewHub(), reconcileGrace: 10 * time.Second, gitCostFactor: 20}
 	s.routes()
 	return s
 }

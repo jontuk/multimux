@@ -23,6 +23,9 @@ import TerminalTile from "../term/TerminalTile";
 import { useEvents, type EventsStatus } from "../useEvents";
 import { MOBILE_VIEW_QUERY, useMediaQuery } from "../useMediaQuery";
 import MobileSessionView from "./MobileSessionView";
+import type { GitAdviceTarget } from "./gitAdvice";
+import GitAdviceDialog from "./GitAdviceDialog";
+import GitAdviceMark from "./GitAdviceMark";
 import PaneTextReader from "./PaneTextReader";
 import { orderMobileSessions } from "./mobileModel";
 import type { Session, Tool } from "./types";
@@ -179,6 +182,7 @@ export default function GridPage({
   // explicitly after reconnect/remove changes the stored list.
   const [servers, setServers] = useState(() => listServers());
   const [paneTextTarget, setPaneTextTarget] = useState<PaneTextTarget | null>(null);
+  const [gitAdviceTarget, setGitAdviceTarget] = useState<GitAdviceTarget | null>(null);
 
   // Browser-local view filter: the directory (or directories) shown on their
   // own, or null for all of them. Not persisted server-side and never written
@@ -493,7 +497,7 @@ export default function GridPage({
   // `code`: with Alt held, macOS reports `key` as "º".
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (paneTextTarget) return;
+      if (paneTextTarget || gitAdviceTarget) return;
       if (!e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey) return;
       let next: string | null;
       if (e.key === "ArrowRight") next = cycleSolo(activeSolo, dirs, 1);
@@ -507,7 +511,7 @@ export default function GridPage({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [activeSolo, dirs, paneTextTarget]);
+  }, [activeSolo, dirs, gitAdviceTarget, paneTextTarget]);
 
   // With a dir filter in effect a tile shows iff its session's directory is
   // in the selection, whatever the session's status — an ended session in a
@@ -811,6 +815,7 @@ export default function GridPage({
                       <TrackingMarks session={session} />
                     </span>
                   )}
+                  {session && <GitAdviceMark serverId={tile.serverId} session={session} onOpen={setGitAdviceTarget} />}
                   {session?.repoUrl && (
                     <a
                       className="tile-repo-link"
@@ -995,6 +1000,7 @@ export default function GridPage({
           </div>
         </>
       )}
+      {gitAdviceTarget && <GitAdviceDialog target={gitAdviceTarget} onClose={() => setGitAdviceTarget(null)} />}
       {paneTextTarget && (
         <PaneTextReader
           server={paneTextTarget.server}

@@ -6,6 +6,9 @@ import MobileCompose from "./MobileCompose";
 import MobileFontSizeControl from "./MobileFontSizeControl";
 import MobileKeyBar from "./MobileKeyBar";
 import MobileSessionCreator from "./MobileSessionCreator";
+import type { GitAdviceTarget } from "./gitAdvice";
+import GitAdviceDialog from "./GitAdviceDialog";
+import GitAdviceMark from "./GitAdviceMark";
 import PaneTextReader from "./PaneTextReader";
 import { dirTintStyle } from "./dirColor";
 import { readMobileFontSize, writeMobileFontSize, type MobileFontSize as MobileFontSizeValue } from "./mobileFontSize";
@@ -44,6 +47,7 @@ export default function MobileSessionView({
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const [paneTextTarget, setPaneTextTarget] = useState<PaneTextTarget | null>(null);
+  const [gitAdviceTarget, setGitAdviceTarget] = useState<GitAdviceTarget | null>(null);
   const [terminating, setTerminating] = useState(false);
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
@@ -237,6 +241,9 @@ export default function MobileSessionView({
               +
             </button>
             {selected && (
+              <GitAdviceMark serverId={selected.server.id} session={selected.session} onOpen={setGitAdviceTarget} />
+            )}
+            {selected && (
               <button
                 type="button"
                 aria-label={`Read text from session ${selected.session.id}`}
@@ -304,6 +311,7 @@ export default function MobileSessionView({
           onLaunched={created}
         />
       )}
+      {gitAdviceTarget && <GitAdviceDialog target={gitAdviceTarget} onClose={() => setGitAdviceTarget(null)} />}
       {paneTextTarget && (
         <PaneTextReader
           server={paneTextTarget.server}

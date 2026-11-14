@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -804,6 +805,209 @@ func TestCheckGitInfoBroadcastsOnChange(t *testing.T) {
 	}
 	if evs := drain(); len(evs) != 1 || evs[0] != "git_changed" {
 		t.Fatalf("changed tick broadcast %v, want [git_changed]", evs)
+	}
+}
+
+func TestGitBackoff(t *testing.T) {
+	cfg, _, _ := newTestServerCfg(t, true)
+	s := New(cfg) // the pacing a real daemon runs with, not newTestServer's
+	if s.gitCostFactor != 20 {
+		t.Fatalf("gitCostFactor = %d, want 20 (the cases below assume it)", s.gitCostFactor)
+	}
+	cases := []struct {
+		cost, want time.Duration
+	}{
+		// Cheap enough to fit the budget at the tick rate: checked every tick.
+		{20 * time.Millisecond, 0},
+		{gitCheckInterval / 20, 0},
+		// Past that, the wait scales with the cost...
+		{time.Second, 20 * time.Second},
+		{5 * time.Second, 100 * time.Second},
+		// ...up to the cap that bounds how stale a tile's git state can get.
+		{time.Minute, gitMaxInterval},
+	}
+	for _, c := range cases {
+		if got := s.gitBackoff(c.cost); got != c.want {
+			t.Errorf("gitBackoff(%v) = %v, want %v", c.cost, got, c.want)
+		}
+	}
+}
+
+func TestCheckGitInfoBacksOffCostlyDirs(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, st, _ := newTestServer(t, true)
+	// Make any real git run count as costly, standing in for a monorepo
+	// where one status takes seconds.
+	s.gitCostFactor = 1_000_000_000
+
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	sess, _ := st.CreateSession(tool.ID, repo)
+
+	ch := s.hub.Subscribe()
+	defer s.hub.Unsubscribe(ch)
+	events := func() int {
+		n := 0
+		for {
+			select {
+			case <-ch:
+				n++
+			default:
+				return n
+			}
+		}
+	}
+	state := func() (string, bool) {
+		s.gitMu.RLock()
+		defer s.gitMu.RUnlock()
+		info, ok := s.gitSeen[repo]
+		return info.State, ok
+	}
+	check := func() {
+		t.Helper()
+		if err := s.CheckGitInfo(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	check()
+	if n := events(); n != 1 {
+		t.Fatalf("first check broadcast %d events, want 1", n)
+	}
+
+	// The dir changes, but its last check was costly: the next tick leaves it
+	// alone and keeps serving what that check found.
+	if err := os.WriteFile(repo+"/a.txt", []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check()
+	if n := events(); n != 0 {
+		t.Fatalf("backed-off check broadcast %d events, want none", n)
+	}
+	if got, ok := state(); !ok || got != "clean" {
+		t.Fatalf("backed-off dir state = %q, %v; want the earlier clean result kept", got, ok)
+	}
+
+	// Once the wait has passed the dir is inspected again.
+	makeGitDue(s, repo)
+	check()
+	if n := events(); n != 1 {
+		t.Fatalf("due check broadcast %d events, want 1", n)
+	}
+	if got, _ := state(); got != "untracked" {
+		t.Fatalf("due dir state = %q, want untracked", got)
+	}
+
+	// The wait dies with the dir's last running session, so a dir that comes
+	// back later is inspected straight away.
+	if err := st.SetSessionStatus(sess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	check()
+	s.gitMu.RLock()
+	_, waiting := s.gitPaces[repo]
+	s.gitMu.RUnlock()
+	if waiting {
+		t.Error("dead dir kept its back-off")
+	}
+}
+
+// makeGitDue ends the wait a costly dir is serving, as time passing would.
+func makeGitDue(s *Server, dir string) {
+	s.gitMu.Lock()
+	defer s.gitMu.Unlock()
+	pace := s.gitPaces[dir]
+	pace.due = time.Now().Add(-time.Second)
+	s.gitPaces[dir] = pace
+}
+
+func TestListSessionsAdvisesSpeedupsOnlyForCostlyRepos(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	// Keep the machine's own git config out of what the repo is seen to lack.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	s, st, am := newTestServer(t, true)
+	token, _ := am.CreateSession("UA")
+
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	st.CreateSession(tool.ID, repo)
+	st.CreateSession(tool.ID, t.TempDir()) // not a repo: nothing to advise, however slow
+
+	type advice struct {
+		CostMs   *int64   `json:"costMs"`
+		EveryMs  int64    `json:"everyMs"`
+		Settings []string `json:"settings"`
+	}
+	list := func() []*advice {
+		t.Helper()
+		if err := s.CheckGitInfo(); err != nil {
+			t.Fatal(err)
+		}
+		w := do(t, s, "GET", "/api/sessions", token)
+		if w.Code != 200 {
+			t.Fatalf("list = %d: %s", w.Code, w.Body.String())
+		}
+		var got []struct {
+			GitAdvice *advice `json:"gitAdvice"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &got)
+		if len(got) != 2 {
+			t.Fatalf("len = %d, want 2", len(got))
+		}
+		return []*advice{got[0].GitAdvice, got[1].GitAdvice}
+	}
+
+	// A repo whose status is cheap is left alone: the settings would buy nothing.
+	if got := list(); got[0] != nil || got[1] != nil {
+		t.Fatalf("cheap dirs advised: %+v, %+v", got[0], got[1])
+	}
+
+	// Make any real git run count as costly, standing in for a monorepo.
+	s.gitCostFactor = 1_000_000_000
+	got := list()
+	if got[0] == nil {
+		t.Fatal("costly repo with neither setting on got no advice")
+	}
+	if !slices.Contains(got[0].Settings, "core.untrackedCache") {
+		t.Errorf("advised settings = %v, want core.untrackedCache among them", got[0].Settings)
+	}
+	if got[0].CostMs == nil {
+		t.Error("advice carries no cost")
+	}
+	if want := gitMaxInterval.Milliseconds(); got[0].EveryMs != want {
+		t.Errorf("advice everyMs = %d, want %d (the wait the dir is serving)", got[0].EveryMs, want)
+	}
+	if got[1] != nil {
+		t.Errorf("non-repo dir advised: %+v", got[1])
+	}
+
+	// Turning a setting on drops it from the advice at the dir's next
+	// inspection, and clients are told so the mark can go.
+	if out, err := exec.Command("git", "-C", repo, "config", "core.untrackedCache", "true").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v\n%s", err, out)
+	}
+	makeGitDue(s, repo)
+	ch := s.hub.Subscribe()
+	defer s.hub.Unsubscribe(ch)
+	got = list()
+	if got[0] != nil && slices.Contains(got[0].Settings, "core.untrackedCache") {
+		t.Errorf("advice still names core.untrackedCache after it was turned on: %v", got[0].Settings)
+	}
+	select {
+	case <-ch:
+	default:
+		t.Error("changed advice broadcast nothing")
 	}
 }
 

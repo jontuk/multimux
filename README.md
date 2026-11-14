@@ -22,7 +22,9 @@ tmux sessions, so they survive disconnects, daemon restarts, and logout.
 - **Shared-window arbitration** — the same session open on several machines
   follows whoever is actually typing, so a sleeping laptop can't shrink it.
 - **Git-aware tiles** — branch, dirty state, and GitHub link per session, with
-  colour-coding by working directory.
+  colour-coding by working directory. A monorepo where `git status` is slow is
+  checked less often rather than pinning a core, and its tile offers the git
+  settings that make it fast again.
 - **Mobile view** — one-session switcher for phones with swipe navigation, a
   compose box for dictation, and an Esc/Tab/Ctrl-C/arrow key row.
 

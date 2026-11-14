@@ -2242,3 +2242,32 @@ test("a filtered-out tile stays mounted so switching back does not rebuild it", 
   expect(screen.getByTestId("term-2")).toBe(b);
   expect(screen.getByTestId("term-1")).not.toBeVisible();
 });
+
+test("a tile whose repo has slow git status offers the advice dialog", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 5 },
+    ],
+  };
+  const slow = { ...sessions[0], gitAdvice: { costMs: 2400, everyMs: 48000, settings: ["core.fsmonitor"] } };
+  mockFetch(layout, [slow, sessions[3]]);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-5");
+
+  // Session 5's repo is fine, so only session 1's tile carries the mark.
+  const marks = await screen.findAllByRole("button", { name: /git status is slow/i });
+  expect(marks).toHaveLength(1);
+  expect(marks[0].closest(".tile-header")).toHaveTextContent("feat");
+
+  await userEvent.click(marks[0]);
+  const dialog = screen.getByRole("dialog", { name: "git status is slow in this repo" });
+  expect(within(dialog).getByText("git -C /a config core.fsmonitor true")).toBeInTheDocument();
+  // Rendered by the page, not inside the header whose double-click maximizes the tile.
+  expect(dialog.closest(".tile-header")).toBeNull();
+
+  await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});

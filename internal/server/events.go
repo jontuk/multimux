@@ -170,11 +170,12 @@ func (s *Server) StartBackground() {
 	// git timeout, and that must not delay spotting dead sessions. time.Tick
 	// drops ticks while a pass overruns, so slow passes never pile up.
 	go func() {
-		// Run initial git check immediately so cache is warm without waiting 5s.
+		// Run initial git check immediately so cache is warm without waiting
+		// for the first tick.
 		if err := s.CheckGitInfo(); err != nil {
 			slog.Error("startup git check", "err", err)
 		}
-		for range time.Tick(5 * time.Second) {
+		for range time.Tick(gitCheckInterval) {
 			if err := s.CheckGitInfo(); err != nil {
 				slog.Error("git check", "err", err)
 			}

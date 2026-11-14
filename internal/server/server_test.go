@@ -62,7 +62,12 @@ func newTestServerCfg(t *testing.T, registered bool) (Config, *store.Store, *aut
 func newTestServer(t *testing.T, registered bool) (*Server, *store.Store, *auth.Manager) {
 	t.Helper()
 	cfg, st, am := newTestServerCfg(t, registered)
-	return New(cfg), st, am
+	s := New(cfg)
+	// Git pacing is off unless a test asks for it. On a loaded machine even a
+	// tiny repo's git status can cost enough to earn a wait, and a test that
+	// calls CheckGitInfo back to back would then find its dir skipped.
+	s.gitCostFactor = 1
+	return s, st, am
 }
 
 // authedRequest performs req with a valid bearer token.

@@ -33,6 +33,21 @@ type sessionJSON struct {
 	Ahead      int  `json:"ahead,omitempty"`
 	Behind     int  `json:"behind,omitempty"`
 	NoUpstream bool `json:"noUpstream,omitempty"`
+	// GitAdvice is set when git status is costly in the session's dir and
+	// the repo is not using the git settings that would make it cheap.
+	GitAdvice *gitAdvice `json:"gitAdvice,omitempty"`
+}
+
+// gitAdvice tells a client why a dir's git state is refreshed slowly and what
+// would fix it.
+type gitAdvice struct {
+	// CostMs is what the last git status in the dir cost, the larger of its
+	// elapsed and CPU time.
+	CostMs int64 `json:"costMs"`
+	// EveryMs is the wait between inspections that cost has earned the dir.
+	EveryMs int64 `json:"everyMs"`
+	// Settings are the git config keys worth setting to true in the repo.
+	Settings []string `json:"settings"`
 }
 
 // dirGitInfo is the per-directory git data resolved while listing sessions. It
@@ -41,9 +56,19 @@ type sessionJSON struct {
 type dirGitInfo struct {
 	url string
 	gitinfo.Status
+	// missing is which git settings would make status cheap here but are not
+	// on. Looked up only for a repo whose status was costly, so it is zero
+	// for every dir that is inspected at the tick rate.
+	missing gitinfo.Speedups
 }
 
 const (
+	// gitCheckInterval is how often CheckGitInfo runs, and so the fastest any
+	// dir's git state is refreshed.
+	gitCheckInterval = 5 * time.Second
+	// gitMaxInterval caps the wait a costly dir earns (see gitBackoff), which
+	// bounds how stale a tile's git state can get however big the repo is.
+	gitMaxInterval = 5 * time.Minute
 	// gitURLTTL is how long a dir's origin lookup is trusted. Remotes rarely
 	// change, so re-reading one every tick is waste, but a session can
 	// `git init` and add a remote after it starts, so even a negative result
@@ -63,9 +88,43 @@ type urlLookup struct {
 	at  time.Time
 }
 
+// gitCheck is one inspection of a dir: what it found and what running git
+// status there cost.
+type gitCheck struct {
+	info dirGitInfo
+	cost time.Duration
+}
+
+// gitPace is the pacing of a dir whose inspection is costly.
+type gitPace struct {
+	cost time.Duration // what its last inspection cost
+	wait time.Duration // the wait that earned it
+	due  time.Time     // when the wait ends and the dir may be inspected again
+}
+
+// gitBackoff is how long a dir is left alone after an inspection that cost
+// cost. git status walks the whole work tree, so on a monorepo one run is
+// seconds of CPU, and repeating it every tick keeps a core or more busy for as
+// long as a session is open there — on a laptop, that is the battery. Waiting
+// gitCostFactor times the cost holds git to 1/gitCostFactor of one core per
+// dir whatever the repo's size (until gitMaxInterval caps the wait), and backs
+// off the same way from a repo that only ever runs into the git timeout. A dir
+// cheap enough to fit that budget at the tick rate gets no wait and is
+// inspected every tick.
+func (s *Server) gitBackoff(cost time.Duration) time.Duration {
+	factor := time.Duration(s.gitCostFactor)
+	switch {
+	case cost <= gitCheckInterval/factor:
+		return 0
+	case cost >= gitMaxInterval/factor:
+		return gitMaxInterval
+	}
+	return cost * factor
+}
+
 // resolveGit inspects dirs, at most gitConcurrency at a time, reusing each
 // dir's cached origin URL while it is younger than gitURLTTL.
-func (s *Server) resolveGit(dirs []string) map[string]dirGitInfo {
+func (s *Server) resolveGit(dirs []string) map[string]gitCheck {
 	now := time.Now()
 	s.gitMu.RLock()
 	cached := make(map[string]urlLookup, len(dirs))
@@ -79,7 +138,7 @@ func (s *Server) resolveGit(dirs []string) map[string]dirGitInfo {
 	var (
 		mu     sync.Mutex
 		wg     sync.WaitGroup
-		out    = make(map[string]dirGitInfo, len(dirs))
+		out    = make(map[string]gitCheck, len(dirs))
 		looked = map[string]urlLookup{}
 		sem    = make(chan struct{}, gitConcurrency)
 	)
@@ -91,10 +150,14 @@ func (s *Server) resolveGit(dirs []string) map[string]dirGitInfo {
 			if !fresh {
 				u = urlLookup{url: gitinfo.RepoWebURL(dir), at: now}
 			}
-			info := dirGitInfo{url: u.url, Status: gitinfo.BranchStatus(dir)}
+			status, cost := gitinfo.BranchStatus(dir)
+			info := dirGitInfo{url: u.url, Status: status}
+			if status.State != "" && s.gitBackoff(cost) > 0 {
+				info.missing = gitinfo.MissingSpeedups(dir)
+			}
 			mu.Lock()
 			defer mu.Unlock()
-			out[dir] = info
+			out[dir] = gitCheck{info: info, cost: cost}
 			if !fresh {
 				looked[dir] = u
 			}
@@ -139,8 +202,20 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// whose git_changed prompts clients to refetch.
 	s.gitMu.RLock()
 	infos := make(map[string]dirGitInfo, len(liveDirs))
+	advice := map[string]*gitAdvice{}
 	for dir := range liveDirs {
-		infos[dir] = s.gitSeen[dir]
+		info := s.gitSeen[dir]
+		infos[dir] = info
+		// Settings are only ever missing for a dir that is being paced, so
+		// its pace is there to say how slow the dir is.
+		if settings := info.missing.Settings(); len(settings) > 0 {
+			pace := s.gitPaces[dir]
+			advice[dir] = &gitAdvice{
+				CostMs:   pace.cost.Milliseconds(),
+				EveryMs:  pace.wait.Milliseconds(),
+				Settings: settings,
+			}
+		}
 	}
 	s.gitMu.RUnlock()
 
@@ -157,6 +232,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			Ahead:      info.Ahead,
 			Behind:     info.Behind,
 			NoUpstream: info.NoUpstream,
+			GitAdvice:  advice[sess.Dir],
 		})
 	}
 	writeJSON(w, 200, out)
@@ -561,40 +637,62 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 	return newlyDead, nil
 }
 
-// CheckGitInfo recomputes branch and working-tree state for every running
-// session's dir and broadcasts git_changed when any of it differs from the
+// CheckGitInfo recomputes branch and working-tree state for the dirs of
+// running sessions and broadcasts git_changed when any of it differs from the
 // previous check — a dir seen for the first time included, since the session
 // list serves only this cache — prompting clients to refetch the session list.
+// A dir still serving out the wait its last inspection earned (see gitBackoff)
+// is skipped and keeps the state that inspection found.
 func (s *Server) CheckGitInfo() error {
 	sessions, err := s.cfg.Store.ListSessions()
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	var dirs []string
 	live := map[string]bool{}
+	s.gitMu.RLock()
 	for _, sess := range sessions {
-		if sess.Status == "running" && !live[sess.Dir] {
-			live[sess.Dir] = true
+		if sess.Status != "running" || live[sess.Dir] {
+			continue
+		}
+		live[sess.Dir] = true
+		if !now.Before(s.gitPaces[sess.Dir].due) {
 			dirs = append(dirs, sess.Dir)
 		}
 	}
-	seen := s.resolveGit(dirs)
+	s.gitMu.RUnlock()
+	checked := s.resolveGit(dirs)
+	done := time.Now()
 	changed := false
+	// seen and paces are rebuilt from the live dirs and the URL lookups
+	// pruned to them, so all of it shares the lifetime of a dir's running
+	// sessions: a dir that comes back later is looked up and inspected afresh.
+	seen := make(map[string]dirGitInfo, len(live))
+	paces := map[string]gitPace{}
 	s.gitMu.Lock()
-	// URL lookups share the lifetime of the dir's live sessions, so a dir
-	// that comes back later is looked up afresh.
 	for dir := range s.gitURLs {
 		if !live[dir] {
 			delete(s.gitURLs, dir)
 		}
 	}
-	for dir, info := range seen {
-		if prev, ok := s.gitSeen[dir]; !ok || prev != info {
+	for dir := range live {
+		check, ok := checked[dir]
+		if !ok {
+			// Not due: only a dir inspected before has a wait to serve, so
+			// both entries exist.
+			seen[dir], paces[dir] = s.gitSeen[dir], s.gitPaces[dir]
+			continue
+		}
+		if prev, ok := s.gitSeen[dir]; !ok || prev != check.info {
 			changed = true
-			break
+		}
+		seen[dir] = check.info
+		if wait := s.gitBackoff(check.cost); wait > 0 {
+			paces[dir] = gitPace{cost: check.cost, wait: wait, due: done.Add(wait)}
 		}
 	}
-	s.gitSeen = seen
+	s.gitSeen, s.gitPaces = seen, paces
 	s.gitMu.Unlock()
 	if changed {
 		s.broadcast("git_changed", nil)
