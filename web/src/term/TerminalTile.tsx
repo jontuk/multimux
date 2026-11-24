@@ -365,8 +365,19 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     function connect() {
       if (closed) return;
       setState("connecting");
-      ws = new WebSocket(url);
       claimed = null; // a new socket has sent nothing
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        // The constructor throws on a URL it will not even try, where every
+        // other failure is a `close`; uncaught, that unmounts the whole app.
+        // Treated as a daemon that cannot be reached, on the same backoff.
+        ws = null;
+        setState("offline");
+        reconnectTimeoutId = setTimeout(connect, backoff);
+        backoff = Math.min(backoff * 2, 10000);
+        return;
+      }
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
         setState("open");

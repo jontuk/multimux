@@ -365,6 +365,31 @@ test("unreachable daemon keeps retrying with the offline overlay", async () => {
   await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(1), { timeout: 2000 });
 });
 
+test("a socket the browser refuses to construct shows the offline overlay and retries on the backoff", async () => {
+  // What `new WebSocket` does with a URL it rejects outright: a synchronous
+  // throw, where every other failure arrives as a close event.
+  let attempts = 0;
+  class ThrowingWebSocket {
+    static OPEN = 1;
+    constructor() {
+      attempts++;
+      throw new SyntaxError("invalid URL");
+    }
+  }
+  vi.stubGlobal("WebSocket", ThrowingWebSocket);
+  try {
+    const bad = { id: "bad", origin: "mux.local:8686", name: "bad" };
+    const { unmount } = render(<TerminalTile server={bad} sessionId={7} onClose={() => {}} />);
+
+    await screen.findByText(/daemon unreachable/);
+    expect(attempts).toBe(1);
+    await waitFor(() => expect(attempts).toBe(2), { timeout: 2000 });
+    unmount();
+  } finally {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  }
+});
+
 test("running session that closes keeps retrying", async () => {
   mockSessions(async () => new Response(JSON.stringify([session("running")])));
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);

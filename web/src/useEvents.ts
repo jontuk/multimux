@@ -101,7 +101,20 @@ function open(url: string, first: Subscriber): Connection {
   function connect() {
     if (closed) return;
     lastFrameAt = Date.now();
-    ws = new WebSocket(url);
+    try {
+      ws = new WebSocket(url);
+    } catch {
+      // The constructor throws on a URL it will not even try (malformed, or
+      // ws:// from an https page) where every other failure is a `close`.
+      // Uncaught, that throw is inside an effect and unmounts the whole app.
+      // Nothing was attempted, so there is nothing for classify() to probe;
+      // retry on the same backoff as a socket that closed.
+      ws = null;
+      setStatus("unreachable");
+      reconnectTimeoutId = setTimeout(connect, backoff);
+      backoff = Math.min(backoff * 2, 15000);
+      return;
+    }
     ws.onopen = () => {
       backoff = 1000;
       failsSinceOpen = 0;

@@ -255,3 +255,44 @@ test("different daemons get their own sockets", () => {
   renderHook(() => useEvents({ ...server, id: "r2", origin: "https://thirdbox:8686" }, () => {}));
   expect(FakeWebSocket.instances).toHaveLength(2);
 });
+
+test("a socket the browser refuses to construct reports unreachable and retries on the backoff", async () => {
+  vi.useFakeTimers();
+  // What `new WebSocket` does with a URL it rejects outright, e.g. one built
+  // from an origin with no scheme: it throws instead of failing asynchronously.
+  let attempts = 0;
+  class ThrowingWebSocket {
+    static OPEN = 1;
+    constructor() {
+      attempts++;
+      throw new SyntaxError("The URL 'mux.local:8686/ws/events' is invalid.");
+    }
+  }
+  vi.stubGlobal("WebSocket", ThrowingWebSocket as unknown as typeof WebSocket);
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  const bad: Server = { id: "bad", origin: "mux.local:8686", name: "bad" };
+  const onStatus = vi.fn();
+
+  const { unmount } = renderHook(() => useEvents(bad, () => {}, onStatus));
+
+  expect(attempts).toBe(1);
+  expect(onStatus).toHaveBeenCalledWith("unreachable");
+
+  // Not a tight loop: nothing more until the first backoff, which then doubles.
+  await vi.advanceTimersByTimeAsync(999);
+  expect(attempts).toBe(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts).toBe(2);
+  await vi.advanceTimersByTimeAsync(1999);
+  expect(attempts).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts).toBe(3);
+  // The answer is already known, so no probe is spent on it.
+  expect(fetchMock).not.toHaveBeenCalled();
+
+  unmount();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(attempts).toBe(3);
+  vi.useRealTimers();
+});
