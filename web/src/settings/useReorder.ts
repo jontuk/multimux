@@ -1,9 +1,15 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 import { errorText, putJSON } from "../api";
 import { localServer } from "../servers";
 
 type Item = { id: number };
+
+/**
+ * An order the user asked for. `landedOn` is null while its save is in flight,
+ * then the list that was current when the save landed.
+ */
+type Pending<T> = { ids: number[]; landedOn: T[] | null };
 
 /** Result of moving one row: the new list, ready to render and to send. */
 function moved<T extends Item>(items: T[], from: number, to: number): T[] {
@@ -17,37 +23,48 @@ function moved<T extends Item>(items: T[], from: number, to: number): T[] {
 /**
  * Drag-and-keyboard reordering for a settings list.
  *
- * The list rendered while a save is in flight is the pending one, so the row
- * stays where the user dropped it instead of snapping back for a moment. A
- * failed save drops the pending order — `items` reverts on the next render —
- * and reports why.
+ * While a save is in flight, and until the reload after it delivers, `items`
+ * is rendered in the pending order, so the row stays where the user dropped it
+ * instead of snapping back for a moment. Only the order is pending: the rows
+ * themselves always come from `items`, and once the reloaded list arrives it
+ * is the only order again. A failed save drops the pending order — `items`
+ * reverts on the next render — and reports why.
  */
 export function useReorder<T extends Item>(items: T[], path: string, reload: () => void) {
-  const [pending, setPending] = useState<T[] | null>(null);
+  const [pending, setPending] = useState<Pending<T> | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // A save that lands, a row added, a row deleted: whenever the server's list
-  // matches the pending one by id, the pending copy has done its job.
+  const current = useRef(items);
+  useEffect(() => {
+    current.current = items;
+  });
+
+  // The pending order has done its job once its save has landed and a newer
+  // list has arrived, and never applies to a list with other rows in it (one
+  // added or deleted meanwhile).
   const ordered = useMemo(() => {
-    if (!pending) return items;
-    const same = pending.length === items.length && pending.every((p) => items.some((i) => i.id === p.id));
-    return same ? pending : items;
+    if (!pending || (pending.landedOn && pending.landedOn !== items)) return items;
+    const byId = new Map(items.map((i) => [i.id, i]));
+    if (pending.ids.length !== byId.size || !pending.ids.every((id) => byId.has(id))) return items;
+    return pending.ids.map((id) => byId.get(id)!);
   }, [pending, items]);
 
   const save = useCallback(
-    async (next: T[]) => {
-      setPending(next);
+    async (ids: number[]) => {
+      setPending({ ids, landedOn: null });
       setError(null);
+      // A later move replaces the pending order; this save must then leave it alone.
+      const mine = (p: Pending<T> | null) => p?.ids === ids;
       try {
-        await putJSON(localServer(), path, { ids: next.map((i) => i.id) });
-        reload();
+        await putJSON(localServer(), path, { ids });
+        setPending((p) => (mine(p) ? { ids, landedOn: current.current } : p));
       } catch (e: unknown) {
-        setPending(null);
+        setPending((p) => (mine(p) ? null : p));
         setError(errorText(e));
-        reload();
       }
+      reload();
     },
     [path, reload],
   );
@@ -55,7 +72,7 @@ export function useReorder<T extends Item>(items: T[], path: string, reload: () 
   const move = useCallback(
     (from: number, to: number) => {
       const next = moved(ordered, from, to);
-      if (next !== ordered) void save(next);
+      if (next !== ordered) void save(next.map((i) => i.id));
     },
     [ordered, save],
   );

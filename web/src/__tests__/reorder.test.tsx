@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import type { KeyboardEvent } from "react";
 import { vi } from "vitest";
 import ToolsPanel from "../settings/ToolsPanel";
 import DirsPanel from "../settings/DirsPanel";
+import { useReorder } from "../settings/useReorder";
 
 const threeTools = [
   { id: 1, name: "zsh", command: "zsh" },
@@ -133,5 +135,115 @@ test("directories reorder through /api/dirs/order", async () => {
   await waitFor(() => expect(orderRequests(fetchMock)).toEqual([{ ids: [8, 7] }]));
   expect(String(fetchMock.mock.calls[1][0])).toContain("/api/dirs/order");
   await waitFor(() => expect(renderedNames()).toEqual(["tmp", "repos"]));
+  fetchMock.mockRestore();
+});
+
+test("an edit made after a reorder shows once the list reloads", async () => {
+  const reordered = [threeTools[2], threeTools[0], threeTools[1]];
+  const renamed = [{ ...threeTools[2], name: "codex-next" }, threeTools[0], threeTools[1]];
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify(threeTools)))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(reordered)))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(renamed)));
+
+  render(<ToolsPanel />);
+  await screen.findByLabelText("reorder zsh");
+  drag(2, 0);
+  await waitFor(() => expect(renderedNames()).toEqual(["codex", "zsh", "claude"]));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+  fireEvent.click((await screen.findAllByText("edit"))[0]);
+  fireEvent.change(screen.getByLabelText("edit name"), { target: { value: "codex-next" } });
+  fireEvent.click(screen.getByText("save"));
+
+  await waitFor(() => expect(renderedNames()).toEqual(["codex-next", "zsh", "claude"]));
+  fetchMock.mockRestore();
+});
+
+/** A PUT the test answers when it chooses. */
+function deferredPut() {
+  let settle!: (res: Response) => void;
+  const promise = new Promise<Response>((resolve) => (settle = resolve));
+  return { promise, ok: () => settle(new Response(null, { status: 204 })) };
+}
+
+function renderReorder() {
+  const reload = vi.fn();
+  const hook = renderHook(({ items }) => useReorder(items, "/api/tools/order", reload), {
+    initialProps: { items: threeTools },
+  });
+  const press = (index: number, key: string) =>
+    act(() => {
+      const event = { key, preventDefault: () => {} } as KeyboardEvent;
+      hook.result.current.handleProps(index, "row").onKeyDown(event);
+    });
+  const names = () => hook.result.current.ordered.map((t) => t.name);
+  return { ...hook, reload, press, names };
+}
+
+test("a moved row stays put from the drop until the reloaded list arrives", async () => {
+  const put = deferredPut();
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockReturnValueOnce(put.promise);
+  const { rerender, reload, press, names } = renderReorder();
+
+  press(2, "ArrowUp");
+  expect(names()).toEqual(["zsh", "codex", "claude"]);
+
+  // The save lands, but the reload it asked for has not answered yet.
+  await act(async () => put.ok());
+  expect(reload).toHaveBeenCalledTimes(1);
+  expect(names()).toEqual(["zsh", "codex", "claude"]);
+
+  rerender({ items: [threeTools[0], threeTools[2], threeTools[1]] });
+  expect(names()).toEqual(["zsh", "codex", "claude"]);
+
+  // From here on the server's list is the only order: another tab's reorder shows.
+  rerender({ items: [threeTools[1], threeTools[2], threeTools[0]] });
+  expect(names()).toEqual(["claude", "codex", "zsh"]);
+  fetchMock.mockRestore();
+});
+
+test("a second move made while the first is saving is the one that stays", async () => {
+  const first = deferredPut();
+  const second = deferredPut();
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockClear() // the spy keeps earlier tests' calls
+    .mockReturnValueOnce(first.promise)
+    .mockReturnValueOnce(second.promise);
+  const { rerender, press, names } = renderReorder();
+
+  press(2, "ArrowUp"); // zsh codex claude
+  press(1, "ArrowUp"); // codex zsh claude
+  expect(orderRequests(fetchMock)).toEqual([{ ids: [1, 3, 2] }, { ids: [3, 1, 2] }]);
+  expect(names()).toEqual(["codex", "zsh", "claude"]);
+
+  // The first save and its reload complete while the second is still in flight.
+  await act(async () => first.ok());
+  rerender({ items: [threeTools[0], threeTools[2], threeTools[1]] });
+  expect(names()).toEqual(["codex", "zsh", "claude"]);
+
+  await act(async () => second.ok());
+  expect(names()).toEqual(["codex", "zsh", "claude"]);
+  rerender({ items: [threeTools[2], threeTools[0], threeTools[1]] });
+  expect(names()).toEqual(["codex", "zsh", "claude"]);
+  fetchMock.mockRestore();
+});
+
+test("a failed save puts the row back and reports why", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify({ error: "nope" }), { status: 400 }));
+  const { result, reload, press, names } = renderReorder();
+
+  press(2, "ArrowUp");
+  expect(names()).toEqual(["zsh", "codex", "claude"]);
+
+  await waitFor(() => expect(result.current.reorderError).toMatch(/nope/));
+  expect(names()).toEqual(["zsh", "claude", "codex"]);
+  expect(reload).toHaveBeenCalledTimes(1);
   fetchMock.mockRestore();
 });
