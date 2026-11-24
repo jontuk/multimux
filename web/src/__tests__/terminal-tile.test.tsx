@@ -665,6 +665,35 @@ test("a reflow, a blur, or the tab losing focus makes the next gesture claim at 
   });
 });
 
+// Two tabs of one browser are one client to the daemon, so the tab being left
+// is still the owner: a resync from there would put the shared window at the
+// hidden tab's dims, racing the tab that just came forward.
+test("a tab going hidden does not resync its size", () => {
+  vi.useFakeTimers();
+  const { ws, term } = openTile();
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+
+  act(() => term.dispatchEvent(keydown()));
+  ws.sent.length = 0;
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(resizeFrames(ws)).toEqual([]);
+
+  visibility.mockReturnValue("visible");
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(resizeFrames(ws)).toEqual([expect.objectContaining({ active: false })]);
+
+  // Hiding still ended the claim, so the first gesture back claims at once.
+  visibility.mockReturnValue("hidden");
+  act(() => {
+    term.dispatchEvent(keydown());
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  visibility.mockReturnValue("visible");
+  ws.sent.length = 0;
+  act(() => term.dispatchEvent(keydown()));
+  expect(activeResizes(ws)).toHaveLength(1);
+});
+
 // The daemon's record of the claim died with the socket that carried it.
 test("the first gesture on a reconnected socket claims at once", async () => {
   vi.useFakeTimers();

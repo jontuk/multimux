@@ -599,8 +599,16 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     // Re-sync dims after the tab comes back; the listener args must not leak
     // into sendResize's active parameter.
     const resyncSize = () => sendResize();
+    // Not when the tab is the one going away: another tab of this browser is
+    // the same client to the Arbiter, so a resize from here would be the
+    // owner's and put the shared window at the dims of a tab nobody can see.
+    // The claim is still forgotten, as for any other loss of focus.
+    const resyncOnVisible = () => {
+      if (document.visibilityState === "hidden") forgetClaim();
+      else resyncSize();
+    };
     window.addEventListener("focus", resyncSize);
-    document.addEventListener("visibilitychange", resyncSize);
+    document.addEventListener("visibilitychange", resyncOnVisible);
 
     return () => {
       operationsRef.current = inertTerminalOperations;
@@ -632,7 +640,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       ro.disconnect();
       unsubscribeReflow();
       window.removeEventListener("focus", resyncSize);
-      document.removeEventListener("visibilitychange", resyncSize);
+      document.removeEventListener("visibilitychange", resyncOnVisible);
       fitSharedSizeRef.current = () => {};
       disposeTouchScroll();
       if (webglRetryId) clearTimeout(webglRetryId);

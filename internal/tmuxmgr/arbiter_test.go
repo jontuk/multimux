@@ -1,6 +1,7 @@
 package tmuxmgr
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -214,6 +215,72 @@ func TestRepeatedActiveResizeByOwnerDoesNotReapplySharedWindow(t *testing.T) {
 	}
 	if resizeAllowed(t, owner, 129, 76, true) {
 		t.Fatal("repeated active resize by the owner must not reapply the shared window")
+	}
+}
+
+// Two tabs of one browser share a client id, so the arbiter cannot tell them
+// apart as owners. A tab going to the background can leave the window at its
+// own dims; the gesture in the other tab is then a "repeat" by the owning
+// client, and it must still put the window right.
+func TestActiveResizeBySameClientAtOtherDimsReappliesSharedWindow(t *testing.T) {
+	a := NewArbiter()
+	small := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	large := a.Register("mm-1", "desktop", SizePolicyFollowInput)
+	defer small.Unregister()
+	defer large.Unregister()
+
+	if !resizeAllowed(t, large, 160, 50, true) {
+		t.Fatal("first active resize must claim the shared window")
+	}
+	if !resizeAllowed(t, small, 80, 24, false) {
+		t.Fatal("the owning client's other connection must be allowed to resize")
+	}
+	if !resizeAllowed(t, large, 160, 50, true) {
+		t.Fatal("an active resize must reapply once the window is at other dims")
+	}
+	if resizeAllowed(t, large, 160, 50, true) {
+		t.Fatal("an identical repeat must not reapply the shared window")
+	}
+	if !resizeAllowed(t, small, 80, 24, true) {
+		t.Fatal("the other connection's gesture must reapply its own dims")
+	}
+}
+
+// A resize that failed left the window at nobody knows what, so the next
+// gesture cannot be counted a repeat of it.
+func TestFailedWindowResizeIsNotRememberedAsApplied(t *testing.T) {
+	a := NewArbiter()
+	owner := a.Register("mm-1", "A", SizePolicyFollowInput)
+	defer owner.Unregister()
+
+	failed := errors.New("tmux gone")
+	if err := owner.Resize(129, 76, true, func(bool) error { return failed }); err != failed {
+		t.Fatalf("Resize error = %v, want %v", err, failed)
+	}
+	if !resizeAllowed(t, owner, 129, 76, true) {
+		t.Fatal("an active resize after a failed one must reapply the shared window")
+	}
+}
+
+// ClaimInput's reapply sizes the window too, so the gesture that follows at
+// the same dims is redundant.
+func TestActiveResizeAfterClaimInputReapplyIsARepeat(t *testing.T) {
+	a := NewArbiter()
+	first := a.Register("mm-1", "A", SizePolicyFollowInput)
+	second := a.Register("mm-1", "B", SizePolicyFollowInput)
+	defer first.Unregister()
+	defer second.Unregister()
+
+	resizeAllowed(t, first, 160, 50, true)
+	resizeAllowed(t, second, 80, 24, false)
+	if _, _, reapplied := claimInput(t, second); !reapplied {
+		t.Fatal("input from a non-owner must reapply its dims")
+	}
+	if resizeAllowed(t, second, 80, 24, true) {
+		t.Fatal("an active resize at the dims ClaimInput just applied must not reapply")
+	}
+	if !resizeAllowed(t, second, 81, 24, true) {
+		t.Fatal("an active resize at new dims must reapply")
 	}
 }
 

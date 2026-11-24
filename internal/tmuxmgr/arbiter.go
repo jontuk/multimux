@@ -52,6 +52,10 @@ type arbSession struct {
 	// client's connections, and the session's, until Prune drops the record.
 	ownerID     string
 	ownerLeftAt time.Time
+	// winCols, winRows are the dims the arbiter last had applied to the window,
+	// 0 when unknown (nothing applied yet, or the last attempt failed). Guarded
+	// by resizeMu, not arb.mu: they change only around an apply.
+	winCols, winRows uint16
 }
 
 // SizePolicy controls whether ordinary resize and input activity may claim the
@@ -195,16 +199,19 @@ func (c *ArbConn) Resize(cols, rows uint16, active bool, apply func(resizeWindow
 	}
 	allowed := c.sizePolicy == SizePolicyFollowInput && c.mayResize()
 	prev := c.session.ownerID
-	repeatActive := active && prev == c.clientID && c.sizePolicy == SizePolicyFollowInput
+	// The client is not the connection: another tab of the same browser may
+	// have sized the window since, so only the same dims make this a repeat.
+	repeatActive := active && prev == c.clientID && c.sizePolicy == SizePolicyFollowInput &&
+		cols == c.session.winCols && rows == c.session.winRows
 	claim := ""
 	if active || allowed {
 		// Whoever last sized the window owns it; taking over a lapsed
 		// ownership must also stop the old owner from silently getting it back.
 		c.session.ownerID = c.clientID
-		// Desktop interaction sends an active resize before every input. Once
-		// this client owns the window, its ordinary resizes already keep the
-		// dimensions current, so do not run tmux resize-window per keystroke.
-		// A passive active resize is the explicit Fit action and always applies.
+		// Desktop interaction sends an active resize before every input. When
+		// this client owns the window and these are the dims last applied to
+		// it, do not run tmux resize-window per keystroke. A passive active
+		// resize is the explicit Fit action and always applies.
 		allowed = !repeatActive
 		switch {
 		case prev == c.clientID:
@@ -228,7 +235,21 @@ func (c *ArbConn) Resize(cols, rows uint16, active bool, apply func(resizeWindow
 		slog.Debug("tmux window resize denied", "tmux", c.tmuxName, "client", c.clientID,
 			"owner", prev, "cols", cols, "rows", rows)
 	}
-	return apply(allowed)
+	err := apply(allowed)
+	if allowed {
+		c.session.applied(cols, rows, err)
+	}
+	return err
+}
+
+// applied records the outcome of a window resize. A failed one leaves the
+// window at dims nobody knows, so the next active resize must not be counted a
+// repeat of it. Callers hold resizeMu.
+func (s *arbSession) applied(cols, rows uint16, err error) {
+	if err != nil {
+		cols, rows = 0, 0
+	}
+	s.winCols, s.winRows = cols, rows
 }
 
 // ClaimInput marks this connection's client as owner after the caller has
@@ -263,5 +284,7 @@ func (c *ArbConn) ClaimInput(apply func(cols, rows uint16) error) error {
 	if cols == 0 || rows == 0 {
 		return nil
 	}
-	return apply(cols, rows)
+	err := apply(cols, rows)
+	c.session.applied(cols, rows, err)
+	return err
 }
