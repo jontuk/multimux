@@ -39,13 +39,15 @@ type Manager struct {
 	setupExpiry time.Time
 	setupTries  int
 
-	web          *webauthn.WebAuthn
-	regSession   *webauthn.SessionData
-	loginSession *webauthn.SessionData
+	web *webauthn.WebAuthn
+	// Ceremonies between begin and finish, keyed by challenge. Kept apart so
+	// login/begin, which anyone can call, cannot evict a pending registration.
+	regs   ceremonies
+	logins ceremonies
 }
 
 func New(st *store.Store, rpID string, origins []string) (*Manager, error) {
-	m := &Manager{store: st, rpID: rpID, origins: origins}
+	m := &Manager{store: st, rpID: rpID, origins: origins, regs: ceremonies{}, logins: ceremonies{}}
 	return m, m.initWebAuthn()
 }
 
