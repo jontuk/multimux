@@ -103,11 +103,14 @@ func validateHostname(host string) error {
 }
 
 // normalizeSANs splits a comma-separated SAN list, canonicalizes entries, and
-// drops empties. Entries that cannot be certificate DNS names are rejected.
-// Canonicalizing keeps every name this daemon answers to in the one form a
-// browser sends back — see CanonicalHost.
+// drops empties and repeats. Entries that cannot be certificate DNS names are
+// rejected. Canonicalizing keeps every name this daemon answers to in the one
+// form a browser sends back — see CanonicalHost. Repeats are judged on that
+// form and the first occurrence keeps its place: each entry becomes a DNS name
+// and a CA name constraint, and a repeat would be written into both twice.
 func normalizeSANs(raw string) (string, error) {
 	var out []string
+	seen := make(map[string]bool)
 	for _, s := range strings.Split(raw, ",") {
 		s = CanonicalHost(s)
 		if s == "" {
@@ -116,6 +119,10 @@ func normalizeSANs(raw string) (string, error) {
 		if err := ValidateName(s); err != nil {
 			return "", fmt.Errorf("extra SAN: %w", err)
 		}
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
 		out = append(out, s)
 	}
 	return strings.Join(out, ","), nil

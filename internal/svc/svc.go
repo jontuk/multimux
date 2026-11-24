@@ -172,7 +172,11 @@ func UnitContent(goos string, opts Options) (path, content string, err error) {
 	default:
 		// Quote the exec path so a binary living under a directory with
 		// spaces still parses as a single systemd argument.
-		return path, fmt.Sprintf(systemdTemplate, opts.ExecPath, envBlock), nil
+		exe, err := systemdExecPath(opts.ExecPath)
+		if err != nil {
+			return "", "", err
+		}
+		return path, fmt.Sprintf(systemdTemplate, exe, envBlock), nil
 	}
 }
 
@@ -212,6 +216,30 @@ func renderEnv(goos string, env []EnvVar) (string, error) {
 var systemdEscapeValue = strings.NewReplacer(`\`, `\\`, `"`, `\"`, `%`, `%%`)
 
 func systemdEscape(s string) string { return systemdEscapeValue.Replace(s) }
+
+// systemdExecPath renders an executable path for the inside of the
+// double-quoted first word of ExecStart=. Its rules are not systemdEscape's:
+//   - systemd expands %X specifiers in the path, so a literal % is written %%;
+//   - quotes, a backslash and control characters cannot be written at all.
+//     systemd unquotes the word and *then* refuses a path containing any of
+//     them ("Executable path contains special characters"), so escaping one
+//     only produces a unit that will not load. A raw newline is worse: it ends
+//     the line, and the rest of the path parses as directives of its own.
+//   - $ is left alone. Environment substitution applies to the argument
+//     vector, never to the path systemd executes, so "$$" would be looked up
+//     on disk as written. The argv[0] copy is substituted, which only changes
+//     what the process sees as its own name.
+func systemdExecPath(p string) (string, error) {
+	for i := 0; i < len(p); i++ {
+		switch c := p[i]; {
+		case c < 0x20 || c == 0x7f:
+			return "", fmt.Errorf("svc: executable path %q contains a control character (offset %d) and cannot be written to a systemd unit", p, i)
+		case c == '"' || c == '\'' || c == '\\':
+			return "", fmt.Errorf("svc: executable path %q contains %q, which systemd does not accept in an executable path; install multimux somewhere else", p, c)
+		}
+	}
+	return strings.ReplaceAll(p, "%", "%%"), nil
+}
 
 // validateEnv rejects entries that cannot be represented in a unit file rather
 // than emitting something that silently parses as garbage: a newline ends the
@@ -451,9 +479,12 @@ func Uninstall(goos string) error {
 	return errors.Join(stopErr, rmErr)
 }
 
-// LogsCommand returns the command that shows the daemon's logs: less on the
-// log file on macOS, journalctl on Linux (systemd sends output to journald,
-// so there is no file to open).
+// LogsCommand returns the command that follows the daemon's logs: less in
+// follow mode on the log file on macOS, journalctl -f on Linux (systemd sends
+// output to journald, so there is no file to open). less +F rather than
+// tail -f: Ctrl-C drops it out of follow mode into the ordinary pager, so the
+// user can scroll back and search, and F resumes following. That only works if
+// the caller survives the same Ctrl-C — see followLogs in cmd/service.go.
 func LogsCommand(goos string) (*exec.Cmd, error) {
 	switch goos {
 	case "darwin":
@@ -461,9 +492,9 @@ func LogsCommand(goos string) (*exec.Cmd, error) {
 		if err != nil {
 			return nil, err
 		}
-		return exec.Command("less", defaultLogPath(home)), nil
+		return exec.Command("less", "+F", defaultLogPath(home)), nil
 	case "linux":
-		return exec.Command("journalctl", "--user", "-u", "multimux"), nil
+		return exec.Command("journalctl", "--user", "-u", "multimux", "-f"), nil
 	default:
 		return nil, fmt.Errorf("svc: unsupported OS %q", goos)
 	}

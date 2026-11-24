@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 
 	"github.com/jontuk/multimux/internal/svc"
 )
@@ -19,7 +22,8 @@ Manage the multimux background service (launchd on macOS, systemd --user on Linu
   uninstall   stop and remove the unit (leaves data and tmux sessions intact)
   upgrade     download the latest release binary and restart the service on it
   status      print the service manager's status for the daemon
-  logs        follow the daemon's logs
+  logs        follow the daemon's logs (macOS: Ctrl-C stops following so you
+              can scroll back, F resumes, q quits; Linux: Ctrl-C quits)
 
 The installed unit runs a bare "multimux serve" with no flags, but "install"
 captures MULTIMUX_DATA_DIR and MULTIMUX_HOSTNAME from the installing shell into
@@ -82,6 +86,35 @@ var runUpgradeScript = func(script string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// followLogs runs the log follower in the foreground until the user ends it.
+//
+// Ctrl-C goes to the whole foreground process group, this process included,
+// and the follower owns its meaning: less +F takes it as "stop following,
+// let me scroll back", journalctl -f as "done". Dying on it here would hand
+// the terminal back to the shell with less still drawing on it. So the signal
+// is caught and dropped — caught, not ignored: an ignored signal stays ignored
+// across exec, and a journalctl that relies on the default disposition could
+// then not be interrupted at all.
+func followLogs(cmd *exec.Cmd, stderr io.Writer) int {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	defer signal.Stop(sig)
+
+	err := cmd.Run()
+	if err == nil {
+		return 0
+	}
+	// A follower killed by Ctrl-C is the normal end of following, not a failure.
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if ws, ok := exit.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() == syscall.SIGINT {
+			return 0
+		}
+	}
+	fmt.Fprintln(stderr, err)
+	return 1
 }
 
 func runService(args []string, stdout, stderr io.Writer) int {
@@ -156,11 +189,7 @@ func runService(args []string, stdout, stderr io.Writer) int {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
+		return followLogs(cmd, stderr)
 	default:
 		fmt.Fprint(stderr, serviceUsage)
 		return 2

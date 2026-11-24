@@ -525,3 +525,54 @@ func TestHostnamesCanonicalizesStoredNames(t *testing.T) {
 		t.Fatalf("stored hostname = %q, want folded", got)
 	}
 }
+
+// Settings stored before normalizeSANs de-duplicated can repeat a name, and an
+// extra SAN can restate the hostname or its implied .local form. Each name must
+// reach the certificate once, in the usual order.
+func TestHostnamesDropsDuplicateNames(t *testing.T) {
+	st := testStore(t)
+	if err := st.SetSetting("hostname", "mybox"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("extra_sans", "z.ts.net,MyBox.local,a.ts.net,mybox,z.ts.net,A.ts.net."); err != nil {
+		t.Fatal(err)
+	}
+	names, err := hostnames(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mybox", "mybox.local", "a.ts.net", "z.ts.net"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("hostnames = %v, want %v", names, want)
+	}
+}
+
+// The upgrade path for an install whose stored SANs repeat a name: the CA on
+// disk was generated for the list with the repeat in it, and the de-duplicated
+// list must not read as a hostname change — that would force a re-trust of the
+// CA on every device.
+func TestHostnamesDedupeDoesNotRegenerateCA(t *testing.T) {
+	st := testStore(t)
+	if err := st.SetSetting("hostname", "mybox"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("extra_sans", "a.ts.net,mybox.local,a.ts.net"); err != nil {
+		t.Fatal(err)
+	}
+	p := pki.New(t.TempDir())
+	// The list hostnames() produced for these settings before it de-duplicated.
+	if _, err := p.Ensure([]string{"mybox", "mybox.local", "a.ts.net", "a.ts.net", "mybox.local"}); err != nil {
+		t.Fatal(err)
+	}
+	names, err := hostnames(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regen, err := p.Ensure(names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen != pki.CARegenNone {
+		t.Fatalf("regen = %v, want none", regen)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"os"
+	"slices"
 	"testing"
 	"time"
 )
@@ -304,5 +305,50 @@ func TestEnsureKeepsCAWhenReplacementWontParse(t *testing.T) {
 	}
 	if regen != CARegenNone {
 		t.Fatalf("Ensure after the failure regenerated the CA: %v", regen)
+	}
+}
+
+// A CA generated for a list that repeated a name permits exactly what the
+// de-duplicated list asks for. Regenerating it would make the user re-trust
+// the CA on every device for no change in what it can sign, so only the leaf
+// (which nobody has to trust by hand) is reissued.
+func TestEnsureKeepsCAWhenOnlyDuplicatesChange(t *testing.T) {
+	p := New(t.TempDir())
+	// What hostnames() returned before it de-duplicated extra SANs.
+	if _, err := p.Ensure([]string{"mybox", "mybox.local", "a.ts.net", "a.ts.net", "mybox.local"}); err != nil {
+		t.Fatal(err)
+	}
+	before := loadCert(t, p.CACertPath()).SerialNumber
+
+	clean := []string{"mybox", "mybox.local", "a.ts.net"}
+	regen, err := p.Ensure(clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen != CARegenNone {
+		t.Fatalf("regen = %v, want CARegenNone", regen)
+	}
+	if after := loadCert(t, p.CACertPath()).SerialNumber; before.Cmp(after) != 0 {
+		t.Fatal("CA regenerated although only repeats were dropped")
+	}
+	leaf := loadCert(t, p.LeafCertPath())
+	if !slices.Equal(leaf.DNSNames, clean) {
+		t.Fatalf("leaf SANs = %v, want %v", leaf.DNSNames, clean)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(loadCert(t, p.CACertPath()))
+	for _, name := range clean {
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: name}); err != nil {
+			t.Fatalf("reissued leaf does not verify for %s: %v", name, err)
+		}
+	}
+
+	// Order is still compared: the first name is the primary one.
+	if regen, err := p.Ensure([]string{"a.ts.net", "mybox", "mybox.local"}); err != nil || regen != CARegenHostnames {
+		t.Fatalf("reordering: regen=%v err=%v, want CARegenHostnames", regen, err)
+	}
+	// A name added or removed is still a real change.
+	if regen, err := p.Ensure([]string{"mybox", "mybox.local"}); err != nil || regen != CARegenHostnames {
+		t.Fatalf("dropping a name: regen=%v err=%v, want CARegenHostnames", regen, err)
 	}
 }

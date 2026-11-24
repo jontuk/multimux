@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,5 +158,29 @@ func TestServiceUpgradeRestartFailureSaysWhatIsLeft(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "not restarted") {
 		t.Fatalf("stderr = %q, want it to say the daemon was not restarted", errOut.String())
+	}
+}
+
+// Ctrl-C is how following ends (journalctl -f) or pauses (less +F), so a
+// follower that dies of SIGINT must not be reported as a failure — and the
+// signal must not have been left ignored for the child, or it could not die
+// of it at all.
+func TestFollowLogsTreatsInterruptAsNormalExit(t *testing.T) {
+	var errOut bytes.Buffer
+	if code := followLogs(exec.Command("sh", "-c", "kill -INT $$"), &errOut); code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, errOut.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("interrupt reported as an error: %q", errOut.String())
+	}
+}
+
+func TestFollowLogsReportsFailure(t *testing.T) {
+	var errOut bytes.Buffer
+	if code := followLogs(exec.Command("sh", "-c", "exit 3"), &errOut); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "exit status 3") {
+		t.Fatalf("stderr = %q, want the follower's exit status", errOut.String())
 	}
 }

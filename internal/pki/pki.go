@@ -88,7 +88,7 @@ func (p *PKI) Ensure(hostnames []string) (regenerated CARegen, err error) {
 	switch {
 	case err == nil:
 		switch {
-		case !slices.Equal(caCert.PermittedDNSDomains, hostnames):
+		case !sameNames(caCert.PermittedDNSDomains, hostnames):
 			regenerated = CARegenHostnames
 		case !now().Before(caCert.NotAfter.Add(-caRenewUnder)):
 			// Renew ahead of the cliff: an expired CA breaks every browser at
@@ -113,6 +113,26 @@ func (p *PKI) Ensure(hostnames []string) (regenerated CARegen, err error) {
 		}
 	}
 	return regenerated, nil
+}
+
+// sameNames reports whether a and b list the same names in the same order
+// once repeats are dropped. A repeated name constraint changes nothing about
+// what the CA may sign, and replacing the CA costs the user a re-trust on
+// every device. CAs generated before the caller de-duplicated its list carry
+// repeats, so an element-wise comparison would regenerate every one of them on
+// upgrade. The leaf is still compared exactly (leafNeedsRotation): reissuing
+// it is free.
+func sameNames(a, b []string) bool {
+	unique := func(s []string) []string {
+		out := make([]string, 0, len(s))
+		for _, name := range s {
+			if !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	return slices.Equal(unique(a), unique(b))
 }
 
 func (p *PKI) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {

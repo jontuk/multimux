@@ -343,3 +343,16 @@ func TestApplyLeavingInvalidHostnameIsNotAnRPChange(t *testing.T) {
 		t.Fatalf("hostname = %q", got)
 	}
 }
+
+// A repeated SAN would become a repeated DNS name and name constraint in the
+// certificates. Repeats are judged after canonicalizing, and the first
+// occurrence keeps its place.
+func TestApplyDropsDuplicateSANs(t *testing.T) {
+	st := newStore(t)
+	if _, err := Apply(st, map[string]string{"extra_sans": "b.local,a.ts.net,B.local,a.ts.net.,c.example"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := setting(t, st, "extra_sans"); got != "b.local,a.ts.net,c.example" {
+		t.Fatalf("extra_sans = %q", got)
+	}
+}

@@ -27,10 +27,12 @@ import (
 )
 
 // hostnames returns [hostname, hostname.local?, extraSANs...] from settings,
-// seeding the hostname setting from os.Hostname() on first run. The order is
-// deterministic across restarts (hostname first, then sorted extra SANs) so
-// pki.Ensure — which compares hostname slices for equality — never sees a
-// spurious change and regenerates the CA unnecessarily.
+// seeding the hostname setting from os.Hostname() on first run. Each name
+// appears once, and the order is deterministic across restarts (hostname
+// first, then sorted extra SANs): pki.Ensure reissues the leaf whenever this
+// list differs from the one in the certificate, and regenerates the CA — which
+// the user then has to re-trust — whenever it differs from the CA's, repeats
+// aside.
 func hostnames(st *store.Store) ([]string, error) {
 	host, err := st.GetSetting("hostname")
 	if err != nil {
@@ -79,6 +81,12 @@ func hostnames(st *store.Store) ([]string, error) {
 			// a daemon that won't start, and the settings UI still shows it.
 			if err := identity.ValidateName(s); err != nil {
 				slog.Warn("ignoring invalid extra SAN", "err", err)
+				continue
+			}
+			// A SAN that restates the hostname (or its .local form), or one
+			// repeated in a list stored before normalizeSANs dropped repeats,
+			// would be written into the certificates twice.
+			if slices.Contains(names, s) || slices.Contains(extras, s) {
 				continue
 			}
 			extras = append(extras, s)

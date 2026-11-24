@@ -98,11 +98,12 @@ func TestLogsCommandDarwin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cmd.Args) != 2 || cmd.Args[0] != "less" {
-		t.Fatalf("args = %v, want [less <logPath>]", cmd.Args)
+	// +F is what makes it follow; plain less would open a static snapshot.
+	if len(cmd.Args) != 3 || cmd.Args[0] != "less" || cmd.Args[1] != "+F" {
+		t.Fatalf("args = %v, want [less +F <logPath>]", cmd.Args)
 	}
-	if !strings.HasSuffix(cmd.Args[1], ".local/share/multimux/multimux.log") {
-		t.Fatalf("log path = %s", cmd.Args[1])
+	if !strings.HasSuffix(cmd.Args[2], ".local/share/multimux/multimux.log") {
+		t.Fatalf("log path = %s", cmd.Args[2])
 	}
 }
 
@@ -111,14 +112,9 @@ func TestLogsCommandLinux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"journalctl", "--user", "-u", "multimux"}
-	if len(cmd.Args) != len(want) {
+	want := []string{"journalctl", "--user", "-u", "multimux", "-f"}
+	if !slices.Equal(cmd.Args, want) {
 		t.Fatalf("args = %v, want %v", cmd.Args, want)
-	}
-	for i, w := range want {
-		if cmd.Args[i] != w {
-			t.Fatalf("args = %v, want %v", cmd.Args, want)
-		}
 	}
 }
 
@@ -135,6 +131,54 @@ func TestUnitContentLinuxQuotesExecPath(t *testing.T) {
 	}
 	if !strings.Contains(content, `ExecStart="/home/user/my tools/multimux" serve`) {
 		t.Fatalf("exec path not quoted:\n%s", content)
+	}
+}
+
+// systemd resolves %X specifiers in the executable path, so a literal % has to
+// be doubled or the unit names a different binary (or fails to load).
+func TestUnitContentLinuxEscapesExecPathSpecifiers(t *testing.T) {
+	_, content, err := UnitContent("linux", Options{ExecPath: "/opt/100%h/multimux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, `ExecStart="/opt/100%%h/multimux" serve`) {
+		t.Fatalf("exec path %% not escaped:\n%s", content)
+	}
+}
+
+// The executable path is not environment-substituted (only the argv[0] copy
+// is), so $ must stay single: "$$" would be looked up on disk literally.
+func TestUnitContentLinuxLeavesDollarInExecPath(t *testing.T) {
+	_, content, err := UnitContent("linux", Options{ExecPath: "/opt/a$b/multimux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, `ExecStart="/opt/a$b/multimux" serve`) {
+		t.Fatalf("exec path $ was rewritten:\n%s", content)
+	}
+}
+
+// systemd refuses an executable path holding quotes, a backslash or a control
+// character however it is escaped, so no rendering of these can work. Fail the
+// install rather than write a unit that will not load — or, for a newline, one
+// that parses as extra directives.
+func TestUnitContentLinuxRejectsUnrepresentableExecPath(t *testing.T) {
+	for _, tc := range []struct{ name, path string }{
+		{"newline", "/opt/a\nExecStartPre=/bin/sh/multimux"},
+		{"carriage return", "/opt/a\rb/multimux"},
+		{"tab", "/opt/a\tb/multimux"},
+		{"nul", "/opt/a\x00b/multimux"},
+		{"del", "/opt/a\x7fb/multimux"},
+		{"double quote", `/opt/a"b/multimux`},
+		{"single quote", `/opt/a'b/multimux`},
+		{"backslash", `/opt/a\b/multimux`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, content, err := UnitContent("linux", Options{ExecPath: tc.path})
+			if err == nil {
+				t.Fatalf("want error for exec path %q, got unit:\n%s", tc.path, content)
+			}
+		})
 	}
 }
 
