@@ -242,6 +242,44 @@ func TestPTYAttachEndWithLiveSessionIsNotExit(t *testing.T) {
 	}
 }
 
+// TestPTYDropsPeerThatStopsReading covers a tab that stops reading mid-output
+// — a laptop asleep under a busy session. Once the socket buffers fill, the
+// PTY→WS write blocks; without a write deadline it stays blocked, holding the
+// PTY read and the attach behind it, until the next keepalive ping gives up on
+// the socket (pingInterval, far beyond this test's patience). With one, the
+// write fails after writeWait and the handler tears down.
+func TestPTYDropsPeerThatStopsReading(t *testing.T) {
+	old := writeWait
+	writeWait = 200 * time.Millisecond
+	t.Cleanup(func() { writeWait = old })
+
+	s, st, token := newTmuxTestServer(t)
+	h := s.Handler()
+	returned := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r)
+		close(returned) // the PTY upgrade is this server's only request
+	}))
+	defer ts.Close()
+
+	tool, _ := st.CreateTool("sh", "sh")
+	dir, _ := st.CreateDir("tmp", t.TempDir())
+	w := do(t, s, "POST", "/api/sessions", token, fmt.Sprintf(`{"toolId":%d,"dirId":%d}`, tool.ID, dir.ID))
+	sess := onlySession(t, w)
+
+	conn := dialPTY(t, ts, sess.ID, token)
+	conn.WriteJSON(map[string]any{"type": "resize", "cols": 200, "rows": 60, "active": true})
+	// Endless output, and deliberately never a read: the kernel's buffers are
+	// all that stands between the pump and a blocked write.
+	conn.WriteMessage(websocket.BinaryMessage, []byte("yes MMWS_FLOOD\r"))
+
+	select {
+	case <-returned:
+	case <-time.After(15 * time.Second):
+		t.Fatal("handler still running: a write to a peer that stopped reading never timed out")
+	}
+}
+
 func TestPTYRejectsUnknownSession(t *testing.T) {
 	s, _, am := newTestServer(t, true)
 	token, _ := am.CreateSession("UA")

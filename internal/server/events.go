@@ -70,10 +70,7 @@ func (h *Hub) Broadcast(eventType string, payload any) {
 // writeText sends one text frame under writeWait, so a peer that stops reading
 // cannot wedge this handler in a write that never returns.
 func writeText(conn *websocket.Conn, raw []byte) error {
-	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-		return err
-	}
-	return conn.WriteMessage(websocket.TextMessage, raw)
+	return writeFrame(conn, websocket.TextMessage, raw)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

@@ -31,8 +31,19 @@ const pingInterval = 30 * time.Second
 const pongWait = 75 * time.Second
 
 // writeWait bounds a single frame write. A peer that stops reading fills the
-// socket buffer and would otherwise block the writing goroutine forever.
-const writeWait = 5 * time.Second
+// socket buffer and would otherwise block the writing goroutine forever. A var
+// only so tests need not wait out a real one; production never changes it.
+var writeWait = 5 * time.Second
+
+// writeFrame sends one data frame under writeWait. gorilla applies no deadline
+// to a data write unless one is set, and allows one data writer at a time:
+// each connection's frames must all come from a single goroutine.
+func writeFrame(conn *websocket.Conn, messageType int, data []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		return err
+	}
+	return conn.WriteMessage(messageType, data)
+}
 
 // checkWSOrigin defends against cross-site WebSocket hijacking: a browser can
 // be tricked into opening a WS with the victim's cookie, so cookie-authenticated
@@ -177,9 +188,11 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 	// stops reconnecting. Only a session tmux no longer has earns it. An attach
 	// that failed or ended while the session lives on (a detach, a dead attach
 	// client) just closes, and the tile's reconnect finds the session running.
+	// It writes a data frame, so it is only ever called by the one goroutine
+	// writing at the time: this one until the pump starts, the pump after.
 	sendExitIfGone := func() {
 		if !s.cfg.Tmux.IsAlive(sess.TmuxName) {
-			conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
+			writeText(conn, []byte(`{"type":"exit"}`))
 		}
 	}
 
@@ -190,7 +203,9 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ptyConn.Close()
 
-	// PTY → WS.
+	// PTY → WS. Every write is bounded by writeWait: a peer that stopped
+	// reading would otherwise hold this goroutine in the write, and with it the
+	// PTY read that tmux's attach client is blocked behind.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -198,7 +213,7 @@ func (s *Server) handlePTY(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := ptyConn.Read(buf)
 			if n > 0 {
-				if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+				if werr := writeFrame(conn, websocket.BinaryMessage, buf[:n]); werr != nil {
 					conn.Close()
 					return
 				}
