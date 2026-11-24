@@ -199,45 +199,43 @@ func sessionAbsent(msg string) bool {
 var ErrSessionUnavailable = errors.New("tmux session unavailable")
 
 // CapturePaneText returns the active pane's retained history and current
-// screen as plain text. tmux owns logical boundaries: -J joins only rows tmux
-// marks wrapped, while -S/-E include all retained history and the full screen.
-// Leading and trailing whitespace is stripped: retained history that has not
-// filled yet pads the top with blank lines, and the unused rows below the
-// cursor pad the bottom, neither of which is pane content.
-func (m *Manager) CapturePaneText(name string) ([]byte, error) {
+// screen as plain text, with the pane's width in columns — the width those
+// rows are laid out against. tmux owns logical boundaries: -J joins only rows
+// tmux marks wrapped, while -S/-E include all retained history and the full
+// screen. Leading and trailing whitespace is stripped: retained history that
+// has not filled yet pads the top with blank lines, and the unused rows below
+// the cursor pad the bottom, neither of which is pane content.
+//
+// Both answers come from one tmux invocation, so the width is the one the
+// captured rows had, not one a resize changed in between. display-message runs
+// first and prints exactly one line, so the first newline is an unambiguous
+// boundary however arbitrary the pane's bytes are. The width only refines how
+// the text is displayed: a first line that is not a positive number yields
+// width 0 (unknown) rather than costing the capture.
+func (m *Manager) CapturePaneText(name string) (text []byte, width int, err error) {
+	target := ExactTarget(name)
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("tmux", m.baseArgs(
-		"capture-pane", "-pJ", "-S", "-", "-E", "-", "-t", ExactTarget(name),
-	)...)
+	cmd := exec.Command("tmux", m.baseArgs(chain([][]string{
+		{"display-message", "-p", "-t", target, "#{pane_width}"},
+		{"capture-pane", "-pJ", "-S", "-", "-E", "-", "-t", target},
+	})...)...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if sessionAbsent(msg) {
-			return nil, fmt.Errorf("%w: %s", ErrSessionUnavailable, msg)
+			return nil, 0, fmt.Errorf("%w: %s", ErrSessionUnavailable, msg)
 		}
 		if msg != "" {
-			return nil, fmt.Errorf("tmux capture-pane: %w: %s", err, msg)
+			return nil, 0, fmt.Errorf("tmux capture-pane: %w: %s", err, msg)
 		}
-		return nil, fmt.Errorf("tmux capture-pane: %w", err)
+		return nil, 0, fmt.Errorf("tmux capture-pane: %w", err)
 	}
-	return bytes.TrimSpace(stdout.Bytes()), nil
-}
-
-// PaneWidth returns the active pane's width in columns, the width that
-// CapturePaneText's rows were most recently laid out against.
-func (m *Manager) PaneWidth(name string) (int, error) {
-	out, err := exec.Command("tmux", m.baseArgs(
-		"display-message", "-p", "-t", ExactTarget(name), "#{pane_width}",
-	)...).Output()
-	if err != nil {
-		return 0, fmt.Errorf("tmux display-message: %w", err)
+	first, rest, _ := bytes.Cut(stdout.Bytes(), []byte("\n"))
+	if n, err := strconv.Atoi(strings.TrimSpace(string(first))); err == nil && n > 0 {
+		width = n
 	}
-	width, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return 0, fmt.Errorf("tmux pane width: %w", err)
-	}
-	return width, nil
+	return bytes.TrimSpace(rest), width, nil
 }
 
 // KillSession destroys the session. A session that is already gone — or a

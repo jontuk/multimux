@@ -53,14 +53,26 @@ export function softBreak(row: string, next: string, cols: number): Join {
 
 // Rows that stay separate keep their exact text. cols null means the width is
 // unknown, which leaves nothing to judge a row against.
+//
+// Only the newest piece is ever trimmed, never the text built so far: trimming
+// that would copy all of it once per joined row, which on a full scrollback is
+// quadratic. The result is the same, because softBreak joins only after a row
+// with visible text, so the trailing whitespace never reaches past that row.
 export function unwrapText(text: string, cols: number | null): string {
   if (cols === null) return text;
   const rows = text.split("\n");
-  let out = rows[0];
+  const parts: string[] = [];
+  let last = rows[0];
   for (let i = 1; i < rows.length; i++) {
     const join = softBreak(rows[i - 1], rows[i], cols);
-    if (join === "none") out += `\n${rows[i]}`;
-    else out = out.trimEnd() + (join === "space" ? " " : "") + rows[i].trimStart();
+    if (join === "none") {
+      parts.push(last, "\n");
+      last = rows[i];
+    } else {
+      parts.push(last.trimEnd(), join === "space" ? " " : "");
+      last = rows[i].trimStart();
+    }
   }
-  return out;
+  parts.push(last);
+  return parts.join("");
 }

@@ -258,7 +258,7 @@ func (s *Server) handleSessionText(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
 		return
 	}
-	text, err := s.cfg.PaneText.CapturePaneText(sess.TmuxName)
+	text, width, err := s.cfg.PaneText.CapturePaneText(sess.TmuxName)
 	if errors.Is(err, tmuxmgr.ErrSessionUnavailable) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is no longer available"})
 		return
@@ -270,8 +270,8 @@ func (s *Server) handleSessionText(w http.ResponseWriter, r *http.Request) {
 	}
 	// The width only refines how the text is displayed, so losing it must not
 	// cost the capture: without the header the browser shows the rows as they are.
-	if width, err := s.cfg.PaneText.PaneWidth(sess.TmuxName); err != nil {
-		slog.Warn("pane width lookup failed", "session_id", sess.ID, "tmux_name", sess.TmuxName, "error", err)
+	if width <= 0 {
+		slog.Warn("pane width unknown", "session_id", sess.ID, "tmux_name", sess.TmuxName)
 	} else {
 		w.Header().Set("X-Pane-Width", strconv.Itoa(width))
 	}
@@ -598,7 +598,7 @@ func (s *Server) handlePutLayout(w http.ResponseWriter, r *http.Request) {
 // maps to an empty list) confirms nothing, so the pass aborts before marking
 // anything dead: one transient tmux failure must not kill live rows.
 func (s *Server) Reconcile() ([]store.Session, error) {
-	sessions, err := s.cfg.Store.ListSessions()
+	sessions, err := s.cfg.Store.ListRunningSessions()
 	if err != nil {
 		return nil, err
 	}
@@ -617,7 +617,7 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 	var newlyDead []store.Session
 	now := time.Now()
 	for _, sess := range sessions {
-		if sess.Status != "running" || alive[sess.TmuxName] {
+		if alive[sess.TmuxName] {
 			continue
 		}
 		// The DB row is inserted before the tmux session exists (the tmux name
@@ -644,7 +644,7 @@ func (s *Server) Reconcile() ([]store.Session, error) {
 // A dir still serving out the wait its last inspection earned (see gitBackoff)
 // is skipped and keeps the state that inspection found.
 func (s *Server) CheckGitInfo() error {
-	sessions, err := s.cfg.Store.ListSessions()
+	sessions, err := s.cfg.Store.ListRunningSessions()
 	if err != nil {
 		return err
 	}
@@ -653,7 +653,7 @@ func (s *Server) CheckGitInfo() error {
 	live := map[string]bool{}
 	s.gitMu.RLock()
 	for _, sess := range sessions {
-		if sess.Status != "running" || live[sess.Dir] {
+		if live[sess.Dir] {
 			continue
 		}
 		live[sess.Dir] = true

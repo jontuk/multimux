@@ -141,11 +141,16 @@ function TileTitle({
 }
 
 export default function GridPage({
+  active = true,
   headerSlot = null,
   confirmTerminate = false,
   hostLabel,
   accentColor,
 }: {
+  // False while another route (Settings) is showing over a grid that stays
+  // mounted: the page is display:none, its header controls are unmounted, and
+  // its window-level shortcuts are off.
+  active?: boolean;
   headerSlot?: HTMLElement | null;
   // Off by default: terminating is one click unless the user opts in.
   confirmTerminate?: boolean;
@@ -183,6 +188,28 @@ export default function GridPage({
   const [servers, setServers] = useState(() => listServers());
   const [paneTextTarget, setPaneTextTarget] = useState<PaneTextTarget | null>(null);
   const [gitAdviceTarget, setGitAdviceTarget] = useState<GitAdviceTarget | null>(null);
+
+  // Leaving for Settings and coming back no longer remounts this page, so what
+  // Settings can change has to be picked up here. The server list lives in
+  // localStorage and nothing announces a change to it; re-reading it also
+  // re-runs the per-server effect below, which refetches each daemon's tools
+  // (no hub event covers those) and sessions. A removed server loses its
+  // events socket and its tiles' terminals, an added one gains them. Tool and
+  // dir lists in the launcher are refetched because the header controls remount
+  // (see the render). Sockets are keyed on URL strings, so servers that did not
+  // change keep theirs. On the way out, a modal left open would come back
+  // with focus nowhere inside it, so it is closed. Coming back focuses nothing,
+  // as a fresh mount did not — and focusing a terminal from here would claim
+  // the shared window size with nobody having touched it.
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (active) setServers(listServers());
+    else {
+      setPaneTextTarget(null);
+      setGitAdviceTarget(null);
+    }
+  }
 
   // Browser-local view filter: the directory (or directories) shown on their
   // own, or null for all of them. Not persisted server-side and never written
@@ -414,13 +441,13 @@ export default function GridPage({
   // Listener only exists while maximized; Escape also reaches the focused
   // terminal (same trade-off as cheep).
   useEffect(() => {
-    if (!maximizedKey) return;
+    if (!maximizedKey || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setMaximizedKey(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [maximizedKey]);
+  }, [maximizedKey, active]);
 
   // Sessions already placed in a tile; each session may only be open once.
   const placed = useMemo(
@@ -494,8 +521,11 @@ export default function GridPage({
   // terminal. Listened for in the capture phase at the window and stopped
   // there, so a focused xterm.js never also sees the keypress (same trick as
   // TerminalTile's Shift+Enter interception, one layer up). Digit0 is read off
-  // `code`: with Alt held, macOS reports `key` as "º".
+  // `code`: with Alt held, macOS reports `key` as "º". Off while the page is
+  // hidden behind Settings: the capture-phase stop would otherwise swallow the
+  // keypress from whatever Settings field has focus.
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (paneTextTarget || gitAdviceTarget) return;
       if (!e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey) return;
@@ -511,7 +541,7 @@ export default function GridPage({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [activeSolo, dirs, gitAdviceTarget, paneTextTarget]);
+  }, [active, activeSolo, dirs, gitAdviceTarget, paneTextTarget]);
 
   // With a dir filter in effect a tile shows iff its session's directory is
   // in the selection, whatever the session's status — an ended session in a
@@ -890,7 +920,10 @@ export default function GridPage({
   };
 
   return (
-    <div className="grid-page">
+    // display:none while inactive, like a tile the dir filter has hidden: out
+    // of the tab order and the accessibility tree, and each terminal sees its
+    // box go and gives up its WebGL context until the box returns.
+    <div className="grid-page" style={active ? undefined : { display: "none" }}>
       {servers.map((s) => (
         <EventsBridge
           key={s.id}
@@ -950,6 +983,7 @@ export default function GridPage({
           servers={servers}
           sessions={mobileSessions}
           toolsByServer={toolsByServer}
+          active={active}
           initialLoading={initialLoading}
           onRefresh={refreshSessions}
           hostLabel={hostLabel}
@@ -957,7 +991,10 @@ export default function GridPage({
         />
       ) : (
         <>
-          {headerSlot ? createPortal(headerControls, headerSlot) : headerControls}
+          {/* The header is outside this page's hidden root, so its controls
+              are unmounted while inactive. Remounting them on return is also
+              what refetches the launcher's tools and dirs after Settings. */}
+          {active && (headerSlot ? createPortal(headerControls, headerSlot) : headerControls)}
           <div
             ref={gridRef}
             className="grid"

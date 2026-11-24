@@ -141,7 +141,15 @@ export default function App() {
   }, [health?.accentColor]);
 
   useEffect(() => {
-    const onHash = () => setRoute(window.location.hash || "#/");
+    const onHash = () => {
+      // The page being left gives up focus while it is still rendered. A grid
+      // hidden behind Settings stays in the document, and display:none alone
+      // does not make every browser take focus off an element that already had
+      // it — a terminal that kept it would go on receiving the keyboard.
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused.closest("#page-root")) focused.blur();
+      setRoute(window.location.hash || "#/");
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -198,6 +206,17 @@ export default function App() {
     void check();
   }, [check]);
 
+  // The grid is expensive to rebuild: unmounting it disposes every xterm,
+  // closes every PTY socket and kills each session's `tmux attach-session`.
+  // So Settings hides a grid that is already up instead of unmounting it.
+  // It is never mounted early to have it warm: only a visit to the grid route
+  // mounts it, a direct landing on Settings leaves it out, and every other
+  // route or startup state drops it as before.
+  const onGrid = route === "#/";
+  const [gridAlive, setGridAlive] = useState(false);
+  const keepGrid = startup.kind === "ready" && (onGrid || (gridAlive && route === "#/settings"));
+  if (keepGrid !== gridAlive) setGridAlive(keepGrid);
+
   if (window.location.pathname === "/trust") return <TrustPage />;
   if (window.location.pathname === "/setup" || health?.setupPending) return <SetupPage />;
   if (startup.kind === "unauthed") return <LoginPage />;
@@ -207,7 +226,7 @@ export default function App() {
 
   // Settings (Task 23), Connect (Task 24) routed here.
   return (
-    <div className={`app${route === "#/" ? " grid-route" : ""}`} style={appStyle}>
+    <div className={`app${onGrid ? " grid-route" : ""}`} style={appStyle}>
       <header
         className={health?.accentColor ? "host-accented" : undefined}
         style={health?.accentColor ? ({ "--host-accent": health.accentColor } as React.CSSProperties) : undefined}
@@ -219,7 +238,7 @@ export default function App() {
         {/* GridPage portals its launcher + shape picker here while the grid route is active. */}
         <div id="header-controls" ref={setHeaderSlot} />
         <nav>
-          <a href="#/" className={route === "#/" ? "active" : ""}>
+          <a href="#/" className={onGrid ? "active" : ""}>
             Grid
           </a>
           <a href="#/settings" aria-label="Settings" className={route === "#/settings" ? "active" : ""}>
@@ -232,8 +251,9 @@ export default function App() {
       </header>
       <UpdateBanner />
       <main id="page-root">
-        {route === "#/" && (
+        {keepGrid && (
           <GridPage
+            active={onGrid}
             headerSlot={headerSlot}
             confirmTerminate={confirmTerminate}
             hostLabel={health?.hostLabel}

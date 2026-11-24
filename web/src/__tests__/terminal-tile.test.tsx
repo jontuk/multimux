@@ -22,6 +22,8 @@ const pasteCalls: string[] = [];
 const focusSpy = vi.fn();
 const terminalOptions: Array<{ fontSize?: number }> = [];
 type FakeTerminalInstance = {
+  cols: number;
+  rows: number;
   element: HTMLElement | undefined;
   modes: { mouseTrackingMode: "none" | "any" };
 };
@@ -100,12 +102,15 @@ vi.mock("@xterm/addon-clipboard", () => ({ ClipboardAddon: class {} }));
 const webglMocks = vi.hoisted(() => ({
   instances: [] as Array<{ dispose: ReturnType<typeof vi.fn>; loseContext: () => void }>,
   unsupported: false,
+  // Called for every addon the tile tries to create, including failed ones.
+  construct() {},
 }));
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class {
     dispose = vi.fn();
     private lossListener: (() => void) | null = null;
     constructor() {
+      webglMocks.construct();
       if (webglMocks.unsupported) throw new Error("WebGL2 not supported");
       webglMocks.instances.push(this);
     }
@@ -155,7 +160,7 @@ class FakeResizeObserver {
 function resizeFrames(ws: FakeWebSocket) {
   return ws.sent
     .filter((d): d is string => typeof d === "string")
-    .map((d) => JSON.parse(d) as { type: string; active?: boolean })
+    .map((d) => JSON.parse(d) as { type: string; cols?: number; rows?: number; active?: boolean })
     .filter((m) => m.type === "resize");
 }
 
@@ -200,12 +205,42 @@ async function failHandshake() {
   });
 }
 
+// jsdom lays nothing out, so every element measures 0x0 — which is how the
+// tile recognises one the dir filter has hidden. Tiles here get a real box
+// unless a test takes it away with hideTile.
+const tileBox = { width: 800, height: 600 };
+const clientSize = {
+  width: Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!,
+  height: Object.getOwnPropertyDescriptor(Element.prototype, "clientHeight")!,
+};
+
+// What the browser does when the grid sets display:none on a tile, and when it
+// takes it off again: the box goes, or comes back, and the observer reports it.
+function hideTile() {
+  tileBox.width = tileBox.height = 0;
+  act(() => FakeResizeObserver.instances[0].cb());
+}
+function showTile() {
+  tileBox.width = 800;
+  tileBox.height = 600;
+  act(() => FakeResizeObserver.instances[0].cb());
+}
+
 beforeAll(() => {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get: () => tileBox.width });
+  Object.defineProperty(Element.prototype, "clientHeight", { configurable: true, get: () => tileBox.height });
+});
+
+afterAll(() => {
+  Object.defineProperty(Element.prototype, "clientWidth", clientSize.width);
+  Object.defineProperty(Element.prototype, "clientHeight", clientSize.height);
 });
 
 beforeEach(() => {
+  tileBox.width = 800;
+  tileBox.height = 600;
   FakeWebSocket.instances = [];
   FakeResizeObserver.instances = [];
   linkProviders.length = 0;
@@ -222,6 +257,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   // reflowGate is module-level state shared across tiles/tests; never let a
   // failed assertion mid-test leave the gate held for the next test.
@@ -492,6 +528,7 @@ test("terminal-generated data is forwarded without claiming size ownership", () 
 });
 
 test("deliberate desktop gestures claim size ownership", () => {
+  vi.useFakeTimers();
   const { container } = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
   const ws = FakeWebSocket.instances[0];
   ws.readyState = FakeWebSocket.OPEN;
@@ -507,7 +544,142 @@ test("deliberate desktop gestures claim size ownership", () => {
     ws.sent.length = 0;
     act(() => term.dispatchEvent(event));
     expect(resizeFrames(ws)).toEqual([expect.objectContaining({ active: true })]);
+    vi.advanceTimersByTime(1000); // past the repeat interval: each is a first gesture
   }
+});
+
+function openTile() {
+  const view = render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  ws.sent.length = 0;
+  return { ws, term: view.container.querySelector(".terminal-tile > div")! };
+}
+
+const keydown = () => new KeyboardEvent("keydown", { bubbles: true, key: "a" });
+const wheel = () => new WheelEvent("wheel", { bubbles: true, deltaY: 1 });
+const activeResizes = (ws: FakeWebSocket) => resizeFrames(ws).filter((m) => m.active);
+
+// A held key or a trackpad scroll is dozens of events a second, and every claim
+// costs the daemon a frame to decode and two locks. One claim says it all until
+// something changes.
+test("repeated gestures at an unchanged size send one claim per interval", () => {
+  vi.useFakeTimers();
+  const { ws, term } = openTile();
+
+  act(() => {
+    for (let i = 0; i < 50; i++) {
+      term.dispatchEvent(i % 2 ? keydown() : wheel());
+      vi.advanceTimersByTime(10);
+    }
+  });
+  expect(activeResizes(ws)).toHaveLength(1);
+
+  // The daemon's presence record is renewed by the claims that do go out, so
+  // sustained interaction must keep producing them.
+  act(() => {
+    vi.advanceTimersByTime(500); // 1000ms since the claim
+    term.dispatchEvent(keydown());
+    term.dispatchEvent(keydown());
+  });
+  expect(activeResizes(ws)).toHaveLength(2);
+});
+
+test("input is never held back with its claim", () => {
+  vi.useFakeTimers();
+  const ref = createRef<TerminalHandle>();
+  render(<TerminalTile ref={ref} server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  ws.sent.length = 0;
+
+  expect(ref.current?.input("a")).toBe(true);
+  expect(ref.current?.input("b")).toBe(true);
+  expect(sentFrameTypes(ws)).toEqual(["active-resize", "binary", "binary"]);
+});
+
+test("a gesture at a new size claims at once", () => {
+  vi.useFakeTimers();
+  const { ws, term } = openTile();
+
+  act(() => term.dispatchEvent(keydown()));
+  terminalInstances[0].cols = 100;
+  act(() => term.dispatchEvent(keydown()));
+  terminalInstances[0].rows = 30;
+  act(() => term.dispatchEvent(keydown()));
+  act(() => term.dispatchEvent(keydown()));
+
+  expect(activeResizes(ws)).toEqual([
+    expect.objectContaining({ cols: 80, rows: 24 }),
+    expect.objectContaining({ cols: 100, rows: 24 }),
+    expect.objectContaining({ cols: 100, rows: 30 }),
+  ]);
+});
+
+test("a reflow, a blur, or the tab losing focus makes the next gesture claim at once", () => {
+  vi.useFakeTimers();
+  const { ws, term } = openTile();
+  act(() => term.dispatchEvent(keydown()));
+
+  const interruptions = [
+    () => FakeResizeObserver.instances[0].cb(), // box changed, even if the dims did not
+    () => term.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+    () => window.dispatchEvent(new Event("blur")),
+    () => window.dispatchEvent(new Event("focus")),
+    () => document.dispatchEvent(new Event("visibilitychange")),
+  ];
+  interruptions.forEach((interrupt, i) => {
+    act(() => {
+      interrupt();
+      term.dispatchEvent(keydown());
+      term.dispatchEvent(keydown());
+    });
+    expect(activeResizes(ws)).toHaveLength(i + 2);
+  });
+});
+
+// The daemon's record of the claim died with the socket that carried it.
+test("the first gesture on a reconnected socket claims at once", async () => {
+  vi.useFakeTimers();
+  mockSessions(async () => new Response(JSON.stringify([session("running")])));
+  const { ws, term } = openTile();
+  act(() => term.dispatchEvent(keydown()));
+  expect(activeResizes(ws)).toHaveLength(1);
+
+  ws.readyState = 3;
+  await act(async () => {
+    ws.onclose?.();
+    await vi.advanceTimersByTimeAsync(500); // the first reconnect backoff
+  });
+  expect(FakeWebSocket.instances).toHaveLength(2);
+  const next = FakeWebSocket.instances[1];
+  // Still connecting: nothing can be sent, and nothing may be counted as sent.
+  act(() => term.dispatchEvent(keydown()));
+  next.readyState = FakeWebSocket.OPEN;
+  act(() => next.onopen?.());
+  expect(activeResizes(next)).toHaveLength(0);
+
+  act(() => {
+    term.dispatchEvent(keydown());
+    term.dispatchEvent(keydown());
+  });
+  expect(activeResizes(next)).toHaveLength(1);
+  expect(activeResizes(ws)).toHaveLength(1);
+});
+
+// Date.now can step backwards (NTP, a manual change). That must not read as
+// "claimed in the future" and silence this tile until the clock catches up.
+test("a clock stepped backwards does not suppress claims", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-01-01T12:00:00Z"));
+  const { ws, term } = openTile();
+  act(() => term.dispatchEvent(keydown()));
+
+  vi.setSystemTime(new Date("2026-01-01T11:00:00Z"));
+  act(() => term.dispatchEvent(keydown()));
+  expect(activeResizes(ws)).toHaveLength(2);
 });
 
 // A machine waking with the tab frontmost re-fires focus on the element that
@@ -686,7 +858,8 @@ test("registers the wrap-aware link provider on terminal mount", () => {
   expect(linkProviders).toHaveLength(1);
 });
 
-test("renders through WebGL, falling back to the DOM renderer when the context is lost", () => {
+test("renders through WebGL, and asks for a new context when the browser takes its own", () => {
+  vi.useFakeTimers();
   render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
   expect(webglMocks.instances).toHaveLength(1);
   const webgl = webglMocks.instances[0];
@@ -694,9 +867,171 @@ test("renders through WebGL, falling back to the DOM renderer when the context i
   expect(webgl.dispose).not.toHaveBeenCalled();
 
   // Past the browser's context cap, or after a GPU reset: dispose the addon so
-  // xterm renders through the DOM again instead of leaving a blank tile.
+  // xterm renders through the DOM again instead of leaving a blank tile...
   webgl.loseContext();
   expect(webgl.dispose).toHaveBeenCalled();
+  expect(webglMocks.instances).toHaveLength(1);
+
+  // ...and then try again, with a new addon: a disposed one cannot be reused.
+  vi.advanceTimersByTime(1000);
+  expect(webglMocks.instances).toHaveLength(2);
+  expect(loadedAddons).toContain(webglMocks.instances[1]);
+  expect(webglMocks.instances[1].dispose).not.toHaveBeenCalled();
+});
+
+test("a tile that keeps losing its context settles on the DOM renderer", () => {
+  vi.useFakeTimers();
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+
+  // Three contexts lost in quick succession are each replaced...
+  for (let i = 0; i < 3; i++) {
+    expect(webglMocks.instances).toHaveLength(i + 1);
+    webglMocks.instances[i].loseContext();
+    vi.advanceTimersByTime(1000);
+  }
+  // ...but the third loss is the last: no fourth context, however long it waits
+  // and whatever happens to its box.
+  expect(webglMocks.instances).toHaveLength(3);
+  vi.advanceTimersByTime(600_000);
+  hideTile();
+  showTile();
+  expect(webglMocks.instances).toHaveLength(3);
+});
+
+test("a context that lasted does not count against the tile when it is lost", () => {
+  vi.useFakeTimers();
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+
+  // A GPU reset every so often, over a long-lived tile, is always recovered.
+  for (let i = 0; i < 6; i++) {
+    vi.advanceTimersByTime(60_000);
+    webglMocks.instances[i].loseContext();
+    vi.advanceTimersByTime(1000);
+    expect(webglMocks.instances).toHaveLength(i + 2);
+  }
+});
+
+test("a context lost by a hidden tile is not replaced until the tile is shown", () => {
+  vi.useFakeTimers();
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  webglMocks.instances[0].loseContext();
+  hideTile();
+  vi.advanceTimersByTime(1000);
+  expect(webglMocks.instances).toHaveLength(1);
+
+  showTile();
+  expect(webglMocks.instances).toHaveLength(2);
+});
+
+// Browsers cap live WebGL contexts (Chrome at 16). A tile the dir filter has
+// hidden draws nothing, so it gives its context up rather than costing a
+// visible tile one.
+test("a hidden tile releases its WebGL context and takes a new one when shown", () => {
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  expect(webglMocks.instances).toHaveLength(1);
+
+  // The canvas the real addon draws on, so the release can be seen to give the
+  // context itself back rather than leaving it to the garbage collector.
+  const loseContext = vi.fn();
+  const canvas = document.createElement("canvas");
+  canvas.getContext = vi.fn(() => ({
+    getExtension: (name: string) => (name === "WEBGL_lose_context" ? { loseContext } : null),
+  })) as unknown as HTMLCanvasElement["getContext"];
+  terminalInstances[0].element!.append(canvas);
+
+  hideTile();
+  expect(webglMocks.instances[0].dispose).toHaveBeenCalledTimes(1);
+  expect(canvas.getContext).toHaveBeenCalledWith("webgl2");
+  expect(loseContext).toHaveBeenCalledTimes(1);
+  expect(webglMocks.instances).toHaveLength(1);
+
+  // Staying hidden is not a reason to do any of it again.
+  act(() => FakeResizeObserver.instances[0].cb());
+  expect(webglMocks.instances[0].dispose).toHaveBeenCalledTimes(1);
+  expect(webglMocks.instances).toHaveLength(1);
+
+  showTile();
+  expect(webglMocks.instances).toHaveLength(2);
+  expect(loadedAddons).toContain(webglMocks.instances[1]);
+  expect(webglMocks.instances[1].dispose).not.toHaveBeenCalled();
+
+  // Nor is staying visible.
+  act(() => FakeResizeObserver.instances[0].cb());
+  expect(webglMocks.instances).toHaveLength(2);
+});
+
+test("a tile mounted hidden takes no WebGL context until it is shown", () => {
+  tileBox.width = tileBox.height = 0;
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  expect(webglMocks.instances).toHaveLength(0);
+  expect(FakeWebSocket.instances).toHaveLength(1);
+
+  showTile();
+  expect(webglMocks.instances).toHaveLength(1);
+});
+
+test("hiding and showing a tile keeps its terminal, its socket, and its output", () => {
+  const writeSpy = vi.fn();
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  const closeSpy = vi.spyOn(ws, "close");
+  (terminalInstances[0] as unknown as { write: typeof writeSpy }).write = writeSpy;
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+
+  hideTile();
+  // Output for a hidden tile still reaches xterm's buffer.
+  act(() => ws.onmessage?.({ data: new Uint8Array([104, 105]).buffer }));
+  expect(writeSpy).toHaveBeenCalledTimes(1);
+  showTile();
+
+  expect(terminalInstances).toHaveLength(1);
+  expect(FakeWebSocket.instances).toHaveLength(1);
+  expect(closeSpy).not.toHaveBeenCalled();
+});
+
+// Every resize frame reaches the Arbiter, so swapping renderers must not add
+// one: the only frames across a hide and a show are the passive reflows the
+// ResizeObserver already sent before the renderer was involved.
+test("swapping renderers sends no resize of its own", () => {
+  vi.useFakeTimers();
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  const ws = FakeWebSocket.instances[0];
+  ws.readyState = FakeWebSocket.OPEN;
+  act(() => ws.onopen?.());
+  expect(sentFrameTypes(ws)).toEqual(["resize"]);
+
+  // One observation each way, one passive frame each: what a tile with no
+  // renderer to swap sends too (see the splitter-drag test above).
+  hideTile();
+  expect(sentFrameTypes(ws)).toEqual(["resize", "resize"]);
+  showTile();
+  expect(sentFrameTypes(ws)).toEqual(["resize", "resize", "resize"]);
+  expect(webglMocks.instances).toHaveLength(2);
+
+  // A context lost and re-acquired with no observation at all sends nothing.
+  webglMocks.instances[1].loseContext();
+  vi.advanceTimersByTime(1000);
+  expect(webglMocks.instances).toHaveLength(3);
+  expect(sentFrameTypes(ws)).toEqual(["resize", "resize", "resize"]);
+});
+
+test("the renderer is released even while a splitter drag holds reflows", () => {
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  beginReflowHold();
+  hideTile();
+  expect(webglMocks.instances[0].dispose).toHaveBeenCalledTimes(1);
+});
+
+test("a browser without WebGL2 stops asking for it", () => {
+  webglMocks.unsupported = true;
+  const construct = vi.spyOn(webglMocks, "construct");
+  render(<TerminalTile server={server} sessionId={7} onClose={() => {}} />);
+  for (let i = 0; i < 5; i++) {
+    hideTile();
+    showTile();
+  }
+  expect(construct).toHaveBeenCalledTimes(3);
 });
 
 test("a browser without WebGL2 still gets a working terminal", () => {

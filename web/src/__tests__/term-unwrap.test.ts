@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { softBreak, unwrapText } from "../term/unwrap";
 
 const COLS = 60;
@@ -61,6 +61,48 @@ describe("unwrapText", () => {
   it("glues a single token the application had to break", () => {
     const start = `  https://example.com/${"a".repeat(36)}`;
     expect(unwrapText(`${start}\n  bbbb`, COLS)).toBe(`${start}bbbb`);
+  });
+
+  it("keeps blank and padded rows above a joined row exactly", () => {
+    const text = "short   \n   \n\nThey also never get marked stale. Any tick clears the \t \nresubscribed flag.  ";
+    expect(unwrapText(text, COLS)).toBe(
+      "short   \n   \n\nThey also never get marked stale. Any tick clears the resubscribed flag.  ",
+    );
+  });
+
+  it("joins a run of wrapped rows after an unjoined one", () => {
+    const text = [
+      "Heading   ",
+      "  They also never get marked stale. Any tick clears the ",
+      "  resubscribed flag in watchdog.py, and SKEW looks to tick ",
+      `  https://example.com/${"a".repeat(36)}`,
+      "  bbbb  ",
+      "",
+    ].join("\n");
+    expect(unwrapText(text, COLS)).toBe(
+      `Heading   \n  They also never get marked stale. Any tick clears the resubscribed flag in watchdog.py, and SKEW looks to tick https://example.com/${"a".repeat(36)}bbbb  \n`,
+    );
+  });
+
+  // Counts work instead of time: trimming the text built so far, once per
+  // joined row, would pass trimEnd about a thousand times the input's length.
+  it("never trims more than the rows themselves", () => {
+    const rows = Array.from({ length: 4000 }, (_, i) =>
+      i % 3 === 2 ? "resubscribed flag." : "They also never get marked stale. Any tick clears the ",
+    );
+    const text = rows.join("\n");
+    const trimEnd = String.prototype.trimEnd;
+    let trimmed = 0;
+    const spy = vi.spyOn(String.prototype, "trimEnd").mockImplementation(function (this: string) {
+      trimmed += this.length;
+      return trimEnd.call(this);
+    });
+    try {
+      unwrapText(text, COLS);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(trimmed).toBeLessThan(text.length * 4);
   });
 
   it("returns the text untouched when the pane width is unknown", () => {

@@ -20,9 +20,10 @@ import (
 	"github.com/jontuk/multimux/internal/tmuxmgr"
 )
 
+// PaneTextCapturer reads a pane's text and its width in columns; width 0
+// means the width is unknown.
 type PaneTextCapturer interface {
-	CapturePaneText(name string) ([]byte, error)
-	PaneWidth(name string) (int, error)
+	CapturePaneText(name string) (text []byte, width int, err error)
 }
 
 type Config struct {
@@ -272,20 +273,31 @@ func (s *Server) authGate(next http.Handler) http.Handler {
 	})
 }
 
-// setupGate 403s everything except healthz, setup ceremonies, and static
-// assets while no passkey is registered yet. Under NoAuth there will never be
-// a passkey, so the gate would otherwise 403 the whole API forever.
+// setupGate 403s everything except healthz, the login and setup ceremonies,
+// and static assets while no passkey is registered yet. Under NoAuth there
+// will never be a passkey, so the gate would otherwise 403 the whole API
+// forever.
+//
+// An unprotected path passes whatever the answer is, so it is let through
+// before the question is asked: the store has a single connection, and a page
+// load's worth of asset requests should not each queue on it. The answer is
+// read fresh for every protected request, never cached — a passkey can be
+// added or removed by another process writing the same database.
 func (s *Server) setupGate(next http.Handler) http.Handler {
 	if s.cfg.NoAuth {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isProtected(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		pending, err := s.cfg.Auth.SetupPending()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 			return
 		}
-		if pending && isProtected(r.URL.Path) && !strings.HasPrefix(r.URL.Path, "/api/auth/setup/") {
+		if pending {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "setup pending"})
 			return
 		}

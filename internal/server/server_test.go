@@ -119,6 +119,174 @@ func TestSetupGateBlocksAPI(t *testing.T) {
 	}
 }
 
+// setupGateCases pins exactly which paths the setup gate guards. The gate
+// sees the raw request path, before the mux cleans or matches it.
+var setupGateCases = []struct {
+	path      string
+	protected bool
+}{
+	{"/", false},
+	{"/settings", false},
+	{"/assets/app.js", false},
+	{"/icon.svg", false},
+	{"/manifest.webmanifest", false},
+	{"/healthz", false},
+	{"/ca.crt", false},
+	{"/ca/info", false},
+	{"/api", false}, // no trailing slash: not under /api/, falls to static
+	{"/ws", false},
+	{"/API/tools", false}, // the mux is case-sensitive too: this is a static path
+	{"//api/tools", false},
+	{"/api/auth/setup/begin", false},
+	{"/api/auth/setup/finish", false},
+	{"/api/auth/setup/", false},
+	{"/api/auth/setup/../tools", false}, // the mux redirects it to /api/tools, which is gated
+	{"/api/auth/login/begin", false},
+	{"/api/auth/login/finish", false},
+	{"/api/", true},
+	{"/api/auth/setup", true},
+	{"/api/auth/setupx/begin", true},
+	{"/api/auth/login", true},
+	{"/api/auth/me", true},
+	{"/api/auth/token", true},
+	{"/api/auth/register/begin", true},
+	{"/api/auth/credentials", true},
+	{"/api/tools", true},
+	{"/api/sessions", true},
+	{"/api/sessions/1/text", true},
+	{"/api/settings", true},
+	{"/api/layout", true},
+	{"/api/nope", true},
+	{"/ws/", true},
+	{"/ws/events", true},
+	{"/ws/pty/1", true},
+}
+
+// gateResult runs one request through setupGate alone and reports whether it
+// reached the next handler, plus what the gate itself answered if not.
+func gateResult(s *Server, method, path string) (passed bool, code int, body string) {
+	h := s.setupGate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		passed = true
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+	return passed, w.Code, strings.TrimSpace(w.Body.String())
+}
+
+func TestSetupGateTable(t *testing.T) {
+	pendingSrv, _, _ := newTestServer(t, false)
+	readySrv, _, _ := newTestServer(t, true)
+	for _, tc := range setupGateCases {
+		if got := isProtected(tc.path); got != tc.protected {
+			t.Errorf("isProtected(%q) = %v, want %v", tc.path, got, tc.protected)
+		}
+		for _, method := range []string{"GET", "POST", "DELETE"} {
+			// Setup pending: protected paths are refused, everything else passes.
+			passed, code, body := gateResult(pendingSrv, method, tc.path)
+			if tc.protected {
+				if passed || code != http.StatusForbidden || body != `{"error":"setup pending"}` {
+					t.Errorf("pending %s %s: passed=%v %d %s; want 403 setup pending", method, tc.path, passed, code, body)
+				}
+			} else if !passed {
+				t.Errorf("pending %s %s: blocked with %d %s; want it passed through", method, tc.path, code, body)
+			}
+			// Set up: the gate refuses nothing.
+			if passed, code, body := gateResult(readySrv, method, tc.path); !passed {
+				t.Errorf("set up %s %s: blocked with %d %s; want it passed through", method, tc.path, code, body)
+			}
+		}
+	}
+}
+
+// The same table through the whole middleware stack: while setup is pending a
+// protected path answers 403 whether or not the caller holds a session token,
+// and no unprotected path does.
+func TestSetupGateTableThroughHandler(t *testing.T) {
+	s, _, am := newTestServer(t, false)
+	token, _ := am.CreateSession("UA")
+	for _, tc := range setupGateCases {
+		for _, tok := range []string{"", token} {
+			w := do(t, s, "GET", tc.path, tok)
+			blocked := w.Code == http.StatusForbidden && strings.Contains(w.Body.String(), "setup pending")
+			if blocked != tc.protected {
+				t.Errorf("pending GET %s (token=%v) = %d %s; want blocked=%v",
+					tc.path, tok != "", w.Code, strings.TrimSpace(w.Body.String()), tc.protected)
+			}
+		}
+	}
+	ready, _, _ := newTestServer(t, true)
+	for _, tc := range setupGateCases {
+		if w := do(t, ready, "GET", tc.path, ""); strings.Contains(w.Body.String(), "setup pending") {
+			t.Errorf("set up GET %s = %d %s; the gate must not answer", tc.path, w.Code, w.Body.String())
+		} else if tc.protected && w.Code != http.StatusUnauthorized {
+			t.Errorf("set up GET %s without a token = %d, want 401", tc.path, w.Code)
+		}
+	}
+}
+
+// The gate reads the answer afresh for every protected request: it follows a
+// passkey being added and removed again, including by another handle on the
+// same database (the CLI is a separate process).
+func TestSetupGateFollowsCredentialChanges(t *testing.T) {
+	cfg, _, _ := newTestServerCfg(t, false)
+	dbPath := filepath.Join(t.TempDir(), "shared.db")
+	var handles [2]*store.Store
+	for i := range handles {
+		st, err := store.Open(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		handles[i] = st
+	}
+	am, err := auth.New(handles[0], "localhost", []string{"https://localhost:8686"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Store, cfg.Auth = handles[0], am
+	s := New(cfg)
+	other := handles[1]
+	blocked := func() bool {
+		passed, _, _ := gateResult(s, "GET", "/api/tools")
+		return !passed
+	}
+	if !blocked() {
+		t.Fatal("no passkey: /api/tools passed the gate")
+	}
+	now := time.Now().UTC()
+	if err := other.AddCredential(store.Credential{ID: "c1", Name: "k", Data: []byte("{}"), CreatedAt: now, LastUsedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if blocked() {
+		t.Fatal("passkey added by another process: /api/tools still blocked")
+	}
+	if err := other.DeleteCredential("c1"); err != nil {
+		t.Fatal(err)
+	}
+	if !blocked() {
+		t.Fatal("passkey removed by another process: /api/tools still passes the gate")
+	}
+}
+
+// With the store unusable the gate cannot tell whether setup is pending, so
+// it fails closed on every protected path. Unprotected paths pass in either
+// state, so they are served without asking.
+func TestSetupGateFailsClosedWhenStoreIsUnavailable(t *testing.T) {
+	s, st, _ := newTestServer(t, true)
+	st.Close()
+	for _, tc := range setupGateCases {
+		passed, code, body := gateResult(s, "GET", tc.path)
+		if tc.protected {
+			if passed || code != http.StatusInternalServerError || body != `{"error":"internal"}` {
+				t.Errorf("GET %s: passed=%v %d %s; want 500 internal", tc.path, passed, code, body)
+			}
+		} else if !passed {
+			t.Errorf("GET %s: blocked with %d %s; want it passed through", tc.path, code, body)
+		}
+	}
+}
+
 func TestStaticSPAFallback(t *testing.T) {
 	s, _, _ := newTestServer(t, true)
 	for _, path := range []string{"/", "/settings", "/assets/app.js"} {

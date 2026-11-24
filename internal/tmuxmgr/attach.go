@@ -23,7 +23,14 @@ type tmuxPTY struct {
 	cmd  *exec.Cmd
 	mgr  *Manager
 	name string
+	// cols, rows are the size last set on ptmx, 0 until the first Resize.
+	// Nothing but Resize sizes this PTY, so they cannot go stale. Unguarded:
+	// Resize is only ever called from the connection's own read loop.
+	cols, rows uint16
 }
+
+// setsize is pty.Setsize; overridden in tests.
+var setsize = pty.Setsize
 
 func (t *tmuxPTY) Read(p []byte) (int, error)  { return t.ptmx.Read(p) }
 func (t *tmuxPTY) Write(p []byte) (int, error) { return t.ptmx.Write(p) }
@@ -38,12 +45,20 @@ func (t *tmuxPTY) Close() error {
 }
 
 func (t *tmuxPTY) Resize(cols, rows uint16, resizeWindow bool) error {
-	if err := pty.Setsize(t.ptmx, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
-		return err
+	// A follow-input tile repeats its size with every claim of the window (see
+	// Arbiter), so most calls bring the dims the PTY already has.
+	if cols != t.cols || rows != t.rows {
+		if err := setsize(t.ptmx, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+			return err
+		}
+		t.cols, t.rows = cols, rows
 	}
 	if !resizeWindow {
 		return nil
 	}
+	// Never skipped for unchanged dims: the window is shared, and tmux, another
+	// connection, or the user's own tmux client can have resized it since. The
+	// owner's ordinary resizes are what put it back.
 	return t.mgr.run("resize-window", "-t", ExactTarget(t.name),
 		"-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)))
 }

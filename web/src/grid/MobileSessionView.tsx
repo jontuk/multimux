@@ -28,11 +28,14 @@ export default function MobileSessionView({
   servers,
   sessions,
   toolsByServer,
+  active = true,
   initialLoading,
   onRefresh,
   hostLabel,
   accentColor,
 }: {
+  // False while the grid page is mounted but hidden behind Settings.
+  active?: boolean;
   servers: Server[];
   sessions: MobileSession[];
   toolsByServer: Record<string, Tool[]>;
@@ -53,6 +56,18 @@ export default function MobileSessionView({
   const terminalRef = useRef<TerminalHandle | null>(null);
   const newSessionRef = useRef<HTMLButtonElement>(null);
   const restoreNewSessionFocus = useRef(false);
+
+  // Hidden behind Settings, nothing modal stays open: the creator listens for
+  // Escape on the window, and a dialog would come back with focus outside it.
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) {
+      setCreatorOpen(false);
+      setPaneTextTarget(null);
+      setGitAdviceTarget(null);
+    }
+  }
 
   useEffect(() => {
     const pendingIndex = pendingSelectionKey ? sessions.findIndex((item) => item.key === pendingSelectionKey) : -1;

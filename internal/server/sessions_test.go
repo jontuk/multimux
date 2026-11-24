@@ -20,20 +20,15 @@ import (
 )
 
 type stubPaneTextCapturer struct {
-	text     []byte
-	err      error
-	name     string
-	width    int
-	widthErr error
+	text  []byte
+	err   error
+	name  string
+	width int
 }
 
-func (s *stubPaneTextCapturer) PaneWidth(string) (int, error) {
-	return s.width, s.widthErr
-}
-
-func (s *stubPaneTextCapturer) CapturePaneText(name string) ([]byte, error) {
+func (s *stubPaneTextCapturer) CapturePaneText(name string) ([]byte, int, error) {
 	s.name = name
-	return append([]byte(nil), s.text...), s.err
+	return append([]byte(nil), s.text...), s.width, s.err
 }
 
 func newPaneTextTestServer(t *testing.T, text []byte, captureErr error) (*Server, *store.Store, *stubPaneTextCapturer, string) {
@@ -103,7 +98,7 @@ func TestSessionTextReportsPaneWidth(t *testing.T) {
 
 func TestSessionTextSurvivesUnknownPaneWidth(t *testing.T) {
 	s, st, capture, token := newPaneTextTestServer(t, []byte("alpha"), nil)
-	capture.widthErr = errors.New("tmux hiccup")
+	capture.width = 0
 	sess := runningSession(t, st)
 	w := do(t, s, "GET", fmt.Sprintf("/api/sessions/%d/text", sess.ID), token)
 	if w.Code != http.StatusOK || w.Body.String() != "alpha" {
@@ -481,6 +476,34 @@ func TestReconcileMarksDead(t *testing.T) {
 	if !strings.Contains(logged, `"msg":"session died"`) ||
 		!strings.Contains(logged, fmt.Sprintf(`"session_id":%d`, sess.ID)) {
 		t.Fatalf("reconciled death not logged: %s", logged)
+	}
+}
+
+// Reconcile acts on running rows only: a row already dead is not declared
+// dead a second time, however long it waits to be dismissed.
+func TestReconcileLeavesDeadRowsAlone(t *testing.T) {
+	s, st, _ := newTmuxTestServer(t)
+	s.reconcileGrace = 0
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	already, _ := st.CreateSession(tool.ID, "/tmp")
+	if err := st.SetSessionStatus(already.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	gone, _ := st.CreateSession(tool.ID, "/tmp")
+	dead, err := s.Reconcile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dead) != 1 || dead[0].ID != gone.ID || dead[0].Status != "dead" {
+		t.Fatalf("dead = %+v, want only session %d", dead, gone.ID)
+	}
+	if dead, err = s.Reconcile(); err != nil || len(dead) != 0 {
+		t.Fatalf("second pass = %+v, %v; want nothing newly dead", dead, err)
+	}
+	for _, id := range []int64{already.ID, gone.ID} {
+		if got, err := st.GetSession(id); err != nil || got.Status != "dead" {
+			t.Fatalf("session %d = %+v, %v; want a dead row still present", id, got, err)
+		}
 	}
 }
 

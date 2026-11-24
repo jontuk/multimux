@@ -26,60 +26,57 @@ func fakeCaptureTmux(t *testing.T, script string) (*Manager, string) {
 }
 
 func TestCapturePaneTextUsesExactJoinedHistoryCapture(t *testing.T) {
-	m, logPath := fakeCaptureTmux(t, "printf 'alpha β\\n'\nprintf 'ignored warning\\n' >&2\n")
-	got, err := m.CapturePaneText("mm-7")
+	m, logPath := fakeCaptureTmux(t, "printf '132\\nalpha β\\n'\nprintf 'ignored warning\\n' >&2\n")
+	got, width, err := m.CapturePaneText("mm-7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "alpha β" {
-		t.Fatalf("CapturePaneText = %q", got)
+	if string(got) != "alpha β" || width != 132 {
+		t.Fatalf("CapturePaneText = %q, width %d", got, width)
 	}
 	args, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "-u\n-L\nprivate-socket\ncapture-pane\n-pJ\n-S\n-\n-E\n-\n-t\n=mm-7:\n"
+	// One invocation: the width line first, then the capture.
+	want := "-u\n-L\nprivate-socket\ndisplay-message\n-p\n-t\n=mm-7:\n#{pane_width}\n;\n" +
+		"capture-pane\n-pJ\n-S\n-\n-E\n-\n-t\n=mm-7:\n"
 	if string(args) != want {
 		t.Fatalf("tmux args = %q, want %q", args, want)
 	}
 }
 
-func TestPaneWidthAsksTmuxForExactTarget(t *testing.T) {
-	m, logPath := fakeCaptureTmux(t, "printf '132\\n'\n")
-	got, err := m.PaneWidth("mm-7")
+// Only the first line is the width: pane content that itself looks like a
+// width line, or starts with blank rows, must come through as content.
+func TestCapturePaneTextSplitsWidthFromArbitraryContent(t *testing.T) {
+	m, _ := fakeCaptureTmux(t, "printf '80\\n\\n\\n132\\n  indented\\n'\n")
+	got, width, err := m.CapturePaneText("mm-7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 132 {
-		t.Fatalf("PaneWidth = %d, want 132", got)
-	}
-	args, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "-u\n-L\nprivate-socket\ndisplay-message\n-p\n-t\n=mm-7:\n#{pane_width}\n"
-	if string(args) != want {
-		t.Fatalf("tmux args = %q, want %q", args, want)
+	if string(got) != "132\n  indented" || width != 80 {
+		t.Fatalf("CapturePaneText = %q, width %d", got, width)
 	}
 }
 
-func TestPaneWidthRejectsNonNumericOutput(t *testing.T) {
-	m, _ := fakeCaptureTmux(t, "printf 'wide\\n'\n")
-	if _, err := m.PaneWidth("mm-7"); err == nil {
-		t.Fatal("PaneWidth accepted non-numeric output")
-	}
-}
-
-func TestPaneWidthReportsTmuxFailure(t *testing.T) {
-	m, _ := fakeCaptureTmux(t, "exit 1\n")
-	if _, err := m.PaneWidth("mm-7"); err == nil {
-		t.Fatal("PaneWidth swallowed a tmux failure")
+func TestCapturePaneTextSurvivesUnknownWidth(t *testing.T) {
+	for _, first := range []string{"", "wide", "0", "-4"} {
+		t.Run(first, func(t *testing.T) {
+			m, _ := fakeCaptureTmux(t, "printf -- '"+first+"\\nalpha\\n'\n")
+			got, width, err := m.CapturePaneText("mm-7")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "alpha" || width != 0 {
+				t.Fatalf("CapturePaneText = %q, width %d; want the text with width 0", got, width)
+			}
+		})
 	}
 }
 
 func TestCapturePaneTextTrimsSurroundingBlankLines(t *testing.T) {
-	m, _ := fakeCaptureTmux(t, "printf '\n \nalpha\n\nbeta\n \n\n'\n")
-	got, err := m.CapturePaneText("mm-2")
+	m, _ := fakeCaptureTmux(t, "printf '80\n\n \nalpha\n\nbeta\n \n\n'\n")
+	got, _, err := m.CapturePaneText("mm-2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +86,12 @@ func TestCapturePaneTextTrimsSurroundingBlankLines(t *testing.T) {
 }
 
 func TestCapturePaneTextAllowsEmptyOutput(t *testing.T) {
-	m, _ := fakeCaptureTmux(t, "exit 0\n")
-	got, err := m.CapturePaneText("mm-1")
-	if err != nil || len(got) != 0 {
-		t.Fatalf("CapturePaneText = %q, %v; want empty success", got, err)
+	for _, script := range []string{"exit 0\n", "printf '80\\n'\n"} {
+		m, _ := fakeCaptureTmux(t, script)
+		got, _, err := m.CapturePaneText("mm-1")
+		if err != nil || len(got) != 0 {
+			t.Fatalf("CapturePaneText = %q, %v; want empty success", got, err)
+		}
 	}
 }
 
@@ -101,7 +100,7 @@ func TestCapturePaneTextClassifiesMissingSessionAndServer(t *testing.T) {
 		t.Run(stderr, func(t *testing.T) {
 			script := fmt.Sprintf("printf '%%s\\n' %q >&2\nexit 1\n", stderr)
 			m, _ := fakeCaptureTmux(t, script)
-			_, err := m.CapturePaneText("mm-1")
+			_, _, err := m.CapturePaneText("mm-1")
 			if !errors.Is(err, ErrSessionUnavailable) {
 				t.Fatalf("error = %v, want ErrSessionUnavailable", err)
 			}
@@ -111,7 +110,7 @@ func TestCapturePaneTextClassifiesMissingSessionAndServer(t *testing.T) {
 
 func TestCapturePaneTextFailureDoesNotExposeStdout(t *testing.T) {
 	m, _ := fakeCaptureTmux(t, "printf 'pane-secret'\nprintf 'permission denied' >&2\nexit 2\n")
-	_, err := m.CapturePaneText("mm-1")
+	_, _, err := m.CapturePaneText("mm-1")
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("error = %v", err)
 	}
@@ -124,13 +123,13 @@ func waitForCapture(t *testing.T, m *Manager, name, want string) string {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		got, err := m.CapturePaneText(name)
+		got, _, err := m.CapturePaneText(name)
 		if err == nil && strings.Contains(string(got), want) {
 			return string(got)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	got, err := m.CapturePaneText(name)
+	got, _, err := m.CapturePaneText(name)
 	t.Fatalf("capture never contained %q: %q, %v", want, got, err)
 	return ""
 }
@@ -163,8 +162,32 @@ func TestCapturePaneTextTargetsExactSession(t *testing.T) {
 	if err := m.KillSession(m.SessionName(4)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CapturePaneText(m.SessionName(4)); !errors.Is(err, ErrSessionUnavailable) {
+	if _, _, err := m.CapturePaneText(m.SessionName(4)); !errors.Is(err, ErrSessionUnavailable) {
 		t.Fatalf("capture prefix-matched mm-42: %v", err)
+	}
+}
+
+// Against real tmux: the chained invocation reports the width tmux itself
+// gives for the pane, and a pane whose own first row is a number keeps it.
+func TestCapturePaneTextReportsRealPaneWidth(t *testing.T) {
+	m := testManager(t)
+	name := m.SessionName(22)
+	if err := m.CreateSession(name, t.TempDir(), "printf '999\\nafter\\n'; sleep 60"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.run("resize-window", "-t", ExactTarget(name), "-x", "97", "-y", "20"); err != nil {
+		t.Fatal(err)
+	}
+	waitForCapture(t, m, name, "after")
+	text, width, err := m.CapturePaneText(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if width != 97 {
+		t.Fatalf("width = %d, want 97", width)
+	}
+	if string(text) != "999\nafter" {
+		t.Fatalf("text = %q, want the pane's own numeric first row kept", text)
 	}
 }
 

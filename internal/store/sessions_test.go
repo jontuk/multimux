@@ -113,3 +113,46 @@ func TestSessionLabelSurvivesReopen(t *testing.T) {
 		t.Fatalf("label after reopen = %q, want kept", got.Label)
 	}
 }
+
+func TestListRunningSessionsReturnsOnlyRunningRows(t *testing.T) {
+	s := openTestStore(t)
+	tool, _ := s.CreateTool("zsh", "zsh")
+	if list, err := s.ListRunningSessions(); err != nil || len(list) != 0 {
+		t.Fatalf("empty table = %+v, %v", list, err)
+	}
+	var ids []int64
+	for range 4 {
+		sess, err := s.CreateSession(tool.ID, "/tmp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, sess.ID)
+	}
+	if err := s.SetSessionLabel(ids[2], "kept"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{ids[0], ids[3]} {
+		if err := s.SetSessionStatus(id, "dead"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	running, err := s.ListRunningSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 2 || running[0].ID != ids[1] || running[1].ID != ids[2] {
+		t.Fatalf("running = %+v, want ids %d then %d", running, ids[1], ids[2])
+	}
+	// Same rows, fully populated, as the unfiltered listing gives.
+	all, _ := s.ListSessions()
+	if len(all) != 4 || running[0] != all[1] || running[1] != all[2] {
+		t.Fatalf("running = %+v, all = %+v", running, all)
+	}
+	// A row that goes back to running is listed again.
+	if err := s.SetSessionStatus(ids[0], "running"); err != nil {
+		t.Fatal(err)
+	}
+	if running, _ = s.ListRunningSessions(); len(running) != 3 || running[0].ID != ids[0] {
+		t.Fatalf("running after revive = %+v", running)
+	}
+}

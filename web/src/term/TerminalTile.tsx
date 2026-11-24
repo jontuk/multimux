@@ -53,6 +53,15 @@ const isMac = ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(navigator.p
 // terminal — the loop stops and the overlay offers dismiss/reconnect.
 type ConnState = "connecting" | "open" | "offline" | "exited" | "missing" | "auth";
 
+// Gestures arrive far faster than the daemon needs to hear of them: a key held
+// down or a trackpad scroll would otherwise send a claim per event. Repeats of a
+// claim the daemon already has are dropped for this long. It must stay far
+// below the Arbiter's presenceWindow (5 minutes, internal/tmuxmgr/arbiter.go),
+// which each claim that does go out renews; a second also bounds how long
+// typing here could leave the window with another client that claimed it in
+// between.
+const CLAIM_REPEAT_MS = 1000;
+
 type SessionsLookup = { kind: "auth" | "retry" } | { kind: "ok"; sessions: Session[] };
 
 // A daemon restart closes every tile's socket at once. Tiles on one server
@@ -80,17 +89,31 @@ function lookupSessions(server: Server): Promise<SessionsLookup> {
 
 // The DOM renderer rebuilds a row's spans on every change, which in a grid of
 // busy terminals is the bulk of the page's CPU. WebGL draws from a glyph atlas
-// instead. It must load after open(). Browsers cap live WebGL contexts (Chrome
-// at 16) and drop the oldest past that, and a GPU reset drops them all; either
-// way the addon is disposed and xterm falls back to the DOM renderer for that
-// tile rather than going blank. No WebGL2 at all throws here, same fallback.
-function loadWebgl(term: Terminal) {
-  try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
-    term.loadAddon(webgl);
-  } catch {
-    /* DOM renderer stays */
+// instead. Browsers cap live WebGL contexts (Chrome at 16) and take one away
+// past that, and a GPU reset takes them all, so a tile holds a context only
+// while it has a box to draw in (see syncRenderer in the effect below) and
+// asks for a new one when the browser takes its own. A context lost within
+// WEBGL_STABLE_MS of being acquired, or one that could not be created at all,
+// is a strike; at WEBGL_MAX_STRIKES the tile stays on the DOM renderer, so
+// tiles competing for too few contexts settle instead of evicting each other
+// in turn.
+const WEBGL_RETRY_MS = 1000;
+const WEBGL_STABLE_MS = 60_000;
+const WEBGL_MAX_STRIKES = 3;
+
+// Disposing the addon only drops the canvas; its context stays counted
+// against the browser's cap until the canvas is garbage collected, whenever
+// that is. Losing it explicitly gives the slot back now. `canvases` must be
+// collected before the addon is disposed, which detaches them. Asking a canvas
+// for the kind of context it already has returns that context; xterm's 2D
+// link-layer canvas answers null.
+function loseWebglContexts(canvases: HTMLCanvasElement[]) {
+  for (const canvas of canvases) {
+    try {
+      canvas.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch {
+      /* already lost, or no WebGL2 */
+    }
   }
 }
 
@@ -164,7 +187,71 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     // them, which the addon can't see (see wrap.ts).
     const linkProvider = term.registerLinkProvider(wrapAwareLinkProvider(term));
     term.open(containerRef.current!);
-    loadWebgl(term);
+
+    // The WebGL renderer, held only while this tile has a box. A tile the dir
+    // filter has hidden stays mounted for its socket and its buffer, neither
+    // of which needs a renderer: xterm parses output into the buffer whatever
+    // draws it, and pauses drawing while off screen. An addon cannot be
+    // reused after dispose(), so each acquisition is a new one, loaded after
+    // open().
+    let webgl: WebglAddon | null = null;
+    let webglAcquiredAt = 0;
+    let webglStrikes = 0;
+    let webglRetryId: ReturnType<typeof setTimeout> | null = null;
+
+    function hasBox() {
+      const el = containerRef.current;
+      return !!el && el.clientWidth > 0 && el.clientHeight > 0;
+    }
+
+    function releaseWebgl() {
+      const addon = webgl;
+      if (!addon) return;
+      webgl = null;
+      const canvases = Array.from(term.element?.querySelectorAll("canvas") ?? []);
+      addon.dispose(); // xterm goes back to its DOM renderer
+      loseWebglContexts(canvases);
+    }
+
+    function acquireWebgl() {
+      if (webgl || webglStrikes >= WEBGL_MAX_STRIKES) return;
+      let addon: WebglAddon | null = null;
+      try {
+        const loading = (addon = new WebglAddon());
+        loading.onContextLoss(() => {
+          if (webgl !== loading) return;
+          // Past the browser's cap, or a GPU reset. A context that had lasted
+          // clears the tile's strikes; one that had not adds to them.
+          const elapsed = Date.now() - webglAcquiredAt;
+          webglStrikes = elapsed >= 0 && elapsed < WEBGL_STABLE_MS ? webglStrikes + 1 : 0;
+          releaseWebgl();
+          if (webglRetryId) clearTimeout(webglRetryId);
+          webglRetryId = setTimeout(() => {
+            webglRetryId = null;
+            syncRenderer();
+          }, WEBGL_RETRY_MS);
+        });
+        term.loadAddon(loading);
+        webgl = loading;
+        webglAcquiredAt = Date.now();
+      } catch {
+        // No WebGL2, or no context to be had: the DOM renderer stays.
+        webglStrikes++;
+        try {
+          addon?.dispose();
+        } catch {
+          /* never activated */
+        }
+      }
+    }
+
+    // Called at mount, from the ResizeObserver — which is what reports the box
+    // going away and coming back — and after a lost context.
+    function syncRenderer() {
+      if (hasBox()) acquireWebgl();
+      else releaseWebgl();
+    }
+    syncRenderer();
     const disposeTouchScroll = touchScrollback
       ? installTouchScroll(term.element!, () => term.modes.mouseTrackingMode !== "none")
       : () => {};
@@ -185,14 +272,29 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     // every reconnect there would re-claim the window and shrink it under the
     // person actually typing. Passive resizes still size our own attach PTY,
     // and are applied to the window when we already own it.
+    // The last active resize this socket carried, for claimForInteraction.
+    let claimed: { cols: number; rows: number; at: number } | null = null;
+
     function sendResize(active = false) {
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(encodeResize(term.cols, term.rows, active));
+        // A passive resize means the box, the tab's focus, or the socket just
+        // changed, so the next gesture claims afresh rather than being counted
+        // a repeat.
+        claimed = active ? { cols: term.cols, rows: term.rows, at: Date.now() } : null;
       }
     }
 
+    // Skips a claim identical to one sent within CLAIM_REPEAT_MS. Date.now, not
+    // performance.now: a machine that slept must not wake inside the interval.
+    // A clock stepped backwards counts as expired, not as a long silence.
     function claimForInteraction() {
-      if (sizePolicy === "follow-input") sendResize(true);
+      if (sizePolicy !== "follow-input") return;
+      if (claimed && claimed.cols === term.cols && claimed.rows === term.rows) {
+        const elapsed = Date.now() - claimed.at;
+        if (elapsed >= 0 && elapsed < CLAIM_REPEAT_MS) return;
+      }
+      sendResize(true);
     }
 
     // A tile the dir filter has hidden is display:none, so it has no box to
@@ -201,8 +303,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
     // still be there when the tile came back. The ResizeObserver fires again
     // the moment it does, which is when the refit belongs.
     function fitToBox() {
-      const el = containerRef.current;
-      if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
+      if (!hasBox()) return;
       fit.fit();
     }
 
@@ -265,6 +366,7 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       if (closed) return;
       setState("connecting");
       ws = new WebSocket(url);
+      claimed = null; // a new socket has sent nothing
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
         setState("open");
@@ -445,6 +547,12 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       sendResize(true);
     };
     captureContainer.addEventListener("focusin", claimOnFocus);
+    // Whatever happens while focus is elsewhere, the first gesture back claims.
+    const forgetClaim = () => {
+      claimed = null;
+    };
+    captureContainer.addEventListener("focusout", forgetClaim);
+    window.addEventListener("blur", forgetClaim);
 
     const dataSub = term.onData((data) => {
       if (suppressNextCR && data === "\r") {
@@ -462,6 +570,9 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       sendResize();
     };
     const ro = new ResizeObserver(() => {
+      // Before the refit, so a tile coming back is fitted with the renderer it
+      // will be drawn by. Swapping renderers sends nothing to the daemon.
+      syncRenderer();
       if (isReflowHeld()) {
         reflowPending = true;
         return;
@@ -504,6 +615,8 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       linkProvider?.dispose();
       captureContainer.removeEventListener("copy", copyCapture, true);
       captureContainer.removeEventListener("focusin", claimOnFocus);
+      captureContainer.removeEventListener("focusout", forgetClaim);
+      window.removeEventListener("blur", forgetClaim);
       dataSub.dispose();
       ro.disconnect();
       unsubscribeReflow();
@@ -511,7 +624,11 @@ const TerminalTile = forwardRef<TerminalHandle, Props>(function TerminalTile(
       document.removeEventListener("visibilitychange", resyncSize);
       fitSharedSizeRef.current = () => {};
       disposeTouchScroll();
+      if (webglRetryId) clearTimeout(webglRetryId);
+      // term.dispose() takes the addon with it; only the context needs help.
+      const canvases = Array.from(term.element?.querySelectorAll("canvas") ?? []);
       term.dispose();
+      if (webgl) loseWebglContexts(canvases);
     };
   }, [url, sessionId, retryNonce, sizePolicy, touchScrollback]);
 

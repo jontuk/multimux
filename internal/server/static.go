@@ -31,8 +31,13 @@ var staticEncodings = []struct{ name, suffix string }{
 // staticVariant is one representation of a file. embed.FS has no modification
 // times, which leaves http.ServeContent nothing to revalidate against, so each
 // variant carries a content-derived ETag instead.
+//
+// content is the file's bytes, read once at startup. Going back to the FS per
+// request would cost a copy of the whole asset each time — embed.FS.ReadFile
+// returns a fresh slice — including for a 304 that sends none of it.
 type staticVariant struct {
-	path, encoding, etag string
+	encoding, etag string
+	content        []byte
 }
 
 type staticFile struct {
@@ -79,10 +84,10 @@ func refusedByQuality(params string) bool {
 
 // loadStaticFiles indexes webFS by URL path. Compressed siblings are attached
 // to the file they compress rather than listed, so they cannot be requested
-// directly and arrive with no Content-Encoding. Hashing runs once per process:
-// the FS is embedded, so its contents cannot change.
+// directly and arrive with no Content-Encoding. Reading and hashing run once
+// per process: the FS is embedded, so its contents cannot change.
 func loadStaticFiles(webFS fs.FS) map[string]staticFile {
-	etags := map[string]string{}
+	variants := map[string]staticVariant{}
 	err := fs.WalkDir(webFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -92,7 +97,7 @@ func loadStaticFiles(webFS fs.FS) map[string]staticFile {
 			return err
 		}
 		sum := sha256.Sum256(content)
-		etags[path] = `"` + hex.EncodeToString(sum[:8]) + `"`
+		variants[path] = staticVariant{etag: `"` + hex.EncodeToString(sum[:8]) + `"`, content: content}
 		return nil
 	})
 	if err != nil {
@@ -102,24 +107,23 @@ func loadStaticFiles(webFS fs.FS) map[string]staticFile {
 	isSibling := func(path string) bool {
 		for _, enc := range staticEncodings {
 			if base, found := strings.CutSuffix(path, enc.suffix); found {
-				if _, hasBase := etags[base]; hasBase {
+				if _, hasBase := variants[base]; hasBase {
 					return true
 				}
 			}
 		}
 		return false
 	}
-	files := make(map[string]staticFile, len(etags))
-	for path, etag := range etags {
+	files := make(map[string]staticFile, len(variants))
+	for path, plain := range variants {
 		if isSibling(path) {
 			continue
 		}
-		file := staticFile{plain: staticVariant{path: path, etag: etag}}
+		file := staticFile{plain: plain}
 		for _, enc := range staticEncodings {
-			if siblingETag, ok := etags[path+enc.suffix]; ok {
-				file.compressed = append(file.compressed, staticVariant{
-					path: path + enc.suffix, encoding: enc.name, etag: siblingETag,
-				})
+			if sibling, ok := variants[path+enc.suffix]; ok {
+				sibling.encoding = enc.name
+				file.compressed = append(file.compressed, sibling)
 			}
 		}
 		files[path] = file
@@ -147,11 +151,6 @@ func (s *Server) staticHandler() http.Handler {
 		}
 
 		variant := file.negotiate(r.Header.Get("Accept-Encoding"))
-		content, err := fs.ReadFile(s.cfg.WebFS, variant.path)
-		if err != nil {
-			http.Error(w, "web asset unreadable", http.StatusInternalServerError)
-			return
-		}
 		header := w.Header()
 		header.Set("Cache-Control", cacheControl)
 		header.Set("ETag", variant.etag)
@@ -161,8 +160,9 @@ func (s *Server) staticHandler() http.Handler {
 		if variant.encoding != "" {
 			header.Set("Content-Encoding", variant.encoding)
 		}
-		// path, not variant.path: the Content-Type comes from this name, and it
-		// has to describe what the body decodes to.
-		http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(content))
+		// path is the plain file's name even when a compressed variant is sent:
+		// the Content-Type comes from it, and it has to describe what the body
+		// decodes to.
+		http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(variant.content))
 	})
 }

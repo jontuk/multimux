@@ -79,7 +79,18 @@ func (s *Store) GetSession(id int64) (Session, error) {
 }
 
 func (s *Store) ListSessions() ([]Session, error) {
-	rows, err := s.db.Query(`SELECT ` + sessionCols + ` FROM sessions ORDER BY id`)
+	return s.querySessions(`SELECT ` + sessionCols + ` FROM sessions ORDER BY id`)
+}
+
+// ListRunningSessions returns only the rows whose status is "running", in ID
+// order — what the background loops act on; dead rows awaiting dismissal are
+// of no interest to them.
+func (s *Store) ListRunningSessions() ([]Session, error) {
+	return s.querySessions(`SELECT ` + sessionCols + ` FROM sessions WHERE status = 'running' ORDER BY id`)
+}
+
+func (s *Store) querySessions(query string) ([]Session, error) {
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
