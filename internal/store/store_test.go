@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -193,6 +194,71 @@ func TestHomeDirRelabel(t *testing.T) {
 		if d.Name != want[i] {
 			t.Errorf("dir %s named %q, want %q", d.Path, d.Name, want[i])
 		}
+	}
+}
+
+// Sessions that were already dead when ended_at arrived keep their rows and
+// get no ended_at, so the sweep ages them from created_at.
+func TestEndedAtMigrationKeepsExistingSessions(t *testing.T) {
+	const preEndedAt = 8 // migrations up to and including the home relabel
+
+	path := filepath.Join(t.TempDir(), "test.db")
+	db := rawOpen(t, path)
+	for i := range preEndedAt {
+		if err := applyMigration(db, i); err != nil {
+			t.Fatalf("apply migration %d: %v", i+1, err)
+		}
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	old := now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)
+	recent := now.Add(-time.Hour).Format(time.RFC3339)
+	for _, r := range []struct{ name, status, created string }{
+		{"mm-1", "dead", old},
+		{"mm-2", "dead", recent},
+		{"mm-3", "running", old},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO sessions (tmux_name, tool_id, dir, status, created_at) VALUES (?, 1, '/tmp', ?, ?)`,
+			r.name, r.status, r.created); err != nil {
+			t.Fatalf("seed %s: %v", r.name, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after upgrade: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if all, err := s.ListSessions(); err != nil || len(all) != 3 {
+		t.Fatalf("sessions after upgrade = %+v, %v, want all 3", all, err)
+	}
+	var stamped int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE ended_at IS NOT NULL`).Scan(&stamped); err != nil {
+		t.Fatal(err)
+	}
+	if stamped != 0 {
+		t.Fatalf("%d upgraded rows got an ended_at, want none", stamped)
+	}
+
+	deleted, err := s.DeleteDeadSessionsBefore(now.Add(-7 * 24 * time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0].TmuxName != "mm-1" {
+		t.Fatalf("swept %+v, want only the old dead mm-1", deleted)
+	}
+	// A session that dies after the upgrade is stamped like any other.
+	if err := s.SetSessionStatus(3, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE ended_at IS NOT NULL`).Scan(&stamped); err != nil {
+		t.Fatal(err)
+	}
+	if stamped != 1 {
+		t.Fatalf("%d rows stamped after a post-upgrade death, want 1", stamped)
 	}
 }
 

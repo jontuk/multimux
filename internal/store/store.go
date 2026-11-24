@@ -85,6 +85,11 @@ var migrations = []string{
 	 WHERE name = 'Home'
 	   AND (path GLOB '/Users/*' OR path GLOB '/home/*')
 	   AND instr(substr(path, instr(substr(path, 2), '/') + 2), '/') = 0;`,
+	// When a session's status became dead, so dead rows can be aged out from
+	// the moment they ended rather than from when they were launched. NULL on
+	// rows that were already dead when this shipped (and on running ones);
+	// DeleteDeadSessionsBefore falls back to created_at for those.
+	`ALTER TABLE sessions ADD COLUMN ended_at TEXT;`,
 }
 
 // Open opens (creating if needed) the database at path, enables WAL, and

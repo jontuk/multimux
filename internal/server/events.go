@@ -154,6 +154,34 @@ func (s *Server) sweepExpiredAuthSessions(now time.Time) {
 	}
 }
 
+// deadSessionRetention is how long a dead session's row is kept before the
+// hourly sweep deletes it. The browser dismisses a row when its tile leaves the
+// grid, but not every row gets that far: sessions that died with no tile, a
+// browser that was closed first, installs with a backlog from before any of
+// this existed. A week is long enough that an ended tile left on screen over a
+// weekend or a few days away still says which session ended and where, and
+// short enough that the session list stays a few rows rather than every
+// session the install has ever run.
+const deadSessionRetention = 7 * 24 * time.Hour
+
+// sweepDeadSessions deletes the dead rows that outlived deadSessionRetention.
+// It is a row cleanup only: running rows are never matched, and nothing here
+// touches tmux. Each row goes out as session_dismissed, the same event a
+// manual dismissal sends, so an open tab drops it from its session list.
+func (s *Server) sweepDeadSessions(now time.Time) {
+	swept, err := s.cfg.Store.DeleteDeadSessionsBefore(now.Add(-deadSessionRetention))
+	if err != nil {
+		slog.Error("dead session sweep", "err", err)
+		return
+	}
+	for _, sess := range swept {
+		s.broadcast("session_dismissed", sess)
+	}
+	if len(swept) > 0 {
+		slog.Info("dead sessions swept", "count", len(swept))
+	}
+}
+
 // StartBackground runs startup reconcile plus periodic maintenance.
 func (s *Server) StartBackground() {
 	if _, err := s.Reconcile(); err != nil {
@@ -183,9 +211,11 @@ func (s *Server) StartBackground() {
 	}()
 	go func() {
 		s.sweepUploads(time.Now())
+		s.sweepDeadSessions(time.Now())
 		for range time.Tick(time.Hour) {
 			s.sweepExpiredAuthSessions(time.Now())
 			s.sweepUploads(time.Now())
+			s.sweepDeadSessions(time.Now())
 		}
 	}()
 }

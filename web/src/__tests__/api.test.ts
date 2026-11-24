@@ -3,6 +3,7 @@ import {
   ApiError,
   apiFetch,
   del,
+  dismissSession,
   errorText,
   getJSON,
   getPaneText,
@@ -47,6 +48,28 @@ test("getPaneText converts failures through ApiError", async () => {
   expect(err).toBeInstanceOf(ApiError);
   expect((err as ApiError).status).toBe(409);
   expect(errorText(err)).toContain("session is no longer available");
+});
+
+test("dismissSession posts to the session's own daemon with its token", async () => {
+  const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+  await dismissSession(remote, 7);
+  const [url, init] = spy.mock.calls[0];
+  expect(url).toBe("https://otherbox:8686/api/sessions/7/dismiss");
+  expect(init!.method).toBe("POST");
+  expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+  expect(init!.credentials).toBe("omit");
+});
+
+// Best-effort by contract: callers drop the tile whatever happens, and the
+// daemon's sweep collects any row this could not.
+test.each([
+  ["the row is already gone", () => Promise.resolve(new Response('{"error":"not found"}', { status: 404 }))],
+  ["the session is still running", () => Promise.resolve(new Response('{"error":"running"}', { status: 409 }))],
+  ["the daemon errors", () => Promise.resolve(new Response("boom", { status: 500 }))],
+  ["the daemon is unreachable", () => Promise.reject(new TypeError("Failed to fetch"))],
+])("dismissSession resolves when %s", async (_name, answer) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(answer);
+  await expect(dismissSession(local, 7)).resolves.toBeUndefined();
 });
 
 test("remote requests carry bearer token", async () => {

@@ -119,6 +119,20 @@ export async function del(server: Server, path: string): Promise<void> {
   if (!res.ok) throw await failed(path, res);
 }
 
+// Deletes an ended session's row; the daemon otherwise keeps it so a tile can
+// still say what ended. Call it when the last such tile goes away. Never
+// rejects: the tile is leaving whatever the answer, and every failure is one
+// the daemon covers — 404 means the row is already gone, 409 that the session
+// is in fact still running and must keep its row, and a row that could not be
+// reached is deleted by the daemon's own sweep once it has aged.
+export async function dismissSession(server: Server, sessionId: number): Promise<void> {
+  try {
+    await postJSON(server, `/api/sessions/${sessionId}/dismiss`);
+  } catch {
+    // See above.
+  }
+}
+
 export function wsURL(server: Server, path: string, params?: Record<string, string>): string {
   const query = Object.entries({ ...(server.token ? { token: server.token } : {}), ...params }).map(
     ([k, v]) => `${k}=${encodeURIComponent(v)}`,

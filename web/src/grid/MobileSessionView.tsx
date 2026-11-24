@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { del } from "../api";
+import { del, dismissSession } from "../api";
 import type { Server } from "../servers";
 import TerminalTile, { type TerminalHandle } from "../term/TerminalTile";
 import MobileCompose from "./MobileCompose";
@@ -111,9 +111,11 @@ export default function MobileSessionView({
       await del(server, `/api/sessions/${sessionId}`);
     } catch {
       // Session may already be gone; refresh either way.
-    } finally {
-      setTerminating(false);
     }
+    // This view lists running sessions only, so the dead row would never be
+    // shown here again; delete it rather than leave it to the daemon's sweep.
+    await dismissSession(server, sessionId);
+    setTerminating(false);
     onRefresh();
   }
 
@@ -305,7 +307,11 @@ export default function MobileSessionView({
               key={`terminal:${selected.key}`}
               server={selected.server}
               sessionId={selected.session.id}
-              onClose={onRefresh}
+              // Offered once the session has ended or lost its row; the
+              // refresh then drops it from this view, so its row goes too.
+              onClose={() => {
+                dismissSession(selected.server, selected.session.id).then(() => onRefresh());
+              }}
               sizePolicy="passive"
               controlsSlot={controlsSlot}
               touchScrollback

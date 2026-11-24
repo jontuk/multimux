@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { forwardRef, Profiler, useEffect, useImperativeHandle } from "react";
 import { createPortal } from "react-dom";
@@ -12,6 +12,9 @@ import type { TerminalHandle } from "../term/TerminalTile";
 const unmounted = vi.fn();
 const terminalAttached = vi.fn();
 const terminalHandles = new Map<number, TerminalHandle>();
+// Each mounted terminal's onClose, by session id: what the real tile's own
+// "session ended — dismiss" overlay calls.
+const terminalClose = new Map<number, () => void>();
 const terminalCalls: Array<{ sessionId: number; operation: "input" | "paste"; data: string }> = [];
 const terminalFontSizes: Array<{ sessionId: number; size: number }> = [];
 let terminalConnected = true;
@@ -21,17 +24,20 @@ vi.mock("../term/TerminalTile", () => ({
   default: forwardRef(function TerminalTileMock(
     {
       sessionId,
+      onClose,
       sizePolicy,
       controlsSlot,
       touchScrollback,
     }: {
       sessionId: number;
+      onClose: () => void;
       sizePolicy?: string;
       controlsSlot?: HTMLElement | null;
       touchScrollback?: boolean;
     },
     ref,
   ) {
+    terminalClose.set(sessionId, onClose);
     let handle = terminalHandles.get(sessionId);
     if (!handle) {
       handle = {
@@ -156,6 +162,7 @@ beforeEach(() => {
   unmounted.mockClear();
   terminalAttached.mockClear();
   terminalHandles.clear();
+  terminalClose.clear();
   terminalCalls.length = 0;
   terminalFontSizes.length = 0;
   terminalConnected = true;
@@ -229,11 +236,53 @@ test("mobile terminate deletes the selected session once confirmed", async () =>
 
   await userEvent.click(screen.getByLabelText("terminate session 1"));
 
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-  expect(String(url)).toBe("https://local.test/api/sessions/1");
-  expect(init.method).toBe("DELETE");
-  expect(onRefresh).toHaveBeenCalled();
+  // The kill, then the row: this view never shows a dead session again.
+  await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  expect(fetchMock.mock.calls.map(([url, init]) => `${init?.method} ${String(url)}`)).toEqual([
+    "DELETE https://local.test/api/sessions/1",
+    "POST https://local.test/api/sessions/1/dismiss",
+  ]);
+});
+
+test("mobile terminate still refreshes when neither request gets through", async () => {
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const onRefresh = vi.fn();
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={onRefresh}
+    />,
+  );
+
+  await userEvent.click(screen.getByLabelText("terminate session 1"));
+
+  await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  expect(screen.getByLabelText("terminate session 1")).toBeEnabled();
+});
+
+test("dismissing a mobile terminal whose session ended deletes the row, then refreshes", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(""));
+  const onRefresh = vi.fn();
+  render(
+    <MobileSessionView
+      servers={[local]}
+      sessions={[session(1)]}
+      toolsByServer={{ local: tools }}
+      initialLoading={false}
+      onRefresh={onRefresh}
+    />,
+  );
+
+  terminalClose.get(1)!();
+
+  await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  expect(fetchMock.mock.calls.map(([url, init]) => `${init?.method} ${String(url)}`)).toEqual([
+    "POST https://local.test/api/sessions/1/dismiss",
+  ]);
 });
 
 test("mobile Text targets the selection without reconnecting its terminal", async () => {

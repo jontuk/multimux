@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { del, getJSON, putJSON } from "../api";
+import { del, dismissSession, getJSON, putJSON } from "../api";
 import { connectServer, listServers, localServer, removeServer, type Server } from "../servers";
 import {
   addTile,
@@ -368,6 +368,18 @@ export default function GridPage({
     [refreshSessions],
   );
 
+  // An ended session's row outlives it only so a tile can say what ended. Once
+  // that tile leaves the grid nothing shows the row again, so it is deleted
+  // here rather than left for the daemon's week-long sweep. Safe to call on a
+  // guess: the daemon refuses to dismiss a session that is still running.
+  const dismissSessions = useCallback(
+    (server: Server, sessionIds: number[]) => {
+      if (sessionIds.length === 0) return;
+      Promise.all(sessionIds.map((id) => dismissSession(server, id))).then(() => refreshSessions(false, server));
+    },
+    [refreshSessions],
+  );
+
   const refreshLayout = useCallback(
     (settleInitial = false) => {
       const editSerial = layoutEditSerial.current;
@@ -601,7 +613,21 @@ export default function GridPage({
       // Session may already be gone; drop the tile either way.
     }
     persist((l) => removeTile(l, tileIndex));
-    refreshSessions(false, server);
+    dismissSessions(server, [sessionId]);
+  }
+
+  // Drop a tile whose session has ended, and the session's row with it.
+  function dismissTile(server: Server, sessionId: number, tileIndex: number) {
+    persist((l) => removeTile(l, tileIndex));
+    dismissSessions(server, [sessionId]);
+  }
+
+  // "−" only takes a session off the grid: a running one stays attachable from
+  // the unplaced list, so its row is kept. An ended one has nowhere else to
+  // show, which makes this the same as dismissing it.
+  function removeFromGrid(server: Server, session: Session | undefined, tileIndex: number) {
+    if (session && session.status !== "running") dismissTile(server, session.id, tileIndex);
+    else persist((l) => removeTile(l, tileIndex));
   }
 
   // Close a whole directory: every running session in it, on every server,
@@ -616,8 +642,15 @@ export default function GridPage({
     );
     if (doomed.length === 0) return;
     if (confirmTerminate && !window.confirm(`Terminate ${doomed.length} session(s) in ${path}?`)) return;
-    // A session may already be gone; drop its tile either way.
-    await Promise.all(doomed.map(({ server, id }) => del(server, `/api/sessions/${id}`).catch(() => {})));
+    // A session may already be gone; drop its tile either way. Each row goes
+    // with its session — see dismissSessions.
+    await Promise.all(
+      doomed.map(({ server, id }) =>
+        del(server, `/api/sessions/${id}`)
+          .catch(() => {})
+          .then(() => dismissSession(server, id)),
+      ),
+    );
     const keys = new Set(doomed.map(({ server, id }) => tileKey({ serverId: server.id, sessionId: id })));
     // One layout write for the batch, not one per session.
     persist((l) => removeTilesWhere(l, (t) => keys.has(tileKey(t))));
@@ -879,7 +912,7 @@ export default function GridPage({
                     <button
                       aria-label={`remove session ${tile.sessionId} from grid`}
                       title="remove from grid"
-                      onClick={() => persist((l) => removeTile(l, real))}
+                      onClick={() => removeFromGrid(server, session, real)}
                     >
                       −
                     </button>
@@ -897,7 +930,7 @@ export default function GridPage({
                   // Dead sessions must not mount a terminal: the daemon
                   // rejects the attach and the tile would retry forever.
                   <div className="tile-body empty-tile-hint">
-                    session ended <button onClick={() => persist((l) => removeTile(l, real))}>dismiss</button>
+                    session ended <button onClick={() => dismissTile(server, tile.sessionId, real)}>dismiss</button>
                   </div>
                 ) : (
                   <div className="tile-body">
@@ -905,7 +938,9 @@ export default function GridPage({
                       server={server}
                       sessionId={tile.sessionId}
                       autoFocus={tileKey(tile) === focusKey}
-                      onClose={() => persist((l) => removeTile(l, real))}
+                      // The terminal only offers its dismiss once the daemon
+                      // has said the session ended or has no row at all.
+                      onClose={() => dismissTile(server, tile.sessionId, real)}
                     />
                   </div>
                 )}
@@ -971,7 +1006,19 @@ export default function GridPage({
             <button
               className="primary"
               aria-label={`Dismiss all ${count} ended ${noun} on ${server.name}`}
-              onClick={() => persist((current) => removeTilesWhere(current, (tile) => keys.has(tileKey(tile))))}
+              onClick={() => {
+                persist((current) => removeTilesWhere(current, (tile) => keys.has(tileKey(tile))));
+                // A tile also counts as ended when its session has no row at
+                // all; there is nothing left to dismiss for those.
+                dismissSessions(
+                  server,
+                  (sessionsByServer[server.id] ?? [])
+                    .filter(
+                      (s) => s.status !== "running" && keys.has(tileKey({ serverId: server.id, sessionId: s.id })),
+                    )
+                    .map((s) => s.id),
+                );
+              }}
             >
               Dismiss all
             </button>

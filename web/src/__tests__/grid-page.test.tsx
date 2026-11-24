@@ -10,10 +10,14 @@ import { endReflowHold, isReflowHeld } from "../term/reflowGate";
 
 vi.mock("../useEvents", () => ({ useEvents: vi.fn() }));
 const terminalLifecycle = vi.hoisted(() => ({ constructed: vi.fn(), attached: vi.fn(), unmounted: vi.fn() }));
+// Each mounted terminal's onClose, by session id: what the real tile's own
+// "session ended — dismiss" overlay calls.
+const terminalClose = vi.hoisted(() => new Map<number, () => void>());
 
 vi.mock("../term/TerminalTile", async () => {
   const { useEffect, useRef } = await import("react");
-  function TerminalTileMock({ sessionId }: { sessionId: number }) {
+  function TerminalTileMock({ sessionId, onClose }: { sessionId: number; onClose: () => void }) {
+    terminalClose.set(sessionId, onClose);
     const constructed = useRef(false);
     if (!constructed.current) {
       constructed.current = true;
@@ -89,6 +93,7 @@ afterEach(() => {
   terminalLifecycle.constructed.mockClear();
   terminalLifecycle.attached.mockClear();
   terminalLifecycle.unmounted.mockClear();
+  terminalClose.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.removeItem("multimux.servers");
@@ -650,6 +655,98 @@ test("terminate skips the confirm prompt by default", async () => {
   expect(String(delCall?.[0])).toContain("/api/sessions/1");
 });
 
+// The session-row mutations sent, in order, as "METHOD origin+path".
+function sessionWrites(fetchMock: ReturnType<typeof mockFetch>) {
+  return fetchMock.mock.calls
+    .filter(([url, init]) => String(url).includes("/api/sessions/") && ["POST", "DELETE"].includes(init?.method ?? ""))
+    .map(([url, init]) => `${init?.method} ${String(url)}`);
+}
+const here = window.location.origin;
+
+test("terminating a session also deletes its row, after the kill", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  await userEvent.click(screen.getByLabelText("terminate session 1"));
+
+  // Dismissing first would be refused: the daemon keeps a running row.
+  await waitFor(() =>
+    expect(sessionWrites(fetchMock)).toEqual([`DELETE ${here}/api/sessions/1`, `POST ${here}/api/sessions/1/dismiss`]),
+  );
+  expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
+});
+
+test("dismissing an ended tile deletes the session's row", async () => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 4 }, null] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  const hint = await screen.findByText(/session ended/, { selector: ".tile-body" });
+  await userEvent.click(within(hint).getByRole("button", { name: "dismiss" }));
+
+  await waitFor(() => expect(sessionWrites(fetchMock)).toEqual([`POST ${here}/api/sessions/4/dismiss`]));
+  expect(screen.queryByText(/session ended/, { selector: ".tile-body" })).not.toBeInTheDocument();
+  expect(JSON.parse(String(layoutPuts(fetchMock)[0][1]?.body)).tiles).toEqual([null]);
+});
+
+test.each([
+  ["the daemon is unreachable", () => Promise.reject(new TypeError("Failed to fetch"))],
+  ["the row is already gone", () => Promise.resolve(new Response('{"error":"not found"}', { status: 404 }))],
+])("an ended tile still leaves the grid when %s", async (_name, answer) => {
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 4 }, null] };
+  const fetchMock = mockFetch(layout);
+  const fallback = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((input, init) =>
+    String(input).endsWith("/dismiss") ? answer() : fallback(input, init),
+  );
+
+  render(<GridPage />);
+  const hint = await screen.findByText(/session ended/, { selector: ".tile-body" });
+  await userEvent.click(within(hint).getByRole("button", { name: "dismiss" }));
+
+  await waitFor(() => expect(layoutPuts(fetchMock)).toHaveLength(1));
+  expect(screen.queryByText(/session ended/, { selector: ".tile-body" })).not.toBeInTheDocument();
+  expect(sessionWrites(fetchMock)).toEqual([`POST ${here}/api/sessions/4/dismiss`]);
+});
+
+test("removing a tile from the grid deletes the row only when its session has ended", async () => {
+  const layout = {
+    shape: { rows: 1, cols: 2 },
+    tiles: [
+      { serverId: "local", sessionId: 1 },
+      { serverId: "local", sessionId: 4 },
+    ],
+  };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+
+  // A running session stays attachable from the unplaced list, row and all.
+  await userEvent.click(screen.getByLabelText("remove session 1 from grid"));
+  await waitFor(() => expect(layoutPuts(fetchMock)).toHaveLength(1));
+  expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
+  expect(sessionWrites(fetchMock)).toEqual([]);
+
+  await userEvent.click(screen.getByLabelText("remove session 4 from grid"));
+  await waitFor(() => expect(sessionWrites(fetchMock)).toEqual([`POST ${here}/api/sessions/4/dismiss`]));
+});
+
+test("a terminal that reports its session ended deletes the row when dismissed", async () => {
+  // The session list still says running: the terminal learned first.
+  const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
+  const fetchMock = mockFetch(layout);
+
+  render(<GridPage />);
+  await screen.findByTestId("term-1");
+  act(() => terminalClose.get(1)!());
+
+  await waitFor(() => expect(sessionWrites(fetchMock)).toEqual([`POST ${here}/api/sessions/1/dismiss`]));
+  expect(screen.queryByTestId("term-1")).not.toBeInTheDocument();
+});
+
 test("terminate confirms first when confirmTerminate is on", async () => {
   const layout = { shape: { rows: 1, cols: 2 }, tiles: [{ serverId: "local", sessionId: 1 }, null] };
   const fetchMock = mockFetch(layout);
@@ -703,6 +800,16 @@ test("closing a directory terminates every running session in it", async () => {
   expect(deleted).toHaveLength(2);
   expect(deleted.some((u) => u.endsWith("/api/sessions/1"))).toBe(true);
   expect(deleted.some((u) => u.endsWith("/api/sessions/3"))).toBe(true);
+  // Each terminated session's row goes too, and only after its own kill.
+  const writes = sessionWrites(fetchMock);
+  expect([...writes].sort()).toEqual(
+    [1, 3].flatMap((id) => [`DELETE ${here}/api/sessions/${id}`, `POST ${here}/api/sessions/${id}/dismiss`]).sort(),
+  );
+  for (const id of [1, 3]) {
+    expect(writes.indexOf(`DELETE ${here}/api/sessions/${id}`)).toBeLessThan(
+      writes.indexOf(`POST ${here}/api/sessions/${id}/dismiss`),
+    );
+  }
 });
 
 test("closing a directory honours the confirm prompt and clears its solo", async () => {
@@ -913,11 +1020,8 @@ test("one notice dismisses every ended local tile with one layout write", async 
   expect(screen.queryByText("session ended")).not.toBeInTheDocument();
   expect(screen.queryByTestId("term-99")).not.toBeInTheDocument();
   expect(JSON.parse(String(layoutPuts(fetchMock)[0][1]?.body)).tiles).toEqual([{ serverId: "local", sessionId: 1 }]);
-  expect(
-    fetchMock.mock.calls.some(
-      ([url, init]) => String(url).includes("/api/sessions") && ["POST", "DELETE"].includes(init?.method ?? "GET"),
-    ),
-  ).toBe(false);
+  // Session 4's row is deleted. 99 has no row to delete, and nothing is killed.
+  await waitFor(() => expect(sessionWrites(fetchMock)).toEqual([`POST ${here}/api/sessions/4/dismiss`]));
 });
 
 test("a single ended maximized tile has singular accessible text and returns to the grid", async () => {
@@ -969,6 +1073,11 @@ test("ended-session notices and dismissal are scoped to one server", async () =>
 
   await waitFor(() => expect(layoutPuts(fetchMock)).toHaveLength(1));
   expect(JSON.parse(String(layoutPuts(fetchMock)[0][1]?.body)).tiles).toEqual([{ serverId: "local", sessionId: 4 }]);
+  // The row is deleted on the daemon that owns it, with that daemon's token;
+  // the local session with the same id is not touched.
+  await waitFor(() => expect(sessionWrites(fetchMock)).toEqual(["POST https://box-a:8686/api/sessions/4/dismiss"]));
+  const [, dismissInit] = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/dismiss"))!;
+  expect((dismissInit!.headers as Record<string, string>).Authorization).toBe("Bearer dead");
   expect(screen.getByRole("button", { name: "Dismiss all 1 ended session on local" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Dismiss all 1 ended session on box-a" })).not.toBeInTheDocument();
 });

@@ -262,3 +262,86 @@ func TestEventsDropsClientThatNeverPongs(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestDeadSessionSweepDeletesOnlyRowsPastRetention(t *testing.T) {
+	s, st, _ := newTestServer(t, true)
+	tool, _ := st.CreateTool("sh", "sleep 60")
+	dead, _ := st.CreateSession(tool.ID, "/tmp")
+	running, _ := st.CreateSession(tool.ID, "/tmp")
+	if err := st.SetSessionStatus(dead.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+
+	ch := s.hub.Subscribe()
+	defer s.hub.Unsubscribe(ch)
+	type event struct {
+		Type    string        `json:"type"`
+		Payload store.Session `json:"payload"`
+	}
+	drain := func() []event {
+		var events []event
+		for {
+			select {
+			case raw := <-ch:
+				var ev event
+				if err := json.Unmarshal(raw, &ev); err != nil {
+					t.Fatalf("event %s: %v", raw, err)
+				}
+				events = append(events, ev)
+			default:
+				return events
+			}
+		}
+	}
+	ids := func() []int64 {
+		t.Helper()
+		all, err := st.ListSessions()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []int64
+		for _, sess := range all {
+			out = append(out, sess.ID)
+		}
+		return out
+	}
+	buf := captureLogs(t)
+	now := time.Now()
+
+	// Just short of the retention period the ended tile may still be on
+	// someone's screen: the row stays and nothing is announced.
+	s.sweepDeadSessions(now.Add(deadSessionRetention - time.Hour))
+	if got := ids(); len(got) != 2 {
+		t.Fatalf("sessions after an early sweep = %v, want both kept", got)
+	}
+	if evs := drain(); len(evs) != 0 {
+		t.Fatalf("early sweep broadcast %+v, want none", evs)
+	}
+	if strings.Contains(buf.String(), "dead sessions swept") {
+		t.Fatalf("early sweep logged a sweep: %s", buf)
+	}
+
+	// Past it the dead row goes — and only that one: the running session is
+	// just as old and must be left alone.
+	s.sweepDeadSessions(now.Add(deadSessionRetention + time.Hour))
+	if got := ids(); len(got) != 1 || got[0] != running.ID {
+		t.Fatalf("sessions after the sweep = %v, want only running %d", got, running.ID)
+	}
+	if sess, err := st.GetSession(running.ID); err != nil || sess.Status != "running" {
+		t.Fatalf("running session after the sweep = %+v, %v", sess, err)
+	}
+	evs := drain()
+	if len(evs) != 1 || evs[0].Type != "session_dismissed" || evs[0].Payload.ID != dead.ID ||
+		evs[0].Payload.TmuxName != dead.TmuxName {
+		t.Fatalf("sweep broadcast %+v, want one session_dismissed for %d", evs, dead.ID)
+	}
+
+	s.sweepDeadSessions(now.Add(deadSessionRetention + 2*time.Hour))
+	if evs := drain(); len(evs) != 0 {
+		t.Fatalf("repeat sweep broadcast %+v, want none", evs)
+	}
+	if logged := buf.String(); strings.Count(logged, `"msg":"dead sessions swept"`) != 1 ||
+		!strings.Contains(logged, `"count":1`) {
+		t.Fatalf("dead session sweep log = %s", logged)
+	}
+}

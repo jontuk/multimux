@@ -89,8 +89,8 @@ func (s *Store) ListRunningSessions() ([]Session, error) {
 	return s.querySessions(`SELECT ` + sessionCols + ` FROM sessions WHERE status = 'running' ORDER BY id`)
 }
 
-func (s *Store) querySessions(query string) ([]Session, error) {
-	rows, err := s.db.Query(query)
+func (s *Store) querySessions(query string, args ...any) ([]Session, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +106,17 @@ func (s *Store) querySessions(query string) ([]Session, error) {
 	return out, rows.Err()
 }
 
+// SetSessionStatus also keeps ended_at in step: stamped on the way to dead,
+// cleared on the way back. A row already in the requested status is left
+// alone, so killing a session that is already dead does not restart the
+// retention clock DeleteDeadSessionsBefore runs on.
 func (s *Store) SetSessionStatus(id int64, status string) error {
-	_, err := s.db.Exec(`UPDATE sessions SET status = ? WHERE id = ?`, status, id)
+	var endedAt any
+	if status == "dead" {
+		endedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	_, err := s.db.Exec(`UPDATE sessions SET status = ?, ended_at = ? WHERE id = ? AND status <> ?`,
+		status, endedAt, id, status)
 	return err
 }
 
@@ -131,6 +140,18 @@ func (s *Store) SetSessionLabel(id int64, label string) error {
 func (s *Store) DeleteSession(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, id)
 	return err
+}
+
+// DeleteDeadSessionsBefore deletes the dead rows that ended before cutoff and
+// returns them. A dead row with no ended_at died before that column existed;
+// its age is counted from created_at instead, which can only make it look
+// older than it is — the right way to err for rows that predate the column.
+// Running rows are never matched, whatever their age.
+func (s *Store) DeleteDeadSessionsBefore(cutoff time.Time) ([]Session, error) {
+	return s.querySessions(
+		`DELETE FROM sessions
+		 WHERE status = 'dead' AND COALESCE(ended_at, created_at) < ?
+		 RETURNING `+sessionCols, cutoff.UTC().Format(time.RFC3339))
 }
 
 // GetLayout returns the layout JSON document, or "" when none saved.

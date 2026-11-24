@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSessionLifecycle(t *testing.T) {
@@ -154,5 +155,128 @@ func TestListRunningSessionsReturnsOnlyRunningRows(t *testing.T) {
 	}
 	if running, _ = s.ListRunningSessions(); len(running) != 3 || running[0].ID != ids[0] {
 		t.Fatalf("running after revive = %+v", running)
+	}
+}
+
+// endedAt reads a session's raw ended_at, "" for NULL.
+func endedAt(t *testing.T, s *Store, id int64) string {
+	t.Helper()
+	var v *string
+	if err := s.db.QueryRow(`SELECT ended_at FROM sessions WHERE id = ?`, id).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func TestSetSessionStatusTracksEndedAt(t *testing.T) {
+	s := openTestStore(t)
+	tool, _ := s.CreateTool("zsh", "zsh")
+	sess, err := s.CreateSession(tool.ID, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := endedAt(t, s, sess.ID); got != "" {
+		t.Fatalf("running session ended_at = %q, want NULL", got)
+	}
+	before := time.Now().UTC().Truncate(time.Second)
+	if err := s.SetSessionStatus(sess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	stamped, err := time.Parse(time.RFC3339, endedAt(t, s, sess.ID))
+	if err != nil || stamped.Before(before) || stamped.Location() != time.UTC {
+		t.Fatalf("ended_at = %v (%v), want RFC3339 UTC at or after %v", stamped, err, before)
+	}
+
+	// Marking a dead row dead again must not restart its retention clock.
+	const earlier = "2020-01-01T00:00:00Z"
+	if _, err := s.db.Exec(`UPDATE sessions SET ended_at = ? WHERE id = ?`, earlier, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSessionStatus(sess.ID, "dead"); err != nil {
+		t.Fatal(err)
+	}
+	if got := endedAt(t, s, sess.ID); got != earlier {
+		t.Fatalf("ended_at after a repeated dead = %q, want %q kept", got, earlier)
+	}
+
+	if err := s.SetSessionStatus(sess.ID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	if got := endedAt(t, s, sess.ID); got != "" {
+		t.Fatalf("revived session ended_at = %q, want NULL", got)
+	}
+}
+
+func TestDeleteDeadSessionsBefore(t *testing.T) {
+	s := openTestStore(t)
+	tool, _ := s.CreateTool("zsh", "zsh")
+	now := time.Now().UTC().Truncate(time.Second)
+	old := now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)
+	recent := now.Add(-time.Hour).Format(time.RFC3339)
+	cutoff := now.Add(-7 * 24 * time.Hour)
+
+	// status, created_at, ended_at ("" for NULL), and whether the sweep takes it.
+	rows := []struct {
+		name, status, created, ended string
+		swept                        bool
+	}{
+		{"dead long ago", "dead", old, old, true},
+		{"old session that died recently", "dead", old, recent, false},
+		{"dead before ended_at existed, old", "dead", old, "", true},
+		{"dead before ended_at existed, recent", "dead", recent, "", false},
+		{"running, however old", "running", old, "", false},
+		// Not a state the store produces, but running must win regardless.
+		{"running with a stale ended_at", "running", old, old, false},
+	}
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		sess, err := s.CreateSession(tool.ID, "/tmp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = sess.ID
+		var ended any
+		if r.ended != "" {
+			ended = r.ended
+		}
+		if _, err := s.db.Exec(`UPDATE sessions SET status = ?, created_at = ?, ended_at = ?, label = ? WHERE id = ?`,
+			r.status, r.created, ended, r.name, sess.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deleted, err := s.DeleteDeadSessionsBefore(cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := map[int64]Session{}
+	for _, sess := range deleted {
+		gone[sess.ID] = sess
+	}
+	left := map[int64]bool{}
+	all, _ := s.ListSessions()
+	for _, sess := range all {
+		left[sess.ID] = true
+	}
+	for i, r := range rows {
+		got, returned := gone[ids[i]]
+		if returned != r.swept || left[ids[i]] == r.swept {
+			t.Errorf("%s: returned as deleted = %v, still stored = %v, want swept = %v",
+				r.name, returned, left[ids[i]], r.swept)
+		}
+		// The caller broadcasts what it gets back, so it must be the whole row.
+		if returned && (got.TmuxName == "" || got.Label != r.name || got.Status != "dead") {
+			t.Errorf("%s: deleted row came back as %+v", r.name, got)
+		}
+	}
+	if len(deleted) != 2 {
+		t.Errorf("deleted %d rows, want 2", len(deleted))
+	}
+
+	if again, err := s.DeleteDeadSessionsBefore(cutoff); err != nil || len(again) != 0 {
+		t.Fatalf("second sweep = %+v, %v, want nothing", again, err)
 	}
 }
