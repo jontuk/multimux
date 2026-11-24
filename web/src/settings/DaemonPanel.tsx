@@ -19,6 +19,10 @@ export default function DaemonPanel() {
   const [extraSans, setExtraSans] = useState("");
   const [port, setPort] = useState("");
   const [rpWarning, setRpWarning] = useState(false);
+  const [restartRequired, setRestartRequired] = useState(false);
+  // What the settings were when the panel first loaded — as near as the
+  // browser gets to what the running daemon started with.
+  const [atLoad, setAtLoad] = useState<Settings | null>(null);
   const [error, setError] = useState("");
   const [pendingRpChange, setPendingRpChange] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,6 +31,7 @@ export default function DaemonPanel() {
     setHostname(s.hostname);
     setExtraSans(s.extraSans);
     setPort(s.port);
+    setAtLoad((first) => first ?? s);
   }, []);
   const {
     data: settings,
@@ -61,6 +66,9 @@ export default function DaemonPanel() {
       if (data.rpWarning) {
         setRpWarning(true);
       }
+      if (data.restartRequired) {
+        setRestartRequired(true);
+      }
       reload();
     } catch (err) {
       setError(errorText(err));
@@ -69,12 +77,25 @@ export default function DaemonPanel() {
     }
   }
 
+  // The daemon answers restartRequired to every save, so compare what it now
+  // stores (the reload after the save) with what was loaded: a save that
+  // changed nothing, or put a value back, needs no restart.
+  const hostnameChanged = !!settings && !!atLoad && settings.hostname !== atLoad.hostname;
+  const needsRestart =
+    restartRequired &&
+    !!settings &&
+    !!atLoad &&
+    (hostnameChanged || settings.extraSans !== atLoad.extraSans || settings.port !== atLoad.port);
+
   return (
     <section>
       <h2>Daemon Settings</h2>
       <PanelState loading={loadingSettings} error={loadError} onRetry={reload} />
-      {rpWarning && (
-        <div className="server-status-banner">Changing hostname invalidates ALL passkeys after restart</div>
+      {needsRestart && (
+        <div className="server-status-banner">
+          Saved — takes effect when the daemon restarts.
+          {rpWarning && hostnameChanged && " Changing hostname invalidates ALL passkeys after restart."}
+        </div>
       )}
       {error && <div className="server-status-banner">{error}</div>}
       {pendingRpChange !== null && (

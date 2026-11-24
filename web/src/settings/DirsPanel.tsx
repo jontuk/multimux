@@ -3,6 +3,7 @@ import { del, postJSON } from "../api";
 import { localServer } from "../servers";
 import { useFetch } from "../useFetch";
 import PanelState from "./PanelState";
+import { useAction } from "./useAction";
 import { useReorder } from "./useReorder";
 
 type Dir = { id: number; name: string; path: string };
@@ -13,17 +14,23 @@ export default function DirsPanel() {
   const [path, setPath] = useState("");
   const { ordered: dirs, handleProps, reorderError } = useReorder(data ?? [], "/api/dirs/order", reload);
 
-  async function add() {
-    await postJSON(localServer(), "/api/dirs", { name, path });
-    setName("");
-    setPath("");
-    reload();
+  const { actionError, run } = useAction(reload);
+
+  function add() {
+    return run(
+      () => postJSON(localServer(), "/api/dirs", { name, path }),
+      () => {
+        setName("");
+        setPath("");
+      },
+    );
   }
 
   return (
     <section>
       <h2>Directories</h2>
       <PanelState loading={loading} error={error} onRetry={reload} />
+      {actionError && <div className="server-status-banner">{actionError}</div>}
       {!loading && !error && (
         <>
           {dirs.length === 0 && <p className="empty-note">No directories yet. Add one below.</p>}
@@ -48,7 +55,7 @@ export default function DirsPanel() {
                     <code>{d.path}</code>
                   </td>
                   <td>
-                    <button className="danger" onClick={() => del(localServer(), `/api/dirs/${d.id}`).then(reload)}>
+                    <button className="danger" onClick={() => run(() => del(localServer(), `/api/dirs/${d.id}`))}>
                       delete
                     </button>
                   </td>

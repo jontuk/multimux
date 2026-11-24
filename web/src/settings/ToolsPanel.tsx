@@ -3,6 +3,7 @@ import { del, postJSON, putJSON } from "../api";
 import { localServer } from "../servers";
 import { useFetch } from "../useFetch";
 import PanelState from "./PanelState";
+import { useAction } from "./useAction";
 import { useReorder } from "./useReorder";
 
 type Tool = { id: number; name: string; command: string };
@@ -16,11 +17,16 @@ export default function ToolsPanel() {
   const [editCommand, setEditCommand] = useState("");
   const { ordered: tools, handleProps, reorderError } = useReorder(data ?? [], "/api/tools/order", reload);
 
-  async function add() {
-    await postJSON(localServer(), "/api/tools", { name, command });
-    setName("");
-    setCommand("");
-    reload();
+  const { actionError, run } = useAction(reload);
+
+  function add() {
+    return run(
+      () => postJSON(localServer(), "/api/tools", { name, command }),
+      () => {
+        setName("");
+        setCommand("");
+      },
+    );
   }
 
   function startEdit(t: Tool) {
@@ -35,16 +41,15 @@ export default function ToolsPanel() {
     setEditCommand("");
   }
 
-  async function saveEdit(id: number) {
-    await putJSON(localServer(), `/api/tools/${id}`, { name: editName, command: editCommand });
-    cancelEdit();
-    reload();
+  function saveEdit(id: number) {
+    return run(() => putJSON(localServer(), `/api/tools/${id}`, { name: editName, command: editCommand }), cancelEdit);
   }
 
   return (
     <section>
       <h2>Tools</h2>
       <PanelState loading={loading} error={error} onRetry={reload} />
+      {actionError && <div className="server-status-banner">{actionError}</div>}
       {!loading && !error && (
         <>
           {tools.length === 0 && <p className="empty-note">No tools yet. Add one below.</p>}
@@ -84,7 +89,7 @@ export default function ToolsPanel() {
                     </td>
                     <td>
                       <button onClick={() => startEdit(t)}>edit</button>
-                      <button className="danger" onClick={() => del(localServer(), `/api/tools/${t.id}`).then(reload)}>
+                      <button className="danger" onClick={() => run(() => del(localServer(), `/api/tools/${t.id}`))}>
                         delete
                       </button>
                     </td>
